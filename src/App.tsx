@@ -682,6 +682,7 @@ function App() {
   const [profileKindDraft, setProfileKindDraft] = useState<ProfileKind>('Player')
   const [playerNameDraft, setPlayerNameDraft] = useState('')
   const [batDraft, setBatDraft] = useState(emptyBat)
+  const [variantTargetProfileId, setVariantTargetProfileId] = useState<string | null>(null)
   const [playerQuery, setPlayerQuery] = useState('')
   const [scannerMessage, setScannerMessage] = useState('')
   const [isScanning, setIsScanning] = useState(false)
@@ -1070,6 +1071,16 @@ function App() {
 
     setPlayerNameDraft('')
     setBatDraft(emptyBat)
+    setVariantTargetProfileId(null)
+  }
+
+  function startAddVariant(profile: PlayerProfile) {
+    setActiveSection('players')
+    setProfileKindDraft(profile.profileKind)
+    setPlayerNameDraft(profile.playerName)
+    setBatDraft(emptyBat)
+    setVariantTargetProfileId(profile.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function toggleCompatibleBillet(id: string) {
@@ -1715,12 +1726,22 @@ function App() {
 
             <form className="bat-form profile-entry-form" onSubmit={addProfileBat}>
               <div className="form-instructions">
-                <strong>Enter a new Player or Trainer bat record</strong>
+                <strong>
+                  {variantTargetProfileId
+                    ? `Add a new variant to ${playerNameDraft || 'this profile'}`
+                    : 'Enter a new Player or Trainer bat record'}
+                </strong>
                 <p>
                   Choose whether this is a Player or Trainer first, then add the model,
                   finished bat specs, wood tier, color notes, and any billets that can make it.
                   If the name already exists, this saves as another bat variation under that profile.
                 </p>
+                {variantTargetProfileId ? (
+                  <p>
+                    This will be saved inside the existing {profileKindDraft.toLowerCase()} profile
+                    for {playerNameDraft}.
+                  </p>
+                ) : null}
               </div>
 
               <div className="form-row">
@@ -1728,7 +1749,10 @@ function App() {
                   Player or Trainer
                   <select
                     value={profileKindDraft}
-                    onChange={(event) => setProfileKindDraft(event.target.value as ProfileKind)}
+                    onChange={(event) => {
+                      setProfileKindDraft(event.target.value as ProfileKind)
+                      setVariantTargetProfileId(null)
+                    }}
                   >
                     <option>Player</option>
                     <option>Trainer</option>
@@ -1739,7 +1763,10 @@ function App() {
                   <input
                     value={playerNameDraft}
                     placeholder={profileKindDraft === 'Player' ? 'Example: Corey Seager' : 'Example: Team Trainer'}
-                    onChange={(event) => setPlayerNameDraft(event.target.value)}
+                    onChange={(event) => {
+                      setPlayerNameDraft(event.target.value)
+                      setVariantTargetProfileId(null)
+                    }}
                   />
                 </label>
               </div>
@@ -1832,7 +1859,24 @@ function App() {
                 />
               </label>
 
-              <button type="submit">Save Player/Trainer bat</button>
+              <div className="input-action-row">
+                <button type="submit">
+                  {variantTargetProfileId ? 'Save variant' : 'Save Player/Trainer bat'}
+                </button>
+                {variantTargetProfileId ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setVariantTargetProfileId(null)
+                      setPlayerNameDraft('')
+                      setBatDraft(emptyBat)
+                    }}
+                  >
+                    Cancel variant
+                  </button>
+                ) : null}
+              </div>
             </form>
           </section>
 
@@ -1861,7 +1905,16 @@ function App() {
                         <span className="profile-type-pill">{profile.profileKind}</span>
                         <h3>{profile.playerName}</h3>
                       </div>
-                      <span className="profile-count">{profile.bats.length} bats</span>
+                      <div className="profile-actions">
+                        <span className="profile-count">{profile.bats.length} bats</span>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => startAddVariant(profile)}
+                        >
+                          Add variant
+                        </button>
+                      </div>
                     </div>
 
                     <div className="bat-list">
