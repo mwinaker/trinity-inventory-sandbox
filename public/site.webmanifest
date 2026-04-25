@@ -1,7 +1,7 @@
 {
-  "name": "Trinity Bat Company Inventory Sandbox",
+  "name": "Trinity Bat Company Internal Tool",
   "short_name": "Trinity Inventory",
-  "description": "Offline-capable sandbox for Trinity billet inventory, player profiles, and bat model production records.",
+  "description": "Shopify-connected internal tool for Trinity billet inventory, player profiles, and bat model production records.",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#f5ead8",

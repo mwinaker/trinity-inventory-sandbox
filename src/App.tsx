@@ -1060,7 +1060,7 @@ function App() {
             </button>
           </nav>
         </div>
-        <div className="hero-card" aria-label="Sandbox safety status">
+        <div className="hero-card" aria-label="Connection status">
           <span className="status-dot"></span>
           <strong>
             {backendStatus === 'connected' ? 'Shopify-backed internal tool' : 'Internal offline mode'}

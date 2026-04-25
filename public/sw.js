@@ -1,4 +1,4 @@
-const CACHE_NAME = 'trinity-inventory-sandbox-v1'
+const CACHE_NAME = 'trinity-internal-tool-v2'
 const ROOT_URL = new URL('./', self.registration.scope).toString()
 const APP_SHELL = [
   ROOT_URL,
