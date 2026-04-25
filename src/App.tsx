@@ -50,7 +50,7 @@ type BilletStatus =
   | 'rejected'
 
 type Species = 'Maple' | 'Birch' | 'Ash'
-type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Semi-Pro' | 'Promo' | 'Blem'
+type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau'
@@ -170,7 +170,12 @@ const standardBilletDiameter = 2.75
 const rjBilletDiameter = 2.79
 const defaultMoisture = 8
 const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
-const gradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem']
+const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
+const sourceGradeOptions: Record<Source, Grade[]> = {
+  "RJ's Tree Farms": ['Prime', 'Select', 'Choice', 'Trophy'],
+  'Great Lakes Veneer': ['Prime', 'Select', 'Choice', 'Trophy'],
+  Champeau: ['Pro', 'Semi-Pro', 'Promo', 'Blem'],
+}
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau']
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
@@ -299,9 +304,9 @@ const seedBillets: Billet[] = [
     id: 'billet-003',
     barcode: 'TBC-BLT-0003',
     species: 'Maple',
-    grade: 'Trophy',
+    grade: 'Pro',
     mlbEligible: false,
-    hasBarrelKnot: 'N/A',
+    hasBarrelKnot: 'No',
     source: 'Champeau',
     length: standardBilletLength,
     weight: 104,
@@ -411,18 +416,33 @@ function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
   return 'No'
 }
 
+function getGradeOptionsForSource(source: Source) {
+  return sourceGradeOptions[source]
+}
+
+function normalizeGradeForSource(source: Source, grade: Grade): Grade {
+  const validGrades = getGradeOptionsForSource(source)
+  return validGrades.includes(grade) ? grade : validGrades[0]
+}
+
 function applyBilletGradeRules(billet: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
-  if (autoNonMlbGrades.has(billet.grade)) {
+  const normalizedGrade = normalizeGradeForSource(billet.source, billet.grade)
+  const nextBillet = {
+    ...billet,
+    grade: normalizedGrade,
+  }
+
+  if (autoNonMlbGrades.has(nextBillet.grade)) {
     return {
-      ...billet,
+      ...nextBillet,
       mlbEligible: false,
       hasBarrelKnot: 'N/A',
     }
   }
 
   return {
-    ...billet,
-    hasBarrelKnot: billet.hasBarrelKnot === 'N/A' ? 'No' : billet.hasBarrelKnot,
+    ...nextBillet,
+    hasBarrelKnot: nextBillet.hasBarrelKnot === 'N/A' ? 'No' : nextBillet.hasBarrelKnot,
   }
 }
 
@@ -445,9 +465,10 @@ function hasAnyPhrase(text: string, phrases: RegExp[]) {
 
 function detectGrade(text: string) {
   const gradeMatchers: Array<{ grade: Grade; pattern: RegExp }> = [
-    { grade: 'Semi-Pro', pattern: /\bsemi[-\s]?pro\b/ },
     { grade: 'Promo', pattern: /\bpromo\b/ },
+    { grade: 'Semi-Pro', pattern: /\bsemi[-\s]?pro\b/ },
     { grade: 'Blem', pattern: /\bblem\b/ },
+    { grade: 'Pro', pattern: /\bpro\b/ },
     { grade: 'Trophy', pattern: /\btrophy\b/ },
     { grade: 'Choice', pattern: /\bchoice\b/ },
     { grade: 'Select', pattern: /\bselect\b/ },
@@ -1240,6 +1261,27 @@ function App() {
                   </select>
                 </label>
                 <label>
+                  Source
+                  <select
+                    value={draft.source}
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        applyBilletGradeRules({
+                          ...current,
+                          source: event.target.value as Source,
+                        }),
+                      )
+                    }
+                  >
+                    {sourceOptions.map((source) => (
+                      <option key={source}>{source}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
                   Grade
                   <select
                     value={draft.grade}
@@ -1252,10 +1294,17 @@ function App() {
                       )
                     }
                   >
-                    {gradeOptions.map((grade) => (
+                    {getGradeOptionsForSource(draft.source).map((grade) => (
                       <option key={grade}>{grade}</option>
                     ))}
                   </select>
+                </label>
+                <label>
+                  Location
+                  <input
+                    value={draft.location}
+                    onChange={(event) => setDraft({ ...draft, location: event.target.value })}
+                  />
                 </label>
               </div>
 
@@ -1287,29 +1336,6 @@ function App() {
                       </option>
                     ))}
                   </select>
-                </label>
-              </div>
-
-              <div className="form-row">
-                <label>
-                  Source
-                  <select
-                    value={draft.source}
-                    onChange={(event) =>
-                      setDraft({ ...draft, source: event.target.value as Source })
-                    }
-                  >
-                    {sourceOptions.map((source) => (
-                      <option key={source}>{source}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Location
-                  <input
-                    value={draft.location}
-                    onChange={(event) => setDraft({ ...draft, location: event.target.value })}
-                  />
                 </label>
               </div>
 
@@ -1429,7 +1455,7 @@ function App() {
                       setBuild({ ...build, grade: event.target.value as Grade })
                     }
                   >
-                    {gradeOptions.map((grade) => (
+                    {allGradeOptions.map((grade) => (
                       <option key={grade}>{grade}</option>
                     ))}
                   </select>
