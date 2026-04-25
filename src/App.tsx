@@ -50,7 +50,8 @@ type BilletStatus =
   | 'rejected'
 
 type Species = 'Maple' | 'Birch' | 'Ash'
-type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy'
+type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Semi-Pro' | 'Promo' | 'Blem'
+type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau'
 type ProfileKind = 'Player' | 'Trainer'
@@ -61,7 +62,7 @@ type Billet = {
   species: Species
   grade: Grade
   mlbEligible: boolean
-  hasBarrelKnot: boolean
+  hasBarrelKnot: KnotStatus
   source: Source
   length: number
   weight: number | ''
@@ -169,10 +170,11 @@ const standardBilletDiameter = 2.75
 const rjBilletDiameter = 2.79
 const defaultMoisture = 8
 const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
-const gradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy']
+const gradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem']
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau']
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
+const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
 
 const billetCostReferences: BilletCostReference[] = [
   { id: 'glv-prime-light-mid', source: 'Great Lakes Veneer', species: 'Maple', tier: 'Prime', weightRange: 'Light/Midweight 50/50 mix', price: '$59.95', priceValue: 59.95, notes: 'GLV 2026 Maple Standard Pricing.' },
@@ -335,7 +337,7 @@ const emptyBillet: Omit<Billet, 'id'> = {
   species: 'Maple',
   grade: 'Prime',
   mlbEligible: true,
-  hasBarrelKnot: false,
+  hasBarrelKnot: 'No',
   source: "RJ's Tree Farms",
   length: standardBilletLength,
   weight: '',
@@ -379,7 +381,7 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   if (billet.status === 'consumed' || billet.status === 'rejected') return 0
   if (build.species !== 'Any' && billet.species !== build.species) return 0
   if (build.mlbOnly && !billet.mlbEligible) return 0
-  if (build.mlbOnly && billet.hasBarrelKnot) return 0
+  if (build.mlbOnly && billet.hasBarrelKnot === 'Yes') return 0
   if (build.grade === 'Prime' && billet.grade !== 'Prime') return 0
   if (build.grade === 'Trophy' && billet.grade !== 'Trophy') return 0
   if (standardBilletLength < build.length + 2.5) return 0
@@ -402,6 +404,32 @@ function getBilletDiameter(source: Source) {
   return source === "RJ's Tree Farms" ? rjBilletDiameter : standardBilletDiameter
 }
 
+function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
+  if (value === 'Yes' || value === 'No' || value === 'N/A') return value
+  if (value === true) return 'Yes'
+  if (value === false) return 'No'
+  return 'No'
+}
+
+function applyBilletGradeRules(billet: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
+  if (autoNonMlbGrades.has(billet.grade)) {
+    return {
+      ...billet,
+      mlbEligible: false,
+      hasBarrelKnot: 'N/A',
+    }
+  }
+
+  return {
+    ...billet,
+    hasBarrelKnot: billet.hasBarrelKnot === 'N/A' ? 'No' : billet.hasBarrelKnot,
+  }
+}
+
+function getKnotOptions(grade: Grade): KnotStatus[] {
+  return autoNonMlbGrades.has(grade) ? ['N/A', 'No', 'Yes'] : ['No', 'Yes']
+}
+
 function parseFirstNumber(text: string, patterns: RegExp[]) {
   for (const pattern of patterns) {
     const match = text.match(pattern)
@@ -413,6 +441,20 @@ function parseFirstNumber(text: string, patterns: RegExp[]) {
 
 function hasAnyPhrase(text: string, phrases: RegExp[]) {
   return phrases.some((phrase) => phrase.test(text))
+}
+
+function detectGrade(text: string) {
+  const gradeMatchers: Array<{ grade: Grade; pattern: RegExp }> = [
+    { grade: 'Semi-Pro', pattern: /\bsemi[-\s]?pro\b/ },
+    { grade: 'Promo', pattern: /\bpromo\b/ },
+    { grade: 'Blem', pattern: /\bblem\b/ },
+    { grade: 'Trophy', pattern: /\btrophy\b/ },
+    { grade: 'Choice', pattern: /\bchoice\b/ },
+    { grade: 'Select', pattern: /\bselect\b/ },
+    { grade: 'Prime', pattern: /\bprime\b/ },
+  ]
+
+  return gradeMatchers.find((option) => option.pattern.test(text))?.grade ?? null
 }
 
 function getNextBilletBarcode(billets: Billet[]) {
@@ -468,7 +510,7 @@ function parseQuickEntry(
   const next = { ...current }
 
   const species = speciesOptions.find((option) => normalized.includes(option.toLowerCase()))
-  const grade = gradeOptions.find((option) => normalized.includes(option.toLowerCase()))
+  const grade = detectGrade(normalized)
 
   if (species) next.species = species
   if (grade) next.grade = grade
@@ -509,8 +551,8 @@ function parseQuickEntry(
   const describesNoBarrelKnot = hasAnyPhrase(normalized, noBarrelKnotPhrases)
   const describesYesBarrelKnot = hasAnyPhrase(normalized, yesBarrelKnotPhrases)
 
-  if (describesYesBarrelKnot && !describesNoBarrelKnot) next.hasBarrelKnot = true
-  if (describesNoBarrelKnot) next.hasBarrelKnot = false
+  if (describesYesBarrelKnot && !describesNoBarrelKnot) next.hasBarrelKnot = 'Yes'
+  if (describesNoBarrelKnot) next.hasBarrelKnot = 'No'
 
   const barcode = extractBarcode(text)
   const weight = extractWeight(normalized, barcode)
@@ -527,7 +569,7 @@ function parseQuickEntry(
   if (location?.[0]) next.location = location[0].trim()
   next.notes = text.trim()
 
-  return next
+  return applyBilletGradeRules(next)
 }
 
 function getBilletLabel(billet: Billet) {
@@ -552,7 +594,11 @@ function App() {
   const [activeSection, setActiveSection] = useState<ActiveSection>('inventory')
   const [billets, setBillets] = useState<Billet[]>(() => {
     const stored = window.localStorage.getItem(billetStorageKey)
-    return stored ? (JSON.parse(stored) as Billet[]) : seedBillets
+    const parsed = stored ? (JSON.parse(stored) as Billet[]) : seedBillets
+    return parsed.map((billet) => ({
+      ...billet,
+      hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
+    }))
   })
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     const stored = window.localStorage.getItem(playerStorageKey)
@@ -622,7 +668,14 @@ function App() {
         const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
         if (cancelled) return
 
-        if (Array.isArray(remote.billets) && remote.billets.length > 0) setBillets(remote.billets)
+        if (Array.isArray(remote.billets) && remote.billets.length > 0) {
+          setBillets(
+            remote.billets.map((billet) => ({
+              ...billet,
+              hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
+            })),
+          )
+        }
         if (Array.isArray(remote.players) && remote.players.length > 0) setPlayers(remote.players)
         if (Array.isArray(remote.producedBats) && remote.producedBats.length > 0) {
           setProducedBats(remote.producedBats)
@@ -717,7 +770,11 @@ function App() {
       billet.species,
       billet.grade,
       billet.mlbEligible ? 'MLB eligible' : 'not MLB eligible',
-      billet.hasBarrelKnot ? 'barrel knot' : 'no barrel knot',
+      billet.hasBarrelKnot === 'Yes'
+        ? 'barrel knot'
+        : billet.hasBarrelKnot === 'N/A'
+          ? 'barrel knot not applicable'
+          : 'no barrel knot',
       billet.source,
       billet.location,
       billet.notes,
@@ -843,7 +900,7 @@ function App() {
 
     setBillets((current) => [
       {
-        ...draft,
+        ...applyBilletGradeRules(draft),
         id: createId('billet'),
         barcode: draft.barcode.trim().toUpperCase(),
         length: standardBilletLength,
@@ -1186,7 +1243,14 @@ function App() {
                   Grade
                   <select
                     value={draft.grade}
-                    onChange={(event) => setDraft({ ...draft, grade: event.target.value as Grade })}
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        applyBilletGradeRules({
+                          ...current,
+                          grade: event.target.value as Grade,
+                        }),
+                      )
+                    }
                   >
                     {gradeOptions.map((grade) => (
                       <option key={grade}>{grade}</option>
@@ -1200,6 +1264,7 @@ function App() {
                   MLB bat capable?
                   <select
                     value={draft.mlbEligible ? 'yes' : 'no'}
+                    disabled={autoNonMlbGrades.has(draft.grade)}
                     onChange={(event) =>
                       setDraft({ ...draft, mlbEligible: event.target.value === 'yes' })
                     }
@@ -1211,13 +1276,16 @@ function App() {
                 <label>
                   Knot in barrel?
                   <select
-                    value={draft.hasBarrelKnot ? 'yes' : 'no'}
+                    value={draft.hasBarrelKnot}
                     onChange={(event) =>
-                      setDraft({ ...draft, hasBarrelKnot: event.target.value === 'yes' })
+                      setDraft({ ...draft, hasBarrelKnot: event.target.value as KnotStatus })
                     }
                   >
-                    <option value="no">No</option>
-                    <option value="yes">Yes</option>
+                    {getKnotOptions(draft.grade).map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
                   </select>
                 </label>
               </div>
@@ -1473,8 +1541,16 @@ function App() {
                         </span>
                       </td>
                       <td>
-                        <span className={billet.hasBarrelKnot ? 'pill no' : 'pill yes'}>
-                          {billet.hasBarrelKnot ? 'Yes' : 'No'}
+                        <span
+                          className={
+                            billet.hasBarrelKnot === 'Yes'
+                              ? 'pill no'
+                              : billet.hasBarrelKnot === 'N/A'
+                                ? 'pill'
+                                : 'pill yes'
+                          }
+                        >
+                          {billet.hasBarrelKnot}
                         </span>
                       </td>
                       <td>

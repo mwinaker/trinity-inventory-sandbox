@@ -40,7 +40,8 @@ const resourceConfigs = {
         fieldValue('species', item.species),
         fieldValue('grade', item.grade),
         fieldValue('mlb_eligible', toBooleanValue(item.mlbEligible)),
-        fieldValue('has_barrel_knot', toBooleanValue(item.hasBarrelKnot)),
+        fieldValue('has_barrel_knot', toLegacyBarrelKnotValue(item.hasBarrelKnot)),
+        fieldValue('barrel_knot_status', item.hasBarrelKnot),
         fieldValue('source', item.source),
         fieldValue('length', toNumericValue(item.length)),
         fieldValue('weight', item.weight === '' ? null : toNumericValue(item.weight)),
@@ -56,6 +57,7 @@ const resourceConfigs = {
       definitionField('grade', 'Grade', 'single_line_text_field'),
       definitionField('mlb_eligible', 'MLB Eligible', 'boolean'),
       definitionField('has_barrel_knot', 'Barrel Knot', 'boolean'),
+      definitionField('barrel_knot_status', 'Barrel Knot Status', 'single_line_text_field'),
       definitionField('source', 'Source', 'single_line_text_field'),
       definitionField('length', 'Length', 'number_decimal'),
       definitionField('weight', 'Weight', 'number_decimal'),
@@ -606,6 +608,12 @@ function fieldValue(key, value) {
 
 function toBooleanValue(value) {
   return value ? 'true' : 'false'
+}
+
+function toLegacyBarrelKnotValue(value) {
+  if (value === 'N/A' || value === undefined || value === null || value === '') return null
+  if (value === 'Yes' || value === true) return 'true'
+  return 'false'
 }
 
 function toNumericValue(value) {
