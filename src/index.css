@@ -1,0 +1,28 @@
+:root {
+  --display-font: Georgia, 'Times New Roman', serif;
+  --body-font: Avenir Next, Futura, Trebuchet MS, sans-serif;
+  font-family: var(--body-font);
+  color: #2d2018;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(150, 91, 47, 0.22), transparent 28%),
+    radial-gradient(circle at 84% 0%, rgba(47, 76, 50, 0.24), transparent 24%),
+    linear-gradient(135deg, #f5ead8 0%, #eee0c6 42%, #d8bb88 100%);
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}

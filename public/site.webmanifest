@@ -1,0 +1,16 @@
+{
+  "name": "Trinity Bat Company Inventory Sandbox",
+  "short_name": "Trinity Inventory",
+  "description": "Offline-capable sandbox for Trinity billet inventory, player profiles, and bat model production records.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f5ead8",
+  "theme_color": "#2f4c32",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
