@@ -483,12 +483,12 @@ function parseQuickEntry(
     /\bmlb\s*(grade|quality|caliber|worthy|ready|capable|eligible|approved)\b/,
     /\bmlb\s*grade\b.*\b(yes|yeah|yep|correct|true)\b/,
     /\b(mlb|big league|pro)\s*(bat\s*)?(wood|billet|blank)\b/,
-    /\b(yes|capable|eligible|approved|good enough|works|suitable)\b.*\b(mlb|big league)\b/,
-    /\b(mlb|big league)\b.*\b(yes|capable|eligible|approved|good enough|works|suitable)\b/,
+    /\b(yes|capable|eligible|approved|good enough|works|suitable)\b[^.\n]{0,30}\b(mlb|big league)\b/,
+    /\b(mlb|big league)\b[^.\n]{0,30}\b(yes|capable|eligible|approved|good enough|works|suitable)\b/,
   ]
   const mlbNoPhrases = [
-    /\b(no|not|non|isn't|is not|not good enough|not suitable)\b.*\b(mlb|big league)\b/,
-    /\b(mlb|big league)\b.*\b(no|not|non|isn't|is not|not good enough|not suitable)\b/,
+    /\b(no|not|non|isn't|is not|not good enough|not suitable)\b[^.\n]{0,30}\b(mlb|big league)\b/,
+    /\b(mlb|big league)\b[^.\n]{0,30}\b(no|not|non|isn't|is not|not good enough|not suitable)\b/,
   ]
   const noBarrelKnotPhrases = [
     /\b(no|without|zero|none|doesn't have|does not have|free of|clear of)\b.*\b(barrel\s*)?(knot|not)\b/,
