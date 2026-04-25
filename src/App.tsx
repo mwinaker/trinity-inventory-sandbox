@@ -415,7 +415,55 @@ function hasAnyPhrase(text: string, phrases: RegExp[]) {
   return phrases.some((phrase) => phrase.test(text))
 }
 
-function parseQuickEntry(text: string, current: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
+function getNextBilletBarcode(billets: Billet[]) {
+  const highestNumber = billets.reduce((highest, billet) => {
+    const match = billet.barcode.match(/(\d{1,})$/)
+    if (!match) return highest
+
+    return Math.max(highest, Number(match[1]))
+  }, 0)
+
+  return String(highestNumber + 1).padStart(4, '0')
+}
+
+function extractBarcode(text: string) {
+  const labeledMatch = text.match(
+    /\b(?:barcode|serial|serial number|billet)\s*(?:number|#|no\.?|num(?:ber)?)?\s*[:#-]?\s*([A-Z0-9-]{3,})\b/i,
+  )
+  if (labeledMatch?.[1]) return labeledMatch[1].toUpperCase()
+
+  const trinityMatch = text.match(/\b(?:TBC-)?BLT-[A-Z0-9-]+\b/i)
+  if (trinityMatch?.[0]) return trinityMatch[0].toUpperCase()
+
+  const leadingNumberMatch = text.match(/^\s*(\d{3,6})\b/)
+  if (leadingNumberMatch?.[1]) return leadingNumberMatch[1].padStart(4, '0')
+
+  return null
+}
+
+function extractWeight(text: string, barcode: string | null) {
+  const explicitWeight = parseFirstNumber(text, [
+    /(\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b/,
+    /weight\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)/,
+  ])
+
+  if (explicitWeight !== null) return explicitWeight
+
+  const standaloneNumbers = Array.from(text.matchAll(/\b(\d{2,3}(?:\.\d+)?)\b/g))
+    .map((match) => Number(match[1]))
+    .filter((value) => value >= 70 && value <= 110)
+
+  if (standaloneNumbers.length === 0) return null
+  if (barcode && Number(barcode) === standaloneNumbers[0]) return standaloneNumbers[1] ?? null
+
+  return standaloneNumbers[0]
+}
+
+function parseQuickEntry(
+  text: string,
+  current: Omit<Billet, 'id'>,
+  billets: Billet[],
+): Omit<Billet, 'id'> {
   const normalized = text.toLowerCase()
   const next = { ...current }
 
@@ -433,6 +481,7 @@ function parseQuickEntry(text: string, current: Omit<Billet, 'id'>): Omit<Billet
 
   const mlbYesPhrases = [
     /\bmlb\s*(grade|quality|caliber|worthy|ready|capable|eligible|approved)\b/,
+    /\bmlb\s*grade\b.*\b(yes|yeah|yep|correct|true)\b/,
     /\b(mlb|big league|pro)\s*(bat\s*)?(wood|billet|blank)\b/,
     /\b(yes|capable|eligible|approved|good enough|works|suitable)\b.*\b(mlb|big league)\b/,
     /\b(mlb|big league)\b.*\b(yes|capable|eligible|approved|good enough|works|suitable)\b/,
@@ -463,23 +512,20 @@ function parseQuickEntry(text: string, current: Omit<Billet, 'id'>): Omit<Billet
   if (describesYesBarrelKnot && !describesNoBarrelKnot) next.hasBarrelKnot = true
   if (describesNoBarrelKnot) next.hasBarrelKnot = false
 
-  const weight = parseFirstNumber(normalized, [
-    /(\d+(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b/,
-    /weight\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)/,
-  ])
+  const barcode = extractBarcode(text)
+  const weight = extractWeight(normalized, barcode)
   const moisture = parseFirstNumber(normalized, [
     /(\d+(?:\.\d+)?)\s*(?:%|percent)\s*moisture/,
     /moisture\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)/,
   ])
-  const barcode = text.match(/\b(?:TBC-)?BLT-[A-Z0-9-]+\b/i)
   const location = text.match(/\b(?:rack|pallet|bin|receiving)\s*[A-Z0-9-]*/i)
 
   next.length = standardBilletLength
   if (weight !== null) next.weight = weight
   if (moisture !== null) next.moisture = moisture
-  if (barcode?.[0]) next.barcode = barcode[0].toUpperCase()
+  next.barcode = barcode ?? (current.barcode || getNextBilletBarcode(billets))
   if (location?.[0]) next.location = location[0].trim()
-  if (!next.notes) next.notes = text
+  next.notes = text.trim()
 
   return next
 }
@@ -807,7 +853,7 @@ function App() {
     ])
     setDraft({
       ...emptyBillet,
-      barcode: `TBC-BLT-${String(billets.length + 1).padStart(4, '0')}`,
+      barcode: getNextBilletBarcode(billets),
     })
   }
 
@@ -819,7 +865,7 @@ function App() {
 
   function applyQuickEntry() {
     if (!quickEntry.trim()) return
-    setDraft((current) => parseQuickEntry(quickEntry, current))
+    setDraft((current) => parseQuickEntry(quickEntry, current, billets))
   }
 
   function startDictation() {
@@ -839,7 +885,7 @@ function App() {
     recognition.onresult = (event) => {
       const transcript = event.results[event.resultIndex][0].transcript
       setQuickEntry((current) => `${current}${current ? ' ' : ''}${transcript}`)
-      setDraft((current) => parseQuickEntry(transcript, current))
+      setDraft((current) => parseQuickEntry(transcript, current, billets))
     }
     recognition.onend = () => setIsListening(false)
     recognition.onerror = () => setIsListening(false)
