@@ -888,6 +888,12 @@ function App() {
   const allBatModels = Array.from(batModelMap.values())
   const trainerBatModels = allBatModels.filter((model) => isTrainerModel(model))
   const nonTrainerBatModels = allBatModels.filter((model) => !isTrainerModel(model))
+  const selectableBillets = billets.filter(
+    (billet) =>
+      billet.status === 'received' ||
+      billet.status === 'measured' ||
+      producedBatDraft.billetIds.includes(billet.id),
+  )
   const selectedShopifyProduct =
     shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null
   const selectedShopifyVariant =
@@ -1075,18 +1081,6 @@ function App() {
     })
   }
 
-  function toggleProducedBatBillet(id: string) {
-    setProducedBatDraft((current) => {
-      const exists = current.billetIds.includes(id)
-      return {
-        ...current,
-        billetIds: exists
-          ? current.billetIds.filter((billetId) => billetId !== id)
-          : [...current.billetIds, id],
-      }
-    })
-  }
-
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const typedModelName = producedBatDraft.customModelName.trim()
@@ -1097,6 +1091,7 @@ function App() {
       !producedBatDraft.length.trim() ||
       !producedBatDraft.weight.trim() ||
       !producedBatDraft.billetWeight.trim() ||
+      producedBatDraft.billetIds.length === 0 ||
       (producedBatDraft.batType === 'Trainer' && !producedBatDraft.modelId) ||
       (producedBatDraft.batType === 'Trainer' && !producedBatDraft.sourceModelId) ||
       (requiresTypedModel && !typedModelName)
@@ -1154,6 +1149,13 @@ function App() {
       },
       ...current,
     ])
+    setBillets((current) =>
+      current.map((billet) =>
+        producedBatDraft.billetIds.includes(billet.id)
+          ? { ...billet, status: 'consumed' }
+          : billet,
+      ),
+    )
     setProducedBatDraft(emptyProducedBat)
   }
 
@@ -2005,6 +2007,32 @@ function App() {
 
               <div className="form-row">
                 <label>
+                  Billet barcode/serial used
+                  <select
+                    value={producedBatDraft.billetIds[0] ?? ''}
+                    onChange={(event) => {
+                      const selectedBillet = billets.find((billet) => billet.id === event.target.value)
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        billetIds: event.target.value ? [event.target.value] : [],
+                        billetWeight:
+                          selectedBillet && typeof selectedBillet.weight === 'number'
+                            ? String(selectedBillet.weight)
+                            : producedBatDraft.billetWeight,
+                        billetGrade: selectedBillet?.grade ?? producedBatDraft.billetGrade,
+                      })
+                    }}
+                  >
+                    <option value="">Select billet barcode/serial</option>
+                    {selectableBillets.map((billet) => (
+                      <option key={billet.id} value={billet.id}>
+                        {billet.barcode} - {billet.species} {billet.grade}
+                        {typeof billet.weight === 'number' ? ` - ${billet.weight} oz` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Billet weight
                   <input
                     value={producedBatDraft.billetWeight}
@@ -2050,22 +2078,6 @@ function App() {
                   </select>
                 </label>
               </div>
-
-              <fieldset className="billet-picker">
-                <legend>Billet or billets used</legend>
-                <div>
-                  {billets.map((billet) => (
-                    <label className="checkbox-row" key={billet.id}>
-                      <input
-                        type="checkbox"
-                        checked={producedBatDraft.billetIds.includes(billet.id)}
-                        onChange={() => toggleProducedBatBillet(billet.id)}
-                      />
-                      <span>{getBilletLabel(billet)}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
 
               <label className="notes-field">
                 Notes
