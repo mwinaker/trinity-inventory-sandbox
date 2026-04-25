@@ -96,6 +96,8 @@ const resourceConfigs = {
       return [
         fieldValue('model_id', item.modelId),
         fieldValue('bat_type', item.batType),
+        fieldValue('custom_model_name', item.customModelName),
+        fieldValue('source_model_id', item.sourceModelId),
         fieldValue('shopify_product_id', item.shopifyProductId),
         fieldValue('shopify_variant_id', item.shopifyVariantId),
         fieldValue('length', item.length),
@@ -111,6 +113,8 @@ const resourceConfigs = {
     fieldDefinitions: [
       definitionField('model_id', 'Model ID', 'single_line_text_field'),
       definitionField('bat_type', 'Bat Type', 'single_line_text_field'),
+      definitionField('custom_model_name', 'Custom Model Name', 'single_line_text_field'),
+      definitionField('source_model_id', 'Source Model ID', 'single_line_text_field'),
       definitionField('shopify_product_id', 'Shopify Product ID', 'single_line_text_field'),
       definitionField('shopify_variant_id', 'Shopify Variant ID', 'single_line_text_field'),
       definitionField('length', 'Length', 'single_line_text_field'),

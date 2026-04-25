@@ -133,6 +133,8 @@ type ProducedBatRecord = {
   id: string
   modelId: string
   batType: 'Game' | 'Trainer' | 'Trophy'
+  customModelName: string
+  sourceModelId: string
   shopifyProductId: string
   shopifyVariantId: string
   length: string
@@ -378,6 +380,8 @@ const emptyBat: Omit<BatVariation, 'id'> = {
 const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   modelId: seedBatModels[0].id,
   batType: 'Game',
+  customModelName: '',
+  sourceModelId: '',
   shopifyProductId: '',
   shopifyVariantId: '',
   length: '',
@@ -439,6 +443,8 @@ function normalizeProducedBatRecord(
     ...emptyProducedBat,
     ...record,
     batType: record.batType ?? 'Game',
+    customModelName: record.customModelName ?? '',
+    sourceModelId: record.sourceModelId ?? '',
     billetWeight: record.billetWeight ?? '',
     billetGrade: record.billetGrade ?? 'Prime',
     cupped: record.cupped ?? 'No',
@@ -623,6 +629,10 @@ function getBatModelName(modelId: string, models: BatModelProduct[]) {
   return models.find((model) => model.id === modelId)?.name ?? modelId
 }
 
+function isTrainerModel(model: BatModelProduct) {
+  return model.category.toLowerCase().includes('training')
+}
+
 function createModelId(name: string) {
   const slug = name
     .trim()
@@ -674,9 +684,6 @@ function App() {
   const [isScanning, setIsScanning] = useState(false)
   const [modelQuery, setModelQuery] = useState('')
   const [producedBatDraft, setProducedBatDraft] = useState(emptyProducedBat)
-  const [showNewModelForm, setShowNewModelForm] = useState(false)
-  const [newModelName, setNewModelName] = useState('')
-  const [newModelCategory, setNewModelCategory] = useState('Internal / Prototype')
   const [costQuery, setCostQuery] = useState('')
   const [costSourceFilter, setCostSourceFilter] = useState<'all' | Source>('all')
   const [costSpeciesFilter, setCostSpeciesFilter] = useState<'all' | Species>('all')
@@ -879,6 +886,8 @@ function App() {
     }
   })
   const allBatModels = Array.from(batModelMap.values())
+  const trainerBatModels = allBatModels.filter((model) => isTrainerModel(model))
+  const nonTrainerBatModels = allBatModels.filter((model) => !isTrainerModel(model))
   const selectedShopifyProduct =
     shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null
   const selectedShopifyVariant =
@@ -1080,18 +1089,60 @@ function App() {
 
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const typedModelName = producedBatDraft.customModelName.trim()
+    const requiresTypedModel =
+      producedBatDraft.batType === 'Game' || producedBatDraft.batType === 'Trophy'
+
     if (
-      !producedBatDraft.modelId ||
       !producedBatDraft.length.trim() ||
       !producedBatDraft.weight.trim() ||
-      !producedBatDraft.billetWeight.trim()
+      !producedBatDraft.billetWeight.trim() ||
+      (producedBatDraft.batType === 'Trainer' && !producedBatDraft.modelId) ||
+      (producedBatDraft.batType === 'Trainer' && !producedBatDraft.sourceModelId) ||
+      (requiresTypedModel && !typedModelName)
     ) {
       return
+    }
+
+    let resolvedModelId = producedBatDraft.modelId
+    let nextCustomModel: BatModelProduct | null = null
+
+    if (requiresTypedModel) {
+      const existingModel = allBatModels.find(
+        (model) => model.name.toLowerCase() === typedModelName.toLowerCase(),
+      )
+
+      if (existingModel) {
+        resolvedModelId = existingModel.id
+      } else {
+        const baseId = createModelId(typedModelName)
+        const existingIds = new Set(allBatModels.map((model) => model.id))
+        let id = baseId
+        let counter = 2
+
+        while (existingIds.has(id)) {
+          id = `${baseId}-${counter}`
+          counter += 1
+        }
+
+        nextCustomModel = {
+          id,
+          name: typedModelName,
+          category: producedBatDraft.batType === 'Trophy' ? 'Trophy Run' : 'Internal Game Run',
+          url: '',
+        }
+        resolvedModelId = nextCustomModel.id
+      }
+    }
+
+    if (nextCustomModel) {
+      setCustomBatModels((current) => [nextCustomModel!, ...current])
     }
 
     setProducedBats((current) => [
       {
         ...producedBatDraft,
+        modelId: resolvedModelId,
         id: createId('produced-bat'),
         length: producedBatDraft.length.trim(),
         weight: producedBatDraft.weight.trim(),
@@ -1104,34 +1155,6 @@ function App() {
       ...current,
     ])
     setProducedBatDraft(emptyProducedBat)
-  }
-
-  function addCustomBatModel() {
-    const name = newModelName.trim()
-    if (!name) return
-
-    const baseId = createModelId(name)
-    const existingIds = new Set(allBatModels.map((model) => model.id))
-    let id = baseId
-    let counter = 2
-
-    while (existingIds.has(id)) {
-      id = `${baseId}-${counter}`
-      counter += 1
-    }
-
-    const model = {
-      id,
-      name,
-      category: newModelCategory.trim() || 'Internal / Prototype',
-      url: '',
-    }
-
-    setCustomBatModels((current) => [model, ...current])
-    setProducedBatDraft((current) => ({ ...current, modelId: model.id }))
-    setNewModelName('')
-    setNewModelCategory('Internal / Prototype')
-    setShowNewModelForm(false)
   }
 
   function stopBarcodeScan() {
@@ -1862,57 +1885,6 @@ function App() {
                 </p>
               </div>
 
-              <label>
-                Model or one-off run name
-                <div className="input-action-row">
-                  <select
-                    value={producedBatDraft.modelId}
-                    onChange={(event) =>
-                      setProducedBatDraft({ ...producedBatDraft, modelId: event.target.value })
-                    }
-                  >
-                    {allBatModels.map((model) => (
-                      <option value={model.id} key={model.id}>
-                        {model.name} - {model.category}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => setShowNewModelForm((current) => !current)}
-                  >
-                    Add new
-                  </button>
-                </div>
-              </label>
-
-              {showNewModelForm ? (
-                <div className="nested-form">
-                  <div className="form-row">
-                    <label>
-                      New model name
-                      <input
-                        value={newModelName}
-                        placeholder="Example: MT7.2"
-                        onChange={(event) => setNewModelName(event.target.value)}
-                      />
-                    </label>
-                    <label>
-                      Category
-                      <input
-                        value={newModelCategory}
-                        placeholder="Example: One-Off Pro Run"
-                        onChange={(event) => setNewModelCategory(event.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <button type="button" onClick={addCustomBatModel}>
-                    Add and select model
-                  </button>
-                </div>
-              ) : null}
-
               <div className="form-row">
                 <label>
                   Bat type
@@ -1922,6 +1894,14 @@ function App() {
                       setProducedBatDraft({
                         ...producedBatDraft,
                         batType: event.target.value as ProducedBatRecord['batType'],
+                        modelId:
+                          event.target.value === 'Trainer'
+                            ? trainerBatModels[0]?.id ?? ''
+                            : producedBatDraft.modelId,
+                        sourceModelId:
+                          event.target.value === 'Trainer'
+                            ? nonTrainerBatModels[0]?.id ?? ''
+                            : '',
                       })
                     }
                   >
@@ -1930,6 +1910,54 @@ function App() {
                     ))}
                   </select>
                 </label>
+                {producedBatDraft.batType === 'Game' ? (
+                  <label>
+                    Model number
+                    <input
+                      value={producedBatDraft.customModelName}
+                      placeholder="Example: MT7.2"
+                      onChange={(event) =>
+                        setProducedBatDraft({
+                          ...producedBatDraft,
+                          customModelName: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                ) : producedBatDraft.batType === 'Trainer' ? (
+                  <label>
+                    Trainer
+                    <select
+                      value={producedBatDraft.modelId}
+                      onChange={(event) =>
+                        setProducedBatDraft({
+                          ...producedBatDraft,
+                          modelId: event.target.value,
+                        })
+                      }
+                    >
+                      {trainerBatModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : (
+                  <label>
+                    Trophy model name
+                    <input
+                      value={producedBatDraft.customModelName}
+                      placeholder="Example: MT7.2 Trophy"
+                      onChange={(event) =>
+                        setProducedBatDraft({
+                          ...producedBatDraft,
+                          customModelName: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                )}
                 <label>
                   Length
                   <input
@@ -1951,6 +1979,29 @@ function App() {
                   />
                 </label>
               </div>
+
+              {producedBatDraft.batType === 'Trainer' ? (
+                <div className="form-row">
+                  <label>
+                    Bat model used to cut this trainer
+                    <select
+                      value={producedBatDraft.sourceModelId}
+                      onChange={(event) =>
+                        setProducedBatDraft({
+                          ...producedBatDraft,
+                          sourceModelId: event.target.value,
+                        })
+                      }
+                    >
+                      {nonTrainerBatModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.name} - {model.category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
 
               <div className="form-row">
                 <label>
@@ -2017,10 +2068,10 @@ function App() {
               </fieldset>
 
               <label className="notes-field">
-                Modifications
+                Notes
                 <textarea
                   value={producedBatDraft.modifications}
-                  placeholder="Any knob, handle, barrel, balance, cup depth, finish, or one-off modification notes"
+                  placeholder="Modifications, one-off details, trainer notes, or any other production commentary"
                   onChange={(event) =>
                     setProducedBatDraft({
                       ...producedBatDraft,
@@ -2140,6 +2191,13 @@ function App() {
                                 {record.length} in / {record.weight} oz
                               </strong>
                               <p>Bat type: {record.batType}</p>
+                              {(record.customModelName || record.batType === 'Trainer') && (
+                                <p>
+                                  {record.batType === 'Trainer'
+                                    ? `Cut from: ${getBatModelName(record.sourceModelId, allBatModels)}`
+                                    : `Model number: ${record.customModelName}`}
+                                </p>
+                              )}
                               <p>
                                 Billet: {record.billetWeight} oz / {record.billetGrade}
                               </p>
