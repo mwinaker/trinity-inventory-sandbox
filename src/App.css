@@ -614,6 +614,13 @@ button:hover {
   background: rgba(47, 76, 50, 0.08);
 }
 
+.destructive-button {
+  margin-top: 12px;
+  justify-self: start;
+  border-color: rgba(143, 67, 41, 0.3);
+  color: #8f4329;
+}
+
 .costs-page,
 .cost-guide-panel,
 .cost-results {

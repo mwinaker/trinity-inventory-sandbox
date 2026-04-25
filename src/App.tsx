@@ -135,6 +135,7 @@ type ProducedBatRecord = {
   batType: 'Game' | 'Trainer' | 'Trophy'
   customModelName: string
   sourceModelId: string
+  sourceBilletStatuses: Record<string, BilletStatus>
   shopifyProductId: string
   shopifyVariantId: string
   length: string
@@ -382,6 +383,7 @@ const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   batType: 'Game',
   customModelName: '',
   sourceModelId: '',
+  sourceBilletStatuses: {},
   shopifyProductId: '',
   shopifyVariantId: '',
   length: '',
@@ -445,6 +447,7 @@ function normalizeProducedBatRecord(
     batType: record.batType ?? 'Game',
     customModelName: record.customModelName ?? '',
     sourceModelId: record.sourceModelId ?? '',
+    sourceBilletStatuses: record.sourceBilletStatuses ?? {},
     billetWeight: record.billetWeight ?? '',
     billetGrade: record.billetGrade ?? 'Prime',
     cupped: record.cupped ?? 'No',
@@ -1134,10 +1137,17 @@ function App() {
       setCustomBatModels((current) => [nextCustomModel!, ...current])
     }
 
+    const sourceBilletStatuses = Object.fromEntries(
+      billets
+        .filter((billet) => producedBatDraft.billetIds.includes(billet.id))
+        .map((billet) => [billet.id, billet.status]),
+    ) as Record<string, BilletStatus>
+
     setProducedBats((current) => [
       {
         ...producedBatDraft,
         modelId: resolvedModelId,
+        sourceBilletStatuses,
         id: createId('produced-bat'),
         length: producedBatDraft.length.trim(),
         weight: producedBatDraft.weight.trim(),
@@ -1157,6 +1167,28 @@ function App() {
       ),
     )
     setProducedBatDraft(emptyProducedBat)
+  }
+
+  function deleteProducedBatRecord(id: string) {
+    const record = producedBats.find((item) => item.id === id)
+    if (!record) return
+
+    const remainingRecords = producedBats.filter((item) => item.id !== id)
+
+    setProducedBats(remainingRecords)
+    setBillets((current) =>
+      current.map((billet) => {
+        if (!record.billetIds.includes(billet.id)) return billet
+
+        const stillUsed = remainingRecords.some((item) => item.billetIds.includes(billet.id))
+        if (stillUsed) return billet
+
+        return {
+          ...billet,
+          status: record.sourceBilletStatuses[billet.id] ?? 'received',
+        }
+      }),
+    )
   }
 
   function stopBarcodeScan() {
@@ -2241,6 +2273,13 @@ function App() {
                                   return <p key={id}>{billet ? getBilletLabel(billet) : id}</p>
                                 })
                               )}
+                              <button
+                                type="button"
+                                className="secondary-button destructive-button"
+                                onClick={() => deleteProducedBatRecord(record.id)}
+                              >
+                                Delete record
+                              </button>
                             </div>
                           </article>
                         ))}
