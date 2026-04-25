@@ -1023,11 +1023,11 @@ function App() {
     <main className="app-shell">
       <section className="hero-panel">
         <div>
-          <p className="eyebrow">Trinity Bat Company sandbox</p>
+          <p className="eyebrow">Trinity Bat Company internal tool</p>
           <h1>Billet command center</h1>
           <p className="hero-copy">
-            Receive, measure, grade, match billets, and store player bat profiles before
-            we connect the workflow to Shopify Admin.
+            Receive, measure, grade, match billets, and store player bat profiles in your
+            live Shopify-connected production workflow.
           </p>
           <nav className="section-tabs" aria-label="Primary tool sections">
             <button
@@ -1063,7 +1063,7 @@ function App() {
         <div className="hero-card" aria-label="Sandbox safety status">
           <span className="status-dot"></span>
           <strong>
-            {backendStatus === 'connected' ? 'Shopify-backed internal tool' : 'Safe sandbox mode'}
+            {backendStatus === 'connected' ? 'Shopify-backed internal tool' : 'Internal offline mode'}
           </strong>
           <p>{syncMessage}</p>
         </div>
@@ -1233,7 +1233,7 @@ function App() {
                 />
               </label>
 
-              <button type="submit">Add billet to sandbox</button>
+              <button type="submit">Add billet</button>
             </form>
           </section>
 
