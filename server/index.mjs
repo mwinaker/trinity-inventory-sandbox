@@ -95,10 +95,13 @@ const resourceConfigs = {
     fieldsFor(item) {
       return [
         fieldValue('model_id', item.modelId),
+        fieldValue('bat_type', item.batType),
         fieldValue('shopify_product_id', item.shopifyProductId),
         fieldValue('shopify_variant_id', item.shopifyVariantId),
         fieldValue('length', item.length),
         fieldValue('weight', item.weight),
+        fieldValue('billet_weight', item.billetWeight),
+        fieldValue('billet_grade', item.billetGrade),
         fieldValue('billet_ids_json', JSON.stringify(item.billetIds ?? [])),
         fieldValue('cupped', item.cupped),
         fieldValue('modifications', item.modifications),
@@ -107,10 +110,13 @@ const resourceConfigs = {
     },
     fieldDefinitions: [
       definitionField('model_id', 'Model ID', 'single_line_text_field'),
+      definitionField('bat_type', 'Bat Type', 'single_line_text_field'),
       definitionField('shopify_product_id', 'Shopify Product ID', 'single_line_text_field'),
       definitionField('shopify_variant_id', 'Shopify Variant ID', 'single_line_text_field'),
       definitionField('length', 'Length', 'single_line_text_field'),
       definitionField('weight', 'Weight', 'single_line_text_field'),
+      definitionField('billet_weight', 'Billet Weight', 'single_line_text_field'),
+      definitionField('billet_grade', 'Billet Grade', 'single_line_text_field'),
       definitionField('billet_ids_json', 'Billet IDs JSON', 'json'),
       definitionField('cupped', 'Cupped', 'single_line_text_field'),
       definitionField('modifications', 'Modifications', 'multi_line_text_field'),

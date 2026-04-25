@@ -392,6 +392,10 @@ button:hover {
   grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
 }
 
+.models-page {
+  grid-template-columns: 1fr;
+}
+
 .players-sidebar,
 .player-detail,
 .profile-entry-panel,
@@ -516,6 +520,11 @@ button:hover {
 .form-instructions p {
   margin: 4px 0 0;
   color: #6e5b49;
+}
+
+.optional-link-panel strong {
+  display: block;
+  color: #2c1b11;
 }
 
 .nested-form {

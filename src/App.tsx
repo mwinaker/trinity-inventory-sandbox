@@ -132,10 +132,13 @@ type ShopifyCatalogProduct = {
 type ProducedBatRecord = {
   id: string
   modelId: string
+  batType: 'Game' | 'Trainer' | 'Trophy'
   shopifyProductId: string
   shopifyVariantId: string
   length: string
   weight: string
+  billetWeight: string
+  billetGrade: Grade
   billetIds: string[]
   cupped: 'Yes' | 'No'
   modifications: string
@@ -179,6 +182,7 @@ const sourceGradeOptions: Record<Source, Grade[]> = {
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau']
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
+const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
 const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
 
 const billetCostReferences: BilletCostReference[] = [
@@ -373,10 +377,13 @@ const emptyBat: Omit<BatVariation, 'id'> = {
 
 const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   modelId: seedBatModels[0].id,
+  batType: 'Game',
   shopifyProductId: '',
   shopifyVariantId: '',
   length: '',
   weight: '',
+  billetWeight: '',
+  billetGrade: 'Prime',
   billetIds: [],
   cupped: 'No',
   modifications: '',
@@ -423,6 +430,21 @@ function getGradeOptionsForSource(source: Source) {
 function normalizeGradeForSource(source: Source, grade: Grade): Grade {
   const validGrades = getGradeOptionsForSource(source)
   return validGrades.includes(grade) ? grade : validGrades[0]
+}
+
+function normalizeProducedBatRecord(
+  record: Partial<ProducedBatRecord> & Pick<ProducedBatRecord, 'id' | 'modelId'>,
+): ProducedBatRecord {
+  return {
+    ...emptyProducedBat,
+    ...record,
+    batType: record.batType ?? 'Game',
+    billetWeight: record.billetWeight ?? '',
+    billetGrade: record.billetGrade ?? 'Prime',
+    cupped: record.cupped ?? 'No',
+    modifications: record.modifications ?? '',
+    createdAt: record.createdAt ?? new Date().toISOString(),
+  }
 }
 
 function applyBilletGradeRules(billet: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
@@ -627,7 +649,11 @@ function App() {
   })
   const [producedBats, setProducedBats] = useState<ProducedBatRecord[]>(() => {
     const stored = window.localStorage.getItem(producedBatStorageKey)
-    return stored ? (JSON.parse(stored) as ProducedBatRecord[]) : []
+    return stored
+      ? (JSON.parse(stored) as ProducedBatRecord[]).map((record) =>
+          normalizeProducedBatRecord(record),
+        )
+      : []
   })
   const [customBatModels, setCustomBatModels] = useState<BatModelProduct[]>(() => {
     const stored = window.localStorage.getItem(customBatModelStorageKey)
@@ -699,7 +725,7 @@ function App() {
         }
         if (Array.isArray(remote.players) && remote.players.length > 0) setPlayers(remote.players)
         if (Array.isArray(remote.producedBats) && remote.producedBats.length > 0) {
-          setProducedBats(remote.producedBats)
+          setProducedBats(remote.producedBats.map((record) => normalizeProducedBatRecord(record)))
         }
         if (Array.isArray(remote.customBatModels) && remote.customBatModels.length > 0) {
           setCustomBatModels(remote.customBatModels)
@@ -866,7 +892,15 @@ function App() {
       model.category,
       ...producedBats
         .filter((record) => record.modelId === model.id)
-        .flatMap((record) => [record.length, record.weight, record.cupped, record.modifications]),
+        .flatMap((record) => [
+          record.batType,
+          record.length,
+          record.weight,
+          record.billetWeight,
+          record.billetGrade,
+          record.cupped,
+          record.modifications,
+        ]),
     ]
       .join(' ')
       .toLowerCase()
@@ -1046,7 +1080,12 @@ function App() {
 
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!producedBatDraft.modelId || !producedBatDraft.length.trim() || !producedBatDraft.weight.trim()) {
+    if (
+      !producedBatDraft.modelId ||
+      !producedBatDraft.length.trim() ||
+      !producedBatDraft.weight.trim() ||
+      !producedBatDraft.billetWeight.trim()
+    ) {
       return
     }
 
@@ -1056,6 +1095,7 @@ function App() {
         id: createId('produced-bat'),
         length: producedBatDraft.length.trim(),
         weight: producedBatDraft.weight.trim(),
+        billetWeight: producedBatDraft.billetWeight.trim(),
         shopifyProductId: producedBatDraft.shopifyProductId,
         shopifyVariantId: producedBatDraft.shopifyVariantId,
         modifications: producedBatDraft.modifications.trim(),
@@ -1804,26 +1844,26 @@ function App() {
           <section className="panel model-entry-panel">
             <div className="section-heading">
               <p className="eyebrow">Bat Model Repository</p>
-              <h2>Record a produced bat</h2>
+              <h2>Record a produced bat or one-off run</h2>
             </div>
 
             <form className="bat-form model-record-form" onSubmit={addProducedBatRecord}>
               <div className="form-instructions">
-                <strong>Use this after a bat is made</strong>
+                <strong>Use this as the first stop after a bat is made</strong>
                 <p>
-                  This repository is separate from billet receiving. Save exact production
-                  specs here whenever a model is made in a new size, weight, cup, billet,
-                  or modification combination.
+                  Save exact production specs here whenever a bat is made, especially for a
+                  one-off pro run, a new trainer variation, or any model that is not yet part
+                  of the public website catalog.
                 </p>
                 <p>
                   {shopifyCatalog.length > 0
-                    ? `Shopify catalog sync is live with ${shopifyCatalog.length} products available to choose from.`
-                    : 'Using local model list until Shopify catalog sync is available.'}
+                    ? `Shopify catalog sync is live with ${shopifyCatalog.length} products available, but the fields below can also store internal-only runs that are not tied to a live product.`
+                    : 'Using the internal model list until Shopify catalog sync is available.'}
                 </p>
               </div>
 
               <label>
-                Bat model
+                Model or one-off run name
                 <div className="input-action-row">
                   <select
                     value={producedBatDraft.modelId}
@@ -1847,62 +1887,6 @@ function App() {
                 </div>
               </label>
 
-              <div className="form-row">
-                <label>
-                  Linked Shopify product
-                  <select
-                    value={producedBatDraft.shopifyProductId}
-                    onChange={(event) =>
-                      setProducedBatDraft((current) => ({
-                        ...current,
-                        shopifyProductId: event.target.value,
-                        shopifyVariantId: '',
-                      }))
-                    }
-                  >
-                    <option value="">Not linked yet</option>
-                    {shopifyCatalog.map((product) => (
-                      <option value={product.id} key={product.id}>
-                        {product.name} - {product.category}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Linked variant
-                  <select
-                    value={producedBatDraft.shopifyVariantId}
-                    disabled={!selectedShopifyProduct}
-                    onChange={(event) =>
-                      setProducedBatDraft((current) => ({
-                        ...current,
-                        shopifyVariantId: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="">
-                      {selectedShopifyProduct ? 'Select a variant' : 'Choose a product first'}
-                    </option>
-                    {selectedShopifyProduct?.variants.map((variant) => (
-                      <option value={variant.id} key={variant.id}>
-                        {variant.title}
-                        {typeof variant.inventoryQuantity === 'number'
-                          ? ` - on hand ${variant.inventoryQuantity}`
-                          : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              {selectedShopifyProduct ? (
-                <p className="helper-text">
-                  Linked to Shopify product {selectedShopifyProduct.name}
-                  {selectedShopifyVariant ? ` / ${selectedShopifyVariant.title}` : ''}.
-                </p>
-              ) : null}
-
               {showNewModelForm ? (
                 <div className="nested-form">
                   <div className="form-row">
@@ -1910,7 +1894,7 @@ function App() {
                       New model name
                       <input
                         value={newModelName}
-                        placeholder="Example: CS271 Hybrid"
+                        placeholder="Example: MT7.2"
                         onChange={(event) => setNewModelName(event.target.value)}
                       />
                     </label>
@@ -1918,7 +1902,7 @@ function App() {
                       Category
                       <input
                         value={newModelCategory}
-                        placeholder="Example: Internal / Prototype"
+                        placeholder="Example: One-Off Pro Run"
                         onChange={(event) => setNewModelCategory(event.target.value)}
                       />
                     </label>
@@ -1931,6 +1915,22 @@ function App() {
 
               <div className="form-row">
                 <label>
+                  Bat type
+                  <select
+                    value={producedBatDraft.batType}
+                    onChange={(event) =>
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        batType: event.target.value as ProducedBatRecord['batType'],
+                      })
+                    }
+                  >
+                    {batTypeOptions.map((option) => (
+                      <option key={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Length
                   <input
                     value={producedBatDraft.length}
@@ -1941,7 +1941,7 @@ function App() {
                   />
                 </label>
                 <label>
-                  Weight
+                  Bat weight
                   <input
                     value={producedBatDraft.weight}
                     placeholder="Example: 32"
@@ -1952,22 +1952,53 @@ function App() {
                 </label>
               </div>
 
-              <label>
-                Cup
-                <select
-                  value={producedBatDraft.cupped}
-                  onChange={(event) =>
-                    setProducedBatDraft({
-                      ...producedBatDraft,
-                      cupped: event.target.value as ProducedBatRecord['cupped'],
-                    })
-                  }
-                >
-                  {cupOptions.map((option) => (
-                    <option key={option}>{option}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="form-row">
+                <label>
+                  Billet weight
+                  <input
+                    value={producedBatDraft.billetWeight}
+                    placeholder="Example: 91"
+                    onChange={(event) =>
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        billetWeight: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Billet grade
+                  <select
+                    value={producedBatDraft.billetGrade}
+                    onChange={(event) =>
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        billetGrade: event.target.value as Grade,
+                      })
+                    }
+                  >
+                    {allGradeOptions.map((grade) => (
+                      <option key={grade}>{grade}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Cupped?
+                  <select
+                    value={producedBatDraft.cupped}
+                    onChange={(event) =>
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        cupped: event.target.value as ProducedBatRecord['cupped'],
+                      })
+                    }
+                  >
+                    {cupOptions.map((option) => (
+                      <option key={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
               <fieldset className="billet-picker">
                 <legend>Billet or billets used</legend>
@@ -1998,6 +2029,65 @@ function App() {
                   }
                 />
               </label>
+
+              <div className="nested-form optional-link-panel">
+                <strong>Optional Shopify link</strong>
+                <div className="form-row">
+                  <label>
+                    Linked Shopify product
+                    <select
+                      value={producedBatDraft.shopifyProductId}
+                      onChange={(event) =>
+                        setProducedBatDraft((current) => ({
+                          ...current,
+                          shopifyProductId: event.target.value,
+                          shopifyVariantId: '',
+                        }))
+                      }
+                    >
+                      <option value="">Not linked yet</option>
+                      {shopifyCatalog.map((product) => (
+                        <option value={product.id} key={product.id}>
+                          {product.name} - {product.category}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Linked variant
+                    <select
+                      value={producedBatDraft.shopifyVariantId}
+                      disabled={!selectedShopifyProduct}
+                      onChange={(event) =>
+                        setProducedBatDraft((current) => ({
+                          ...current,
+                          shopifyVariantId: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="">
+                        {selectedShopifyProduct ? 'Select a variant' : 'Choose a product first'}
+                      </option>
+                      {selectedShopifyProduct?.variants.map((variant) => (
+                        <option value={variant.id} key={variant.id}>
+                          {variant.title}
+                          {typeof variant.inventoryQuantity === 'number'
+                            ? ` - on hand ${variant.inventoryQuantity}`
+                            : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {selectedShopifyProduct ? (
+                  <p className="helper-text">
+                    Linked to Shopify product {selectedShopifyProduct.name}
+                    {selectedShopifyVariant ? ` / ${selectedShopifyVariant.title}` : ''}.
+                  </p>
+                ) : null}
+              </div>
 
               <button type="submit">Save production record</button>
             </form>
@@ -2049,6 +2139,10 @@ function App() {
                               <strong>
                                 {record.length} in / {record.weight} oz
                               </strong>
+                              <p>Bat type: {record.batType}</p>
+                              <p>
+                                Billet: {record.billetWeight} oz / {record.billetGrade}
+                              </p>
                               <p>Cup: {record.cupped}</p>
                               {record.shopifyProductId ? (
                                 <p>
