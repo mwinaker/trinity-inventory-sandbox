@@ -166,6 +166,7 @@ const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
 
 const standardBilletLength = 37
 const standardBilletDiameter = 2.75
+const rjBilletDiameter = 2.79
 const defaultMoisture = 8
 const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
 const gradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy']
@@ -395,6 +396,10 @@ function getFitScore(billet: Billet, build: CustomBuild) {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function getBilletDiameter(source: Source) {
+  return source === "RJ's Tree Farms" ? rjBilletDiameter : standardBilletDiameter
 }
 
 function parseFirstNumber(text: string, patterns: RegExp[]) {
@@ -1194,6 +1199,13 @@ function App() {
                 </label>
               </div>
 
+              <p className="form-hint">
+                Billet size: {standardBilletLength} in x {getBilletDiameter(draft.source)} in round
+                {draft.source === "RJ's Tree Farms"
+                  ? " for RJ's billets only."
+                  : '.'}
+              </p>
+
               <div className="form-row">
                 <label>
                   Weight
@@ -1420,7 +1432,7 @@ function App() {
                         </span>
                       </td>
                       <td>
-                        {standardBilletLength} in x {standardBilletDiameter} in round
+                        {standardBilletLength} in x {getBilletDiameter(billet.source)} in round
                         <span>
                           {billet.weight || 'No weight recorded'} oz
                         </span>
