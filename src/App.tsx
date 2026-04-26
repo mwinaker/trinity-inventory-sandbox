@@ -1802,10 +1802,6 @@ function App() {
               <div className="section-heading">
                 <p className="eyebrow">Inventory</p>
                 <h2>Billet records</h2>
-                <p className="inventory-match-count">
-                  {filteredBilletCount} billet{filteredBilletCount === 1 ? '' : 's'} match these
-                  filters.
-                </p>
               </div>
               <div className="filters">
                 <input
@@ -1933,6 +1929,13 @@ function App() {
                   <option value="delivery_asc">Sort: Delivery oldest</option>
                 </select>
               </div>
+            </div>
+            <div className="inventory-summary-row">
+              <p className="inventory-match-count">
+                {filteredBilletCount} billet{filteredBilletCount === 1 ? '' : 's'} match these
+                filters.
+              </p>
+              <p className="inventory-sort-hint">Tap a column header or use the sort dropdown.</p>
             </div>
 
             <div className="table-wrap">
