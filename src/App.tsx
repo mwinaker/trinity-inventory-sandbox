@@ -86,6 +86,7 @@ type InventorySort =
   | 'delivery_asc'
 
 type SortDirection = 'asc' | 'desc'
+type InventoryMlbFilter = 'yes' | 'no'
 
 type CustomBuild = {
   model: string
@@ -773,13 +774,13 @@ function App() {
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'all' | BilletStatus>('all')
-  const [speciesFilter, setSpeciesFilter] = useState<'all' | Species>('all')
-  const [sourceFilter, setSourceFilter] = useState<'all' | Source>('all')
-  const [gradeFilter, setGradeFilter] = useState<'all' | Grade>('all')
-  const [mlbFilter, setMlbFilter] = useState<'all' | 'yes' | 'no'>('all')
-  const [knotFilter, setKnotFilter] = useState<'all' | KnotStatus>('all')
-  const [deliveryDateFilter, setDeliveryDateFilter] = useState<'all' | string>('all')
+  const [statusFilters, setStatusFilters] = useState<BilletStatus[]>([])
+  const [speciesFilters, setSpeciesFilters] = useState<Species[]>([])
+  const [sourceFilters, setSourceFilters] = useState<Source[]>([])
+  const [gradeFilters, setGradeFilters] = useState<Grade[]>([])
+  const [mlbFilters, setMlbFilters] = useState<InventoryMlbFilter[]>([])
+  const [knotFilters, setKnotFilters] = useState<KnotStatus[]>([])
+  const [deliveryDateFilters, setDeliveryDateFilters] = useState<string[]>([])
   const [inventoryVisibility, setInventoryVisibility] =
     useState<InventoryVisibility>('available_only')
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
@@ -928,6 +929,27 @@ function App() {
     new Set(billets.map((billet) => billet.deliveryDate).filter(Boolean)),
   ).sort((a, b) => b.localeCompare(a))
 
+  function toggleSelectedValue<T extends string>(current: T[], value: T) {
+    return current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value]
+  }
+
+  function clearInventoryFilters() {
+    setQuery('')
+    setStatusFilters([])
+    setSpeciesFilters([])
+    setSourceFilters([])
+    setGradeFilters([])
+    setMlbFilters([])
+    setKnotFilters([])
+    setDeliveryDateFilters([])
+    setInventoryVisibility('available_only')
+    setMinWeightFilter('')
+    setMaxWeightFilter('')
+    setInventorySort('barcode_asc')
+  }
+
   const filteredBillets = sortBillets(billets, inventorySort).filter((billet) => {
     const searchable = [
       billet.barcode,
@@ -947,16 +969,16 @@ function App() {
       .join(' ')
       .toLowerCase()
     const matchesQuery = searchable.includes(query.toLowerCase())
-    const matchesStatus = statusFilter === 'all' || billet.status === statusFilter
-    const matchesSpecies = speciesFilter === 'all' || billet.species === speciesFilter
-    const matchesSource = sourceFilter === 'all' || billet.source === sourceFilter
-    const matchesGrade = gradeFilter === 'all' || billet.grade === gradeFilter
+    const matchesStatus = statusFilters.length === 0 || statusFilters.includes(billet.status)
+    const matchesSpecies = speciesFilters.length === 0 || speciesFilters.includes(billet.species)
+    const matchesSource = sourceFilters.length === 0 || sourceFilters.includes(billet.source)
+    const matchesGrade = gradeFilters.length === 0 || gradeFilters.includes(billet.grade)
     const matchesMlb =
-      mlbFilter === 'all' ||
-      (mlbFilter === 'yes' ? billet.mlbEligible : !billet.mlbEligible)
-    const matchesKnot = knotFilter === 'all' || billet.hasBarrelKnot === knotFilter
+      mlbFilters.length === 0 ||
+      mlbFilters.some((filter) => (filter === 'yes' ? billet.mlbEligible : !billet.mlbEligible))
+    const matchesKnot = knotFilters.length === 0 || knotFilters.includes(billet.hasBarrelKnot)
     const matchesDelivery =
-      deliveryDateFilter === 'all' || billet.deliveryDate === deliveryDateFilter
+      deliveryDateFilters.length === 0 || deliveryDateFilters.includes(billet.deliveryDate)
     const matchesVisibility =
       inventoryVisibility === 'all' || availableBilletStatuses.includes(billet.status)
     const minWeight = Number(minWeightFilter)
@@ -1803,7 +1825,7 @@ function App() {
                 <p className="eyebrow">Inventory</p>
                 <h2>Billet records</h2>
               </div>
-              <div className="filters">
+              <div className="filters inventory-top-filters">
                 <input
                   aria-label="Search billets"
                   placeholder="Search barcode, source, delivery date, location..."
@@ -1819,85 +1841,6 @@ function App() {
                 >
                   <option value="available_only">Available only</option>
                   <option value="all">All billets</option>
-                </select>
-                <select
-                  aria-label="Filter by species"
-                  value={speciesFilter}
-                  onChange={(event) => setSpeciesFilter(event.target.value as 'all' | Species)}
-                >
-                  <option value="all">All species</option>
-                  {speciesOptions.map((species) => (
-                    <option value={species} key={species}>
-                      {species}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter by source"
-                  value={sourceFilter}
-                  onChange={(event) => setSourceFilter(event.target.value as 'all' | Source)}
-                >
-                  <option value="all">All sources</option>
-                  {sourceOptions.map((source) => (
-                    <option value={source} key={source}>
-                      {source}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter by grade"
-                  value={gradeFilter}
-                  onChange={(event) => setGradeFilter(event.target.value as 'all' | Grade)}
-                >
-                  <option value="all">All grades</option>
-                  {allGradeOptions.map((grade) => (
-                    <option value={grade} key={grade}>
-                      {grade}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter by MLB capability"
-                  value={mlbFilter}
-                  onChange={(event) => setMlbFilter(event.target.value as 'all' | 'yes' | 'no')}
-                >
-                  <option value="all">All MLB statuses</option>
-                  <option value="yes">MLB capable only</option>
-                  <option value="no">Not MLB capable</option>
-                </select>
-                <select
-                  aria-label="Filter by knot in barrel"
-                  value={knotFilter}
-                  onChange={(event) => setKnotFilter(event.target.value as 'all' | KnotStatus)}
-                >
-                  <option value="all">All knot statuses</option>
-                  <option value="No">No knot</option>
-                  <option value="Yes">Knot in barrel</option>
-                  <option value="N/A">Knot N/A</option>
-                </select>
-                <select
-                  aria-label="Filter by delivery date"
-                  value={deliveryDateFilter}
-                  onChange={(event) => setDeliveryDateFilter(event.target.value)}
-                >
-                  <option value="all">All delivery dates</option>
-                  {deliveryDateOptions.map((date) => (
-                    <option value={date} key={date}>
-                      {date}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label="Filter by status"
-                  value={statusFilter}
-                  onChange={(event) => setStatusFilter(event.target.value as 'all' | BilletStatus)}
-                >
-                  <option value="all">All statuses</option>
-                  {Object.entries(statusLabels).map(([value, label]) => (
-                    <option value={value} key={value}>
-                      {label}
-                    </option>
-                  ))}
                 </select>
                 <input
                   aria-label="Minimum billet weight"
@@ -1928,6 +1871,166 @@ function App() {
                   <option value="delivery_desc">Sort: Delivery newest</option>
                   <option value="delivery_asc">Sort: Delivery oldest</option>
                 </select>
+                <button type="button" className="secondary-button" onClick={clearInventoryFilters}>
+                  Clear filters
+                </button>
+              </div>
+              <div className="inventory-filter-groups">
+                <div className="filter-group">
+                  <p className="filter-group-label">Species</p>
+                  <div className="filter-chip-row">
+                    {speciesOptions.map((species) => (
+                      <label
+                        key={species}
+                        className={`filter-chip ${speciesFilters.includes(species) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={speciesFilters.includes(species)}
+                          onChange={() =>
+                            setSpeciesFilters((current) => toggleSelectedValue(current, species))
+                          }
+                        />
+                        <span>{species}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <p className="filter-group-label">Source</p>
+                  <div className="filter-chip-row">
+                    {sourceOptions.map((source) => (
+                      <label
+                        key={source}
+                        className={`filter-chip ${sourceFilters.includes(source) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={sourceFilters.includes(source)}
+                          onChange={() =>
+                            setSourceFilters((current) => toggleSelectedValue(current, source))
+                          }
+                        />
+                        <span>{source}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <p className="filter-group-label">Grade</p>
+                  <div className="filter-chip-row">
+                    {allGradeOptions.map((grade) => (
+                      <label
+                        key={grade}
+                        className={`filter-chip ${gradeFilters.includes(grade) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={gradeFilters.includes(grade)}
+                          onChange={() =>
+                            setGradeFilters((current) => toggleSelectedValue(current, grade))
+                          }
+                        />
+                        <span>{grade}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <p className="filter-group-label">MLB capability</p>
+                  <div className="filter-chip-row">
+                    {[
+                      ['yes', 'MLB capable'],
+                      ['no', 'Not MLB capable'],
+                    ].map(([value, label]) => (
+                      <label
+                        key={value}
+                        className={`filter-chip ${mlbFilters.includes(value as InventoryMlbFilter) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={mlbFilters.includes(value as InventoryMlbFilter)}
+                          onChange={() =>
+                            setMlbFilters((current) =>
+                              toggleSelectedValue(current, value as InventoryMlbFilter),
+                            )
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <p className="filter-group-label">Knot in barrel</p>
+                  <div className="filter-chip-row">
+                    {(['No', 'Yes', 'N/A'] as KnotStatus[]).map((status) => (
+                      <label
+                        key={status}
+                        className={`filter-chip ${knotFilters.includes(status) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={knotFilters.includes(status)}
+                          onChange={() =>
+                            setKnotFilters((current) => toggleSelectedValue(current, status))
+                          }
+                        />
+                        <span>{status}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <p className="filter-group-label">Delivery date</p>
+                  <div className="filter-chip-row">
+                    {deliveryDateOptions.length > 0 ? (
+                      deliveryDateOptions.map((date) => (
+                        <label
+                          key={date}
+                          className={`filter-chip ${deliveryDateFilters.includes(date) ? 'selected' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={deliveryDateFilters.includes(date)}
+                            onChange={() =>
+                              setDeliveryDateFilters((current) =>
+                                toggleSelectedValue(current, date),
+                              )
+                            }
+                          />
+                          <span>{date}</span>
+                        </label>
+                      ))
+                    ) : (
+                      <p className="filter-empty-state">No delivery dates stored yet.</p>
+                    )}
+                  </div>
+                </div>
+                <div className="filter-group">
+                  <p className="filter-group-label">Status</p>
+                  <div className="filter-chip-row">
+                    {(Object.entries(statusLabels) as [BilletStatus, string][]).map(
+                      ([value, label]) => (
+                        <label
+                          key={value}
+                          className={`filter-chip ${statusFilters.includes(value) ? 'selected' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={statusFilters.includes(value)}
+                            onChange={() =>
+                              setStatusFilters((current) =>
+                                toggleSelectedValue(current, value),
+                              )
+                            }
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ),
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
             <div className="inventory-summary-row">

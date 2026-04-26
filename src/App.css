@@ -327,6 +327,70 @@ button:hover {
   background: #ead4ac;
 }
 
+.inventory-top-filters {
+  align-items: end;
+}
+
+.inventory-filter-groups {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.filter-group {
+  display: grid;
+  gap: 10px;
+}
+
+.filter-group-label {
+  margin: 0;
+  color: #5d4a3b;
+  font-size: 0.82rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.filter-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(72, 50, 31, 0.16);
+  border-radius: 999px;
+  background: #fffdf8;
+  color: #4d3928;
+  font-size: 0.84rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.filter-chip.selected {
+  border-color: rgba(47, 76, 50, 0.34);
+  background: rgba(47, 76, 50, 0.11);
+  color: #244028;
+}
+
+.filter-chip input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+  accent-color: #2f4c32;
+}
+
+.filter-empty-state {
+  margin: 0;
+  color: #7a6758;
+  font-size: 0.9rem;
+}
+
 .recommendation-panel {
   background:
     linear-gradient(160deg, rgba(255, 252, 244, 0.92), rgba(240, 225, 197, 0.8)),
