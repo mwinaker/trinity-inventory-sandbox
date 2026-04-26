@@ -225,7 +225,7 @@ textarea:focus {
 }
 
 .filters {
-  grid-template-columns: minmax(220px, 1.4fr) repeat(2, minmax(160px, 0.8fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .intake-panel {
@@ -373,6 +373,10 @@ button:hover {
   gap: 20px;
   align-items: end;
   margin-bottom: 20px;
+}
+
+.inventory-toolbar .filters {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .inventory-toolbar .section-heading {

@@ -73,6 +73,18 @@ type Billet = {
   notes: string
 }
 
+type InventoryVisibility = 'available_only' | 'all'
+type InventorySort =
+  | 'barcode_asc'
+  | 'barcode_desc'
+  | 'weight_asc'
+  | 'weight_desc'
+  | 'species_asc'
+  | 'grade_asc'
+  | 'source_asc'
+  | 'delivery_desc'
+  | 'delivery_asc'
+
 type CustomBuild = {
   model: string
   length: number
@@ -277,6 +289,8 @@ const statusLabels: Record<BilletStatus, string> = {
   consumed: 'Consumed',
   rejected: 'Rejected',
 }
+
+const availableBilletStatuses: BilletStatus[] = ['received', 'measured']
 
 const seedBillets: Billet[] = [
   {
@@ -484,6 +498,48 @@ function normalizeProducedBatRecord(
     modifications: record.modifications ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
   }
+}
+
+function compareText(a: string, b: string) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+}
+
+function compareWeight(a: Billet, b: Billet, direction: 'asc' | 'desc') {
+  const aWeight = typeof a.weight === 'number' ? a.weight : direction === 'asc' ? Infinity : -Infinity
+  const bWeight = typeof b.weight === 'number' ? b.weight : direction === 'asc' ? Infinity : -Infinity
+  return direction === 'asc' ? aWeight - bWeight : bWeight - aWeight
+}
+
+function compareDelivery(a: Billet, b: Billet, direction: 'asc' | 'desc') {
+  const aDate = a.deliveryDate || (direction === 'asc' ? '9999-12-31' : '')
+  const bDate = b.deliveryDate || (direction === 'asc' ? '9999-12-31' : '')
+  return direction === 'asc' ? compareText(aDate, bDate) : compareText(bDate, aDate)
+}
+
+function sortBillets(billets: Billet[], sort: InventorySort) {
+  return [...billets].sort((a, b) => {
+    switch (sort) {
+      case 'barcode_desc':
+        return compareText(b.barcode, a.barcode)
+      case 'weight_asc':
+        return compareWeight(a, b, 'asc')
+      case 'weight_desc':
+        return compareWeight(a, b, 'desc')
+      case 'species_asc':
+        return compareText(`${a.species} ${a.grade}`, `${b.species} ${b.grade}`)
+      case 'grade_asc':
+        return compareText(a.grade, b.grade)
+      case 'source_asc':
+        return compareText(a.source, b.source)
+      case 'delivery_asc':
+        return compareDelivery(a, b, 'asc')
+      case 'delivery_desc':
+        return compareDelivery(a, b, 'desc')
+      case 'barcode_asc':
+      default:
+        return compareText(a.barcode, b.barcode)
+    }
+  })
 }
 
 function applyBilletGradeRules(billet: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
@@ -711,6 +767,16 @@ function App() {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | BilletStatus>('all')
   const [speciesFilter, setSpeciesFilter] = useState<'all' | Species>('all')
+  const [sourceFilter, setSourceFilter] = useState<'all' | Source>('all')
+  const [gradeFilter, setGradeFilter] = useState<'all' | Grade>('all')
+  const [mlbFilter, setMlbFilter] = useState<'all' | 'yes' | 'no'>('all')
+  const [knotFilter, setKnotFilter] = useState<'all' | KnotStatus>('all')
+  const [deliveryDateFilter, setDeliveryDateFilter] = useState<'all' | string>('all')
+  const [inventoryVisibility, setInventoryVisibility] =
+    useState<InventoryVisibility>('available_only')
+  const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
+  const [minWeightFilter, setMinWeightFilter] = useState('')
+  const [maxWeightFilter, setMaxWeightFilter] = useState('')
   const [build, setBuild] = useState(initialBuild)
   const [profileKindDraft, setProfileKindDraft] = useState<ProfileKind>('Player')
   const [playerNameDraft, setPlayerNameDraft] = useState('')
@@ -850,7 +916,11 @@ function App() {
     return () => window.clearTimeout(timeout)
   }, [backendStatus, billets, players, producedBats, customBatModels])
 
-  const filteredBillets = billets.filter((billet) => {
+  const deliveryDateOptions = Array.from(
+    new Set(billets.map((billet) => billet.deliveryDate).filter(Boolean)),
+  ).sort((a, b) => b.localeCompare(a))
+
+  const filteredBillets = sortBillets(billets, inventorySort).filter((billet) => {
     const searchable = [
       billet.barcode,
       billet.species,
@@ -862,6 +932,7 @@ function App() {
           ? 'barrel knot not applicable'
           : 'no barrel knot',
       billet.source,
+      billet.deliveryDate,
       billet.location,
       billet.notes,
     ]
@@ -870,7 +941,37 @@ function App() {
     const matchesQuery = searchable.includes(query.toLowerCase())
     const matchesStatus = statusFilter === 'all' || billet.status === statusFilter
     const matchesSpecies = speciesFilter === 'all' || billet.species === speciesFilter
-    return matchesQuery && matchesStatus && matchesSpecies
+    const matchesSource = sourceFilter === 'all' || billet.source === sourceFilter
+    const matchesGrade = gradeFilter === 'all' || billet.grade === gradeFilter
+    const matchesMlb =
+      mlbFilter === 'all' ||
+      (mlbFilter === 'yes' ? billet.mlbEligible : !billet.mlbEligible)
+    const matchesKnot = knotFilter === 'all' || billet.hasBarrelKnot === knotFilter
+    const matchesDelivery =
+      deliveryDateFilter === 'all' || billet.deliveryDate === deliveryDateFilter
+    const matchesVisibility =
+      inventoryVisibility === 'all' || availableBilletStatuses.includes(billet.status)
+    const minWeight = Number(minWeightFilter)
+    const maxWeight = Number(maxWeightFilter)
+    const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
+    const matchesMinWeight =
+      !minWeightFilter || (billetWeight !== null && billetWeight >= minWeight)
+    const matchesMaxWeight =
+      !maxWeightFilter || (billetWeight !== null && billetWeight <= maxWeight)
+
+    return (
+      matchesQuery &&
+      matchesStatus &&
+      matchesSpecies &&
+      matchesSource &&
+      matchesGrade &&
+      matchesMlb &&
+      matchesKnot &&
+      matchesDelivery &&
+      matchesVisibility &&
+      matchesMinWeight &&
+      matchesMaxWeight
+    )
   })
 
   const filteredPlayers = players.filter((player) => {
@@ -1687,6 +1788,16 @@ function App() {
                   onChange={(event) => setQuery(event.target.value)}
                 />
                 <select
+                  aria-label="Show available billets only"
+                  value={inventoryVisibility}
+                  onChange={(event) =>
+                    setInventoryVisibility(event.target.value as InventoryVisibility)
+                  }
+                >
+                  <option value="available_only">Available only</option>
+                  <option value="all">All billets</option>
+                </select>
+                <select
                   aria-label="Filter by species"
                   value={speciesFilter}
                   onChange={(event) => setSpeciesFilter(event.target.value as 'all' | Species)}
@@ -1695,6 +1806,61 @@ function App() {
                   {speciesOptions.map((species) => (
                     <option value={species} key={species}>
                       {species}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter by source"
+                  value={sourceFilter}
+                  onChange={(event) => setSourceFilter(event.target.value as 'all' | Source)}
+                >
+                  <option value="all">All sources</option>
+                  {sourceOptions.map((source) => (
+                    <option value={source} key={source}>
+                      {source}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter by grade"
+                  value={gradeFilter}
+                  onChange={(event) => setGradeFilter(event.target.value as 'all' | Grade)}
+                >
+                  <option value="all">All grades</option>
+                  {allGradeOptions.map((grade) => (
+                    <option value={grade} key={grade}>
+                      {grade}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  aria-label="Filter by MLB capability"
+                  value={mlbFilter}
+                  onChange={(event) => setMlbFilter(event.target.value as 'all' | 'yes' | 'no')}
+                >
+                  <option value="all">All MLB statuses</option>
+                  <option value="yes">MLB capable only</option>
+                  <option value="no">Not MLB capable</option>
+                </select>
+                <select
+                  aria-label="Filter by knot in barrel"
+                  value={knotFilter}
+                  onChange={(event) => setKnotFilter(event.target.value as 'all' | KnotStatus)}
+                >
+                  <option value="all">All knot statuses</option>
+                  <option value="No">No knot</option>
+                  <option value="Yes">Knot in barrel</option>
+                  <option value="N/A">Knot N/A</option>
+                </select>
+                <select
+                  aria-label="Filter by delivery date"
+                  value={deliveryDateFilter}
+                  onChange={(event) => setDeliveryDateFilter(event.target.value)}
+                >
+                  <option value="all">All delivery dates</option>
+                  {deliveryDateOptions.map((date) => (
+                    <option value={date} key={date}>
+                      {date}
                     </option>
                   ))}
                 </select>
@@ -1709,6 +1875,35 @@ function App() {
                       {label}
                     </option>
                   ))}
+                </select>
+                <input
+                  aria-label="Minimum billet weight"
+                  inputMode="decimal"
+                  placeholder="Min oz"
+                  value={minWeightFilter}
+                  onChange={(event) => setMinWeightFilter(event.target.value)}
+                />
+                <input
+                  aria-label="Maximum billet weight"
+                  inputMode="decimal"
+                  placeholder="Max oz"
+                  value={maxWeightFilter}
+                  onChange={(event) => setMaxWeightFilter(event.target.value)}
+                />
+                <select
+                  aria-label="Sort billets"
+                  value={inventorySort}
+                  onChange={(event) => setInventorySort(event.target.value as InventorySort)}
+                >
+                  <option value="barcode_asc">Sort: Barcode A-Z</option>
+                  <option value="barcode_desc">Sort: Barcode Z-A</option>
+                  <option value="weight_asc">Sort: Weight low-high</option>
+                  <option value="weight_desc">Sort: Weight high-low</option>
+                  <option value="species_asc">Sort: Species</option>
+                  <option value="grade_asc">Sort: Grade</option>
+                  <option value="source_asc">Sort: Source</option>
+                  <option value="delivery_desc">Sort: Delivery newest</option>
+                  <option value="delivery_asc">Sort: Delivery oldest</option>
                 </select>
               </div>
             </div>
