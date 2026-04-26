@@ -53,7 +53,7 @@ type Species = 'Maple' | 'Birch' | 'Ash'
 type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
-type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau'
+type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau' | 'Cahan'
 type ProfileKind = 'Player' | 'Trainer'
 
 type Billet = {
@@ -64,6 +64,7 @@ type Billet = {
   mlbEligible: boolean
   hasBarrelKnot: KnotStatus
   source: Source
+  deliveryDate: string
   length: number
   weight: number | ''
   moisture: number
@@ -180,10 +181,11 @@ const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy', 'Pro', 
 const sourceGradeOptions: Record<Source, Grade[]> = {
   "RJ's Tree Farms": ['Prime', 'Select', 'Choice', 'Trophy'],
   'Great Lakes Veneer': ['Prime', 'Select', 'Choice', 'Trophy'],
+  Cahan: ['Prime', 'Select', 'Choice', 'Trophy'],
   Champeau: ['Pro', 'Semi-Pro', 'Promo', 'Blem'],
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
-const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau']
+const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Cahan', 'Champeau']
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
 const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
@@ -285,6 +287,7 @@ const seedBillets: Billet[] = [
     mlbEligible: true,
     hasBarrelKnot: 'No',
     source: 'Great Lakes Veneer',
+    deliveryDate: '2026-04-10',
     length: standardBilletLength,
     weight: 91,
     moisture: 7.8,
@@ -300,6 +303,7 @@ const seedBillets: Billet[] = [
     mlbEligible: true,
     hasBarrelKnot: 'No',
     source: 'Great Lakes Veneer',
+    deliveryDate: '2026-04-10',
     length: standardBilletLength,
     weight: 82,
     moisture: 8.2,
@@ -315,6 +319,7 @@ const seedBillets: Billet[] = [
     mlbEligible: false,
     hasBarrelKnot: 'No',
     source: 'Champeau',
+    deliveryDate: '2026-04-15',
     length: standardBilletLength,
     weight: 104,
     moisture: 7.1,
@@ -351,6 +356,7 @@ const emptyBillet: Omit<Billet, 'id'> = {
   mlbEligible: true,
   hasBarrelKnot: 'No',
   source: "RJ's Tree Farms",
+  deliveryDate: '',
   length: standardBilletLength,
   weight: '',
   moisture: defaultMoisture,
@@ -429,8 +435,32 @@ function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
   return 'No'
 }
 
+function normalizeBillet(billet: Billet): Billet {
+  return {
+    ...billet,
+    hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
+    deliveryDate: billet.deliveryDate ?? '',
+  }
+}
+
 function getGradeOptionsForSource(source: Source) {
   return sourceGradeOptions[source]
+}
+
+function getDeliveryDateOptionsForSource(
+  source: Source,
+  billets: Billet[],
+  currentDeliveryDate = '',
+) {
+  const dates = new Set(
+    billets
+      .filter((billet) => billet.source === source && billet.deliveryDate)
+      .map((billet) => billet.deliveryDate),
+  )
+
+  if (currentDeliveryDate) dates.add(currentDeliveryDate)
+
+  return Array.from(dates).sort((a, b) => b.localeCompare(a))
 }
 
 function normalizeGradeForSource(source: Source, grade: Grade): Grade {
@@ -563,11 +593,15 @@ function parseQuickEntry(
 
   const species = speciesOptions.find((option) => normalized.includes(option.toLowerCase()))
   const grade = detectGrade(normalized)
+  const deliveryDateMatch =
+    text.match(/\b(20\d{2}-\d{2}-\d{2})\b/) ??
+    text.match(/\b(\d{1,2}\/\d{1,2}\/20\d{2})\b/)
 
   if (species) next.species = species
   if (grade) next.grade = grade
 
   if (normalized.includes('great lakes')) next.source = 'Great Lakes Veneer'
+  if (normalized.includes('cahan')) next.source = 'Cahan'
   if (normalized.includes('champeau')) next.source = 'Champeau'
   if (normalized.includes('rj') || normalized.includes("rj's") || normalized.includes('tree farm')) {
     next.source = "RJ's Tree Farms"
@@ -619,6 +653,7 @@ function parseQuickEntry(
   if (moisture !== null) next.moisture = moisture
   next.barcode = barcode ?? (current.barcode || getNextBilletBarcode(billets))
   if (location?.[0]) next.location = location[0].trim()
+  if (deliveryDateMatch?.[1]) next.deliveryDate = deliveryDateMatch[1]
   next.notes = text.trim()
 
   return applyBilletGradeRules(next)
@@ -651,10 +686,7 @@ function App() {
   const [billets, setBillets] = useState<Billet[]>(() => {
     const stored = window.localStorage.getItem(billetStorageKey)
     const parsed = stored ? (JSON.parse(stored) as Billet[]) : seedBillets
-    return parsed.map((billet) => ({
-      ...billet,
-      hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
-    }))
+    return parsed.map((billet) => normalizeBillet(billet))
   })
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     const stored = window.localStorage.getItem(playerStorageKey)
@@ -673,6 +705,7 @@ function App() {
     return stored ? (JSON.parse(stored) as BatModelProduct[]) : []
   })
   const [draft, setDraft] = useState(emptyBillet)
+  const [newDeliveryDate, setNewDeliveryDate] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [query, setQuery] = useState('')
@@ -727,12 +760,7 @@ function App() {
         if (cancelled) return
 
         if (Array.isArray(remote.billets) && remote.billets.length > 0) {
-          setBillets(
-            remote.billets.map((billet) => ({
-              ...billet,
-              hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
-            })),
-          )
+          setBillets(remote.billets.map((billet) => normalizeBillet(billet)))
         }
         if (Array.isArray(remote.players) && remote.players.length > 0) setPlayers(remote.players)
         if (Array.isArray(remote.producedBats) && remote.producedBats.length > 0) {
@@ -1408,6 +1436,48 @@ function App() {
                   </select>
                 </label>
                 <label>
+                  Delivery date
+                  <select
+                    value={draft.deliveryDate}
+                    onChange={(event) =>
+                      setDraft({ ...draft, deliveryDate: event.target.value })
+                    }
+                  >
+                    <option value="">Select delivery date</option>
+                    {getDeliveryDateOptionsForSource(draft.source, billets, draft.deliveryDate).map(
+                      (date) => (
+                        <option key={date} value={date}>
+                          {date}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Add new delivery date
+                  <div className="input-action-row">
+                    <input
+                      type="date"
+                      value={newDeliveryDate}
+                      onChange={(event) => setNewDeliveryDate(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        if (!newDeliveryDate) return
+                        setDraft({ ...draft, deliveryDate: newDeliveryDate })
+                        setNewDeliveryDate('')
+                      }}
+                    >
+                      Use date
+                    </button>
+                  </div>
+                </label>
+                <label>
                   Location
                   <input
                     value={draft.location}
@@ -1612,7 +1682,7 @@ function App() {
               <div className="filters">
                 <input
                   aria-label="Search billets"
-                  placeholder="Search barcode, source, location..."
+                  placeholder="Search barcode, source, delivery date, location..."
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
@@ -1650,6 +1720,7 @@ function App() {
                     <th>Barcode</th>
                     <th>Wood</th>
                     <th>Source</th>
+                    <th>Delivery</th>
                     <th>MLB</th>
                     <th>Barrel knot</th>
                     <th>Specs</th>
@@ -1669,6 +1740,7 @@ function App() {
                         <span>{billet.grade}</span>
                       </td>
                       <td>{billet.source}</td>
+                      <td>{billet.deliveryDate || 'No date yet'}</td>
                       <td>
                         <span className={billet.mlbEligible ? 'pill yes' : 'pill no'}>
                           {billet.mlbEligible ? 'Yes' : 'No'}
