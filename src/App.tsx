@@ -85,6 +85,8 @@ type InventorySort =
   | 'delivery_desc'
   | 'delivery_asc'
 
+type SortDirection = 'asc' | 'desc'
+
 type CustomBuild = {
   model: string
   length: number
@@ -542,6 +544,12 @@ function sortBillets(billets: Billet[], sort: InventorySort) {
   })
 }
 
+function getSortDirection(sort: InventorySort, prefix: string): SortDirection | null {
+  if (sort === `${prefix}_asc`) return 'asc'
+  if (sort === `${prefix}_desc`) return 'desc'
+  return null
+}
+
 function applyBilletGradeRules(billet: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
   const normalizedGrade = normalizeGradeForSource(billet.source, billet.grade)
   const nextBillet = {
@@ -973,6 +981,21 @@ function App() {
       matchesMaxWeight
     )
   })
+  const filteredBilletCount = filteredBillets.length
+
+  function toggleInventorySort(prefix: 'barcode' | 'weight' | 'species' | 'grade' | 'source' | 'delivery') {
+    setInventorySort((current) => {
+      const direction = getSortDirection(current, prefix)
+      return `${prefix}_${direction === 'asc' ? 'desc' : 'asc'}` as InventorySort
+    })
+  }
+
+  function sortIndicator(prefix: 'barcode' | 'weight' | 'species' | 'grade' | 'source' | 'delivery') {
+    const direction = getSortDirection(inventorySort, prefix)
+    if (direction === 'asc') return '↑'
+    if (direction === 'desc') return '↓'
+    return ''
+  }
 
   const filteredPlayers = players.filter((player) => {
     const searchable = [
@@ -1779,6 +1802,10 @@ function App() {
               <div className="section-heading">
                 <p className="eyebrow">Inventory</p>
                 <h2>Billet records</h2>
+                <p className="inventory-match-count">
+                  {filteredBilletCount} billet{filteredBilletCount === 1 ? '' : 's'} match these
+                  filters.
+                </p>
               </div>
               <div className="filters">
                 <input
@@ -1912,13 +1939,53 @@ function App() {
               <table>
                 <thead>
                   <tr>
-                    <th>Barcode</th>
-                    <th>Wood</th>
-                    <th>Source</th>
-                    <th>Delivery</th>
+                    <th>
+                      <button
+                        type="button"
+                        className="sort-header"
+                        onClick={() => toggleInventorySort('barcode')}
+                      >
+                        Barcode {sortIndicator('barcode')}
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        className="sort-header"
+                        onClick={() => toggleInventorySort('species')}
+                      >
+                        Wood {sortIndicator('species')}
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        className="sort-header"
+                        onClick={() => toggleInventorySort('source')}
+                      >
+                        Source {sortIndicator('source')}
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        className="sort-header"
+                        onClick={() => toggleInventorySort('delivery')}
+                      >
+                        Delivery {sortIndicator('delivery')}
+                      </button>
+                    </th>
                     <th>MLB</th>
                     <th>Barrel knot</th>
-                    <th>Specs</th>
+                    <th>
+                      <button
+                        type="button"
+                        className="sort-header"
+                        onClick={() => toggleInventorySort('weight')}
+                      >
+                        Specs {sortIndicator('weight')}
+                      </button>
+                    </th>
                     <th>Location</th>
                     <th>Status</th>
                     <th>Notes</th>
