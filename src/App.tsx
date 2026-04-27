@@ -442,7 +442,9 @@ function createId(prefix: string) {
 }
 
 function getBilletDiameter(source: Source) {
-  return source === "RJ's Tree Farms" ? rjBilletDiameter : standardBilletDiameter
+  return source === "RJ's Tree Farms" || source === 'Cahan'
+    ? rjBilletDiameter
+    : standardBilletDiameter
 }
 
 function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
@@ -1665,8 +1667,8 @@ function App() {
 
               <p className="form-hint">
                 Billet size: {standardBilletLength} in x {getBilletDiameter(draft.source)} in round
-                {draft.source === "RJ's Tree Farms"
-                  ? " for RJ's billets only."
+                {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
+                  ? ` for ${draft.source} billets.`
                   : '.'}
               </p>
 
