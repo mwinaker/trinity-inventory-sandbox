@@ -516,6 +516,16 @@ function normalizeProducedBatRecord(
   }
 }
 
+function createNextBilletDraft(current: Omit<Billet, 'id'>, allBillets: Billet[]) {
+  return {
+    ...applyBilletGradeRules(current),
+    barcode: getNextBilletBarcode(allBillets),
+    weight: '' as Billet['weight'],
+    notes: '',
+    status: 'storage' as BilletStatus,
+  }
+}
+
 function compareText(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
 }
@@ -1148,20 +1158,18 @@ function App() {
     event.preventDefault()
     if (!draft.barcode.trim()) return
 
-    setBillets((current) => [
-      {
-        ...applyBilletGradeRules(draft),
-        id: createId('billet'),
-        barcode: draft.barcode.trim().toUpperCase(),
-        length: standardBilletLength,
-        moisture: defaultMoisture,
-      },
-      ...current,
-    ])
-        setDraft({
-      ...emptyBillet,
-      barcode: getNextBilletBarcode(billets),
-    })
+    const savedBillet = {
+      ...applyBilletGradeRules(draft),
+      id: createId('billet'),
+      barcode: draft.barcode.trim().toUpperCase(),
+      length: standardBilletLength,
+      moisture: defaultMoisture,
+    }
+    const nextBillets = [savedBillet, ...billets]
+
+    setBillets(nextBillets)
+    setDraft(createNextBilletDraft(savedBillet, nextBillets))
+    setQuickEntry('')
   }
 
   function updateStatus(id: string, status: BilletStatus) {
