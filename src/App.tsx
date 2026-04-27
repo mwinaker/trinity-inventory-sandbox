@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -526,6 +526,29 @@ function createNextBilletDraft(current: Omit<Billet, 'id'>, allBillets: Billet[]
   }
 }
 
+function safeReadStorage<T>(key: string, fallback: T): T {
+  try {
+    const stored = window.localStorage.getItem(key)
+    return stored ? (JSON.parse(stored) as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function mergeRecordsByKey<T>(remote: T[], local: T[], getKey: (item: T) => string) {
+  const merged = new Map<string, T>()
+
+  for (const item of remote) {
+    merged.set(getKey(item), item)
+  }
+
+  for (const item of local) {
+    merged.set(getKey(item), item)
+  }
+
+  return Array.from(merged.values())
+}
+
 function compareText(a: string, b: string) {
   return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
 }
@@ -844,44 +867,78 @@ function App() {
     window.localStorage.setItem(customBatModelStorageKey, JSON.stringify(customBatModels))
   }, [customBatModels])
 
+  const loadRemoteState = useEffectEvent(async () => {
+    try {
+      const response = await fetch('/api/state')
+      if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
+      const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
+
+      const localBillets = safeReadStorage<Billet[]>(billetStorageKey, []).map((billet) =>
+        normalizeBillet(billet),
+      )
+      const localPlayers = safeReadStorage<PlayerProfile[]>(playerStorageKey, [])
+      const localProducedBats = safeReadStorage<ProducedBatRecord[]>(producedBatStorageKey, []).map(
+        (record) => normalizeProducedBatRecord(record),
+      )
+      const localCustomBatModels = safeReadStorage<BatModelProduct[]>(customBatModelStorageKey, [])
+
+      const remoteBillets = Array.isArray(remote.billets)
+        ? remote.billets.map((billet) => normalizeBillet(billet))
+        : []
+      const remotePlayers = Array.isArray(remote.players) ? remote.players : []
+      const remoteProducedBats = Array.isArray(remote.producedBats)
+        ? remote.producedBats.map((record) => normalizeProducedBatRecord(record))
+        : []
+      const remoteCustomBatModels = Array.isArray(remote.customBatModels)
+        ? remote.customBatModels
+        : []
+
+      setBillets(
+        mergeRecordsByKey(remoteBillets, localBillets, (billet) => billet.barcode || billet.id),
+      )
+      setPlayers(
+        mergeRecordsByKey(
+          remotePlayers,
+          localPlayers,
+          (profile) => profile.id || `${profile.profileKind}:${profile.playerName}`,
+        ),
+      )
+      setProducedBats(
+        mergeRecordsByKey(
+          remoteProducedBats,
+          localProducedBats,
+          (record) => record.id || record.createdAt,
+        ),
+      )
+      setCustomBatModels(
+        mergeRecordsByKey(remoteCustomBatModels, localCustomBatModels, (model) => model.id),
+      )
+
+      setBackendStatus('connected')
+      setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
+      hasLoadedRemoteState.current = true
+      return true
+    } catch {
+      setBackendStatus('offline')
+      setSyncMessage('Shopify sync is offline. Device changes are safe here and retrying automatically.')
+      hasLoadedRemoteState.current = true
+      return false
+    }
+  })
+
   useEffect(() => {
-    let cancelled = false
-
-    async function loadRemoteState() {
-      try {
-        const response = await fetch('/api/state')
-        if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
-        const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
-        if (cancelled) return
-
-        if (Array.isArray(remote.billets) && remote.billets.length > 0) {
-          setBillets(remote.billets.map((billet) => normalizeBillet(billet)))
-        }
-        if (Array.isArray(remote.players) && remote.players.length > 0) setPlayers(remote.players)
-        if (Array.isArray(remote.producedBats) && remote.producedBats.length > 0) {
-          setProducedBats(remote.producedBats.map((record) => normalizeProducedBatRecord(record)))
-        }
-        if (Array.isArray(remote.customBatModels) && remote.customBatModels.length > 0) {
-          setCustomBatModels(remote.customBatModels)
-        }
-
-        setBackendStatus('connected')
-        setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
-      } catch {
-        if (cancelled) return
-        setBackendStatus('offline')
-        setSyncMessage('Using device storage only until the Shopify sync server is available.')
-      } finally {
-        hasLoadedRemoteState.current = true
-      }
-    }
-
     void loadRemoteState()
+  }, [loadRemoteState])
 
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  useEffect(() => {
+    if (backendStatus !== 'offline') return
+
+    const retry = window.setInterval(() => {
+      void loadRemoteState()
+    }, 10000)
+
+    return () => window.clearInterval(retry)
+  }, [backendStatus, loadRemoteState])
 
   useEffect(() => {
     let cancelled = false
@@ -938,7 +995,10 @@ function App() {
 
         setSyncMessage(`Shopify sync complete at ${syncedAt}.`)
       } catch {
-        setSyncMessage('Shopify sync paused. Local changes are still saved on this device.')
+        setBackendStatus('offline')
+        setSyncMessage(
+          'Shopify sync paused. Local changes are saved on this device and retrying automatically.',
+        )
       }
     }, 700)
 
