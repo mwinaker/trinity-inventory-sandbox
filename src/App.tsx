@@ -41,13 +41,7 @@ declare global {
 }
 
 type ActiveSection = 'inventory' | 'players' | 'models' | 'costs'
-type BilletStatus =
-  | 'received'
-  | 'measured'
-  | 'reserved'
-  | 'in_production'
-  | 'consumed'
-  | 'rejected'
+type BilletStatus = 'storage' | 'production'
 
 type Species = 'Maple' | 'Birch' | 'Ash'
 type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
@@ -73,7 +67,6 @@ type Billet = {
   notes: string
 }
 
-type InventoryVisibility = 'available_only' | 'all'
 type InventorySort =
   | 'barcode_asc'
   | 'barcode_desc'
@@ -285,15 +278,11 @@ const seedBatModels: BatModelProduct[] = [
 ]
 
 const statusLabels: Record<BilletStatus, string> = {
-  received: 'Received',
-  measured: 'Measured',
-  reserved: 'Reserved',
-  in_production: 'In Production',
-  consumed: 'Consumed',
-  rejected: 'Rejected',
+  storage: 'Storage',
+  production: 'Production',
 }
 
-const availableBilletStatuses: BilletStatus[] = ['received', 'measured']
+const availableBilletStatuses: BilletStatus[] = ['storage']
 
 const seedBillets: Billet[] = [
   {
@@ -308,7 +297,7 @@ const seedBillets: Billet[] = [
     length: standardBilletLength,
     weight: 91,
     moisture: 7.8,
-    status: 'measured',
+    status: 'storage',
     location: 'Rack A1',
     notes: 'Corey Seager CS271 candidate billet. Prime birch, MLB capable.',
   },
@@ -324,7 +313,7 @@ const seedBillets: Billet[] = [
     length: standardBilletLength,
     weight: 82,
     moisture: 8.2,
-    status: 'received',
+    status: 'storage',
     location: 'Pallet 24-03',
     notes: 'Needs final grading before release.',
   },
@@ -340,7 +329,7 @@ const seedBillets: Billet[] = [
     length: standardBilletLength,
     weight: 104,
     moisture: 7.1,
-    status: 'reserved',
+    status: 'production',
     location: 'Rack B4',
     notes: 'Reserved for end-loaded 34 in model test.',
   },
@@ -377,7 +366,7 @@ const emptyBillet: Omit<Billet, 'id'> = {
   length: standardBilletLength,
   weight: '',
   moisture: defaultMoisture,
-  status: 'received',
+  status: 'storage',
   location: 'Receiving',
   notes: '',
 }
@@ -418,8 +407,22 @@ const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   modifications: '',
 }
 
+function normalizeBilletStatus(status: BilletStatus | string | null | undefined): BilletStatus {
+  if (status === 'storage' || status === 'production') return status
+  if (
+    status === 'received' ||
+    status === 'measured' ||
+    status === 'reserved' ||
+    status === 'rejected'
+  ) {
+    return 'storage'
+  }
+  if (status === 'in_production' || status === 'consumed') return 'production'
+  return 'storage'
+}
+
 function getFitScore(billet: Billet, build: CustomBuild) {
-  if (billet.status === 'consumed' || billet.status === 'rejected') return 0
+  if (billet.status === 'production') return 0
   if (build.species !== 'Any' && billet.species !== build.species) return 0
   if (build.mlbOnly && !billet.mlbEligible) return 0
   if (build.mlbOnly && billet.hasBarrelKnot === 'Yes') return 0
@@ -459,6 +462,7 @@ function normalizeBillet(billet: Billet): Billet {
     ...billet,
     hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
     deliveryDate: billet.deliveryDate ?? '',
+    status: normalizeBilletStatus(billet.status),
   }
 }
 
@@ -490,13 +494,20 @@ function normalizeGradeForSource(source: Source, grade: Grade): Grade {
 function normalizeProducedBatRecord(
   record: Partial<ProducedBatRecord> & Pick<ProducedBatRecord, 'id' | 'modelId'>,
 ): ProducedBatRecord {
+  const sourceBilletStatuses = Object.fromEntries(
+    Object.entries(record.sourceBilletStatuses ?? {}).map(([billetId, status]) => [
+      billetId,
+      normalizeBilletStatus(status),
+    ]),
+  ) as Record<string, BilletStatus>
+
   return {
     ...emptyProducedBat,
     ...record,
     batType: record.batType ?? 'Game',
     customModelName: record.customModelName ?? '',
     sourceModelId: record.sourceModelId ?? '',
-    sourceBilletStatuses: record.sourceBilletStatuses ?? {},
+    sourceBilletStatuses,
     billetWeight: record.billetWeight ?? '',
     billetGrade: record.billetGrade ?? 'Prime',
     cupped: record.cupped ?? 'No',
@@ -776,15 +787,12 @@ function App() {
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [query, setQuery] = useState('')
-  const [statusFilters, setStatusFilters] = useState<BilletStatus[]>([])
   const [speciesFilters, setSpeciesFilters] = useState<Species[]>([])
   const [sourceFilters, setSourceFilters] = useState<Source[]>([])
   const [gradeFilters, setGradeFilters] = useState<Grade[]>([])
   const [mlbFilters, setMlbFilters] = useState<InventoryMlbFilter[]>([])
   const [knotFilters, setKnotFilters] = useState<KnotStatus[]>([])
   const [deliveryDateFilters, setDeliveryDateFilters] = useState<string[]>([])
-  const [inventoryVisibility, setInventoryVisibility] =
-    useState<InventoryVisibility>('available_only')
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
   const [minWeightFilter, setMinWeightFilter] = useState('')
   const [maxWeightFilter, setMaxWeightFilter] = useState('')
@@ -939,14 +947,12 @@ function App() {
 
   function clearInventoryFilters() {
     setQuery('')
-    setStatusFilters([])
     setSpeciesFilters([])
     setSourceFilters([])
     setGradeFilters([])
     setMlbFilters([])
     setKnotFilters([])
     setDeliveryDateFilters([])
-    setInventoryVisibility('available_only')
     setMinWeightFilter('')
     setMaxWeightFilter('')
     setInventorySort('barcode_asc')
@@ -971,7 +977,6 @@ function App() {
       .join(' ')
       .toLowerCase()
     const matchesQuery = searchable.includes(query.toLowerCase())
-    const matchesStatus = statusFilters.length === 0 || statusFilters.includes(billet.status)
     const matchesSpecies = speciesFilters.length === 0 || speciesFilters.includes(billet.species)
     const matchesSource = sourceFilters.length === 0 || sourceFilters.includes(billet.source)
     const matchesGrade = gradeFilters.length === 0 || gradeFilters.includes(billet.grade)
@@ -981,8 +986,7 @@ function App() {
     const matchesKnot = knotFilters.length === 0 || knotFilters.includes(billet.hasBarrelKnot)
     const matchesDelivery =
       deliveryDateFilters.length === 0 || deliveryDateFilters.includes(billet.deliveryDate)
-    const matchesVisibility =
-      inventoryVisibility === 'all' || availableBilletStatuses.includes(billet.status)
+    const matchesVisibility = availableBilletStatuses.includes(billet.status)
     const minWeight = Number(minWeightFilter)
     const maxWeight = Number(maxWeightFilter)
     const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
@@ -993,7 +997,6 @@ function App() {
 
     return (
       matchesQuery &&
-      matchesStatus &&
       matchesSpecies &&
       matchesSource &&
       matchesGrade &&
@@ -1070,8 +1073,7 @@ function App() {
   const nonTrainerBatModels = allBatModels.filter((model) => !isTrainerModel(model))
   const selectableBillets = billets.filter(
     (billet) =>
-      billet.status === 'received' ||
-      billet.status === 'measured' ||
+      billet.status === 'storage' ||
       producedBatDraft.billetIds.includes(billet.id),
   )
   const selectedShopifyProduct =
@@ -1132,10 +1134,8 @@ function App() {
     .sort((a, b) => b.score - a.score)
     .slice(0, 3)
 
-  const availableCount = billets.filter(
-    (billet) => billet.status === 'received' || billet.status === 'measured',
-  ).length
-  const reservedCount = billets.filter((billet) => billet.status === 'reserved').length
+  const availableCount = billets.filter((billet) => billet.status === 'storage').length
+  const inProductionCount = billets.filter((billet) => billet.status === 'production').length
   const weighedBillets = billets.filter(
     (billet): billet is Billet & { weight: number } => typeof billet.weight === 'number',
   )
@@ -1158,7 +1158,7 @@ function App() {
       },
       ...current,
     ])
-    setDraft({
+        setDraft({
       ...emptyBillet,
       barcode: getNextBilletBarcode(billets),
     })
@@ -1349,7 +1349,7 @@ function App() {
     setBillets((current) =>
       current.map((billet) =>
         producedBatDraft.billetIds.includes(billet.id)
-          ? { ...billet, status: 'consumed' }
+          ? { ...billet, status: 'production' }
           : billet,
       ),
     )
@@ -1372,7 +1372,7 @@ function App() {
 
         return {
           ...billet,
-          status: record.sourceBilletStatuses[billet.id] ?? 'received',
+          status: normalizeBilletStatus(record.sourceBilletStatuses[billet.id] ?? 'storage'),
         }
       }),
     )
@@ -1709,12 +1709,12 @@ function App() {
               <strong>{billets.length}</strong>
             </article>
             <article>
-              <span>Available</span>
+              <span>In storage</span>
               <strong>{availableCount}</strong>
             </article>
             <article>
-              <span>Reserved</span>
-              <strong>{reservedCount}</strong>
+              <span>In production</span>
+              <strong>{inProductionCount}</strong>
             </article>
             <article>
               <span>Avg weight</span>
@@ -1802,7 +1802,7 @@ function App() {
 
               <div className="recommendation-list">
                 {recommendations.length === 0 ? (
-                  <p className="empty-state">No available billets match this build yet.</p>
+                  <p className="empty-state">No storage billets match this build yet.</p>
                 ) : (
                   recommendations.map(({ billet, score }, index) => (
                     <article className="recommendation-card" key={billet.id}>
@@ -1834,16 +1834,6 @@ function App() {
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
-                <select
-                  aria-label="Show available billets only"
-                  value={inventoryVisibility}
-                  onChange={(event) =>
-                    setInventoryVisibility(event.target.value as InventoryVisibility)
-                  }
-                >
-                  <option value="available_only">Available only</option>
-                  <option value="all">All billets</option>
-                </select>
                 <input
                   aria-label="Minimum billet weight"
                   inputMode="decimal"
@@ -2009,36 +1999,12 @@ function App() {
                     )}
                   </div>
                 </div>
-                <div className="filter-group">
-                  <p className="filter-group-label">Status</p>
-                  <div className="filter-chip-row">
-                    {(Object.entries(statusLabels) as [BilletStatus, string][]).map(
-                      ([value, label]) => (
-                        <label
-                          key={value}
-                          className={`filter-chip ${statusFilters.includes(value) ? 'selected' : ''}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={statusFilters.includes(value)}
-                            onChange={() =>
-                              setStatusFilters((current) =>
-                                toggleSelectedValue(current, value),
-                              )
-                            }
-                          />
-                          <span>{label}</span>
-                        </label>
-                      ),
-                    )}
-                  </div>
-                </div>
               </div>
             </div>
             <div className="inventory-summary-row">
               <p className="inventory-match-count">
-                {filteredBilletCount} billet{filteredBilletCount === 1 ? '' : 's'} match these
-                filters.
+                {filteredBilletCount} storage billet{filteredBilletCount === 1 ? '' : 's'} match
+                these filters.
               </p>
               <p className="inventory-sort-hint">Tap a column header or use the sort dropdown.</p>
             </div>
