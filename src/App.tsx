@@ -40,8 +40,11 @@ declare global {
   }
 }
 
-type ActiveSection = 'inventory' | 'players' | 'models' | 'costs'
+type ActiveSection = 'inventory' | 'orders' | 'players' | 'models' | 'costs'
 type BilletStatus = 'storage' | 'production'
+type OrderOrigin = 'website' | 'internal_sales'
+type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
+type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'not_required'
 
 type Species = 'Maple' | 'Birch' | 'Ash'
 type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
@@ -157,6 +160,77 @@ type ProducedBatRecord = {
   createdAt: string
 }
 
+type OrderSpecs = {
+  model: string
+  length: string
+  targetWeight: string
+  wood: string
+  notes: string
+}
+
+type OrderJob = {
+  id: string
+  origin: OrderOrigin
+  intakeId: string
+  shopifyOrderId: string
+  shopifyOrderName: string
+  shopifyDraftOrderId: string
+  shopifyDraftOrderName: string
+  lineItemId: string
+  customerName: string
+  customerEmail: string
+  productTitle: string
+  variantTitle: string
+  shopifyProductId: string
+  shopifyVariantId: string
+  quantity: number
+  financialStatus: string
+  fulfillmentStatus: string
+  invoiceStatus: InvoiceStatus
+  productionStatus: ProductionStatus
+  assignedBilletId: string
+  linkedProducedBatId: string
+  dueDate: string
+  salesRep: string
+  totalPrice: string
+  currency: string
+  specs: OrderSpecs
+  lineItems: Array<{
+    title: string
+    quantity: number
+    variantId: string
+    productId: string
+  }>
+  notes: string
+  internalNotes: string
+  createdAt: string
+  updatedAt: string
+}
+
+type SalesOrderLineDraft = {
+  id: string
+  productId: string
+  variantId: string
+  title: string
+  quantity: number
+  unitPrice: string
+  model: string
+  length: string
+  targetWeight: string
+  wood: Species | 'Other'
+  notes: string
+}
+
+type SalesOrderDraft = {
+  customerName: string
+  customerEmail: string
+  salesRep: string
+  dueDate: string
+  notes: string
+  sendInvoice: boolean
+  lines: SalesOrderLineDraft[]
+}
+
 type BilletCostReference = {
   id: string
   source: Source
@@ -173,12 +247,14 @@ type RemoteState = {
   players: PlayerProfile[]
   producedBats: ProducedBatRecord[]
   customBatModels: BatModelProduct[]
+  orderJobs: OrderJob[]
 }
 
 const billetStorageKey = 'trinity-billet-sandbox-v5'
 const playerStorageKey = 'trinity-player-profiles-v3'
 const producedBatStorageKey = 'trinity-produced-bats-v1'
 const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
+const orderJobStorageKey = 'trinity-order-jobs-v1'
 
 const standardBilletLength = 37
 const standardBilletDiameter = 2.75
@@ -283,6 +359,21 @@ const statusLabels: Record<BilletStatus, string> = {
 }
 
 const availableBilletStatuses: BilletStatus[] = ['storage']
+const productionStatusLabels: Record<ProductionStatus, string> = {
+  new: 'New',
+  waiting_payment: 'Waiting payment',
+  ready: 'Ready',
+  in_production: 'In production',
+  complete: 'Complete',
+  cancelled: 'Cancelled',
+}
+
+const invoiceStatusLabels: Record<InvoiceStatus, string> = {
+  draft: 'Draft',
+  sent: 'Invoice sent',
+  paid: 'Paid',
+  not_required: 'Checkout order',
+}
 
 const seedBillets: Billet[] = [
   {
@@ -407,6 +498,30 @@ const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   modifications: '',
 }
 
+const emptySalesLine = (): SalesOrderLineDraft => ({
+  id: createId('sales-line'),
+  productId: '',
+  variantId: '',
+  title: '',
+  quantity: 1,
+  unitPrice: '',
+  model: '',
+  length: '',
+  targetWeight: '',
+  wood: 'Maple',
+  notes: '',
+})
+
+const emptySalesOrderDraft = (): SalesOrderDraft => ({
+  customerName: '',
+  customerEmail: '',
+  salesRep: '',
+  dueDate: '',
+  notes: '',
+  sendInvoice: true,
+  lines: [emptySalesLine()],
+})
+
 function normalizeBilletStatus(status: BilletStatus | string | null | undefined): BilletStatus {
   if (status === 'storage' || status === 'production') return status
   if (
@@ -514,6 +629,99 @@ function normalizeProducedBatRecord(
     modifications: record.modifications ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
   }
+}
+
+function normalizeProductionStatus(status: ProductionStatus | string | null | undefined): ProductionStatus {
+  if (
+    status === 'new' ||
+    status === 'waiting_payment' ||
+    status === 'ready' ||
+    status === 'in_production' ||
+    status === 'complete' ||
+    status === 'cancelled'
+  ) {
+    return status
+  }
+
+  if (status === 'production') return 'in_production'
+  if (status === 'done' || status === 'fulfilled') return 'complete'
+  return 'new'
+}
+
+function normalizeInvoiceStatus(status: InvoiceStatus | string | null | undefined): InvoiceStatus {
+  if (status === 'draft' || status === 'sent' || status === 'paid' || status === 'not_required') {
+    return status
+  }
+
+  return 'draft'
+}
+
+function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): OrderJob {
+  const specs = (record.specs ?? {}) as Partial<OrderSpecs>
+
+  return {
+    id: record.id,
+    origin: record.origin === 'internal_sales' ? 'internal_sales' : 'website',
+    intakeId: record.intakeId ?? '',
+    shopifyOrderId: record.shopifyOrderId ?? '',
+    shopifyOrderName: record.shopifyOrderName ?? '',
+    shopifyDraftOrderId: record.shopifyDraftOrderId ?? '',
+    shopifyDraftOrderName: record.shopifyDraftOrderName ?? '',
+    lineItemId: record.lineItemId ?? '',
+    customerName: record.customerName ?? '',
+    customerEmail: record.customerEmail ?? '',
+    productTitle: record.productTitle ?? '',
+    variantTitle: record.variantTitle ?? '',
+    shopifyProductId: record.shopifyProductId ?? '',
+    shopifyVariantId: record.shopifyVariantId ?? '',
+    quantity: Number(record.quantity ?? 1),
+    financialStatus: record.financialStatus ?? '',
+    fulfillmentStatus: record.fulfillmentStatus ?? '',
+    invoiceStatus: normalizeInvoiceStatus(record.invoiceStatus),
+    productionStatus: normalizeProductionStatus(record.productionStatus),
+    assignedBilletId: record.assignedBilletId ?? '',
+    linkedProducedBatId: record.linkedProducedBatId ?? '',
+    dueDate: record.dueDate ?? '',
+    salesRep: record.salesRep ?? '',
+    totalPrice: record.totalPrice ?? '',
+    currency: record.currency ?? '',
+    specs: {
+      model: specs.model ?? '',
+      length: specs.length ?? '',
+      targetWeight: specs.targetWeight ?? '',
+      wood: specs.wood ?? '',
+      notes: specs.notes ?? '',
+    },
+    lineItems: record.lineItems ?? [],
+    notes: record.notes ?? '',
+    internalNotes: record.internalNotes ?? '',
+    createdAt: record.createdAt ?? new Date().toISOString(),
+    updatedAt: record.updatedAt ?? new Date().toISOString(),
+  }
+}
+
+function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
+  const merged = new Map<string, OrderJob>()
+
+  for (const job of remote) {
+    merged.set(job.id, job)
+  }
+
+  for (const job of local) {
+    const existing = merged.get(job.id)
+    merged.set(job.id, {
+      ...existing,
+      ...job,
+      productionStatus: job.productionStatus || existing?.productionStatus || 'new',
+      assignedBilletId: job.assignedBilletId || existing?.assignedBilletId || '',
+      linkedProducedBatId: job.linkedProducedBatId || existing?.linkedProducedBatId || '',
+      internalNotes: job.internalNotes || existing?.internalNotes || '',
+      dueDate: job.dueDate || existing?.dueDate || '',
+      salesRep: job.salesRep || existing?.salesRep || '',
+    })
+  }
+
+  return Array.from(merged.values()).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 }
 
 function createNextBilletDraft(current: Omit<Billet, 'id'>, allBillets: Billet[]) {
@@ -815,7 +1023,20 @@ function App() {
     const stored = window.localStorage.getItem(customBatModelStorageKey)
     return stored ? (JSON.parse(stored) as BatModelProduct[]) : []
   })
+  const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
+    const stored = window.localStorage.getItem(orderJobStorageKey)
+    return stored ? (JSON.parse(stored) as OrderJob[]).map((job) => normalizeOrderJob(job)) : []
+  })
   const [draft, setDraft] = useState(emptyBillet)
+  const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
+    emptySalesOrderDraft(),
+  )
+  const [orderQuery, setOrderQuery] = useState('')
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
+  const [orderActionMessage, setOrderActionMessage] = useState('')
+  const [isCreatingDraftOrder, setIsCreatingDraftOrder] = useState(false)
+  const [isImportingOrders, setIsImportingOrders] = useState(false)
+  const [isRegisteringWebhooks, setIsRegisteringWebhooks] = useState(false)
   const [newDeliveryDate, setNewDeliveryDate] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
@@ -867,6 +1088,10 @@ function App() {
     window.localStorage.setItem(customBatModelStorageKey, JSON.stringify(customBatModels))
   }, [customBatModels])
 
+  useEffect(() => {
+    window.localStorage.setItem(orderJobStorageKey, JSON.stringify(orderJobs))
+  }, [orderJobs])
+
   const loadRemoteState = useEffectEvent(async () => {
     try {
       const response = await fetch('/api/state')
@@ -881,6 +1106,9 @@ function App() {
         (record) => normalizeProducedBatRecord(record),
       )
       const localCustomBatModels = safeReadStorage<BatModelProduct[]>(customBatModelStorageKey, [])
+      const localOrderJobs = safeReadStorage<OrderJob[]>(orderJobStorageKey, []).map((job) =>
+        normalizeOrderJob(job),
+      )
 
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
@@ -891,6 +1119,9 @@ function App() {
         : []
       const remoteCustomBatModels = Array.isArray(remote.customBatModels)
         ? remote.customBatModels
+        : []
+      const remoteOrderJobs = Array.isArray(remote.orderJobs)
+        ? remote.orderJobs.map((job) => normalizeOrderJob(job))
         : []
 
       setBillets(
@@ -913,6 +1144,7 @@ function App() {
       setCustomBatModels(
         mergeRecordsByKey(remoteCustomBatModels, localCustomBatModels, (model) => model.id),
       )
+      setOrderJobs(mergeOrderJobs(remoteOrderJobs, localOrderJobs))
 
       setBackendStatus('connected')
       setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
@@ -927,8 +1159,12 @@ function App() {
   })
 
   useEffect(() => {
-    void loadRemoteState()
-  }, [loadRemoteState])
+    const timeout = window.setTimeout(() => {
+      void loadRemoteState()
+    }, 0)
+
+    return () => window.clearTimeout(timeout)
+  }, [])
 
   useEffect(() => {
     if (backendStatus !== 'offline') return
@@ -938,7 +1174,7 @@ function App() {
     }, 10000)
 
     return () => window.clearInterval(retry)
-  }, [backendStatus, loadRemoteState])
+  }, [backendStatus])
 
   useEffect(() => {
     let cancelled = false
@@ -981,6 +1217,7 @@ function App() {
             players,
             producedBats,
             customBatModels,
+            orderJobs,
           } satisfies RemoteState),
         })
         if (!response.ok) throw new Error('Sync failed')
@@ -1003,7 +1240,7 @@ function App() {
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [backendStatus, billets, players, producedBats, customBatModels])
+  }, [backendStatus, billets, players, producedBats, customBatModels, orderJobs])
 
   const deliveryDateOptions = Array.from(
     new Set(billets.map((billet) => billet.deliveryDate).filter(Boolean)),
@@ -1152,6 +1389,47 @@ function App() {
     selectedShopifyProduct?.variants.find(
       (variant) => variant.id === producedBatDraft.shopifyVariantId,
     ) ?? null
+  const openOrderJobs = orderJobs.filter(
+    (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
+  )
+  const readyOrderJobs = orderJobs.filter(
+    (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
+  )
+  const filteredOrderJobs = orderJobs.filter((job) => {
+    const searchable = [
+      job.shopifyOrderName,
+      job.shopifyDraftOrderName,
+      job.customerName,
+      job.customerEmail,
+      job.productTitle,
+      job.variantTitle,
+      job.origin,
+      job.financialStatus,
+      job.fulfillmentStatus,
+      job.invoiceStatus,
+      job.productionStatus,
+      job.salesRep,
+      job.dueDate,
+      job.assignedBilletId
+        ? billets.find((billet) => billet.id === job.assignedBilletId)?.barcode ?? job.assignedBilletId
+        : '',
+      job.specs.model,
+      job.specs.length,
+      job.specs.targetWeight,
+      job.specs.wood,
+      job.specs.notes,
+      job.notes,
+      job.internalNotes,
+    ]
+      .join(' ')
+      .toLowerCase()
+
+    const matchesQuery = searchable.includes(orderQuery.toLowerCase())
+    const matchesStatus =
+      orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
+
+    return matchesQuery && matchesStatus
+  })
 
   const filteredBatModels = allBatModels.filter((model) => {
     const modelText = [
@@ -1235,6 +1513,186 @@ function App() {
   function updateStatus(id: string, status: BilletStatus) {
     setBillets((current) =>
       current.map((billet) => (billet.id === id ? { ...billet, status } : billet)),
+    )
+  }
+
+  function updateSalesDraftField<K extends keyof SalesOrderDraft>(
+    key: K,
+    value: SalesOrderDraft[K],
+  ) {
+    setSalesOrderDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function updateSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
+    setSalesOrderDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+    }))
+  }
+
+  function addSalesLine() {
+    setSalesOrderDraft((current) => ({
+      ...current,
+      lines: [...current.lines, emptySalesLine()],
+    }))
+  }
+
+  function removeSalesLine(id: string) {
+    setSalesOrderDraft((current) => ({
+      ...current,
+      lines: current.lines.length === 1 ? current.lines : current.lines.filter((line) => line.id !== id),
+    }))
+  }
+
+  function mergeIncomingOrderJobs(incomingJobs: OrderJob[]) {
+    setOrderJobs((current) =>
+      mergeOrderJobs(
+        incomingJobs.map((job) => normalizeOrderJob(job)),
+        current,
+      ),
+    )
+  }
+
+  async function createSalesDraftOrder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const hasInvalidLine = salesOrderDraft.lines.some(
+      (line) =>
+        (!line.variantId && (!line.title.trim() || !line.unitPrice.trim())) ||
+        !line.quantity ||
+        line.quantity < 1,
+    )
+
+    if (!salesOrderDraft.customerEmail.trim() || hasInvalidLine) {
+      setOrderActionMessage('Add a customer email and complete each line before creating the draft.')
+      return
+    }
+
+    try {
+      setIsCreatingDraftOrder(true)
+      setOrderActionMessage('Creating Shopify draft order...')
+      const response = await fetch('/api/sales-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(salesOrderDraft),
+      })
+      const payload = (await response.json()) as {
+        ok?: boolean
+        message?: string
+        invoiceSent?: boolean
+        orderJobs?: OrderJob[]
+        draftOrder?: { name?: string }
+      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Draft order failed')
+
+      mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      setSalesOrderDraft(emptySalesOrderDraft())
+      setOrderActionMessage(
+        `${payload.draftOrder?.name ?? 'Draft order'} created${
+          payload.invoiceSent ? ' and invoice sent' : ''
+        }.`,
+      )
+    } catch (error) {
+      setOrderActionMessage(error instanceof Error ? error.message : 'Could not create draft order.')
+    } finally {
+      setIsCreatingDraftOrder(false)
+    }
+  }
+
+  async function importRecentOrders() {
+    try {
+      setIsImportingOrders(true)
+      setOrderActionMessage('Importing recent Shopify orders...')
+      const response = await fetch('/api/orders/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ first: 50 }),
+      })
+      const payload = (await response.json()) as {
+        ok?: boolean
+        message?: string
+        importedOrders?: number
+        orderJobs?: OrderJob[]
+      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Order import failed')
+
+      mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      setOrderActionMessage(
+        `Imported ${payload.importedOrders ?? 0} recent Shopify order${
+          payload.importedOrders === 1 ? '' : 's'
+        }.`,
+      )
+    } catch (error) {
+      setOrderActionMessage(error instanceof Error ? error.message : 'Could not import orders.')
+    } finally {
+      setIsImportingOrders(false)
+    }
+  }
+
+  async function registerOrderWebhooks() {
+    try {
+      setIsRegisteringWebhooks(true)
+      setOrderActionMessage('Registering Shopify order webhooks...')
+      const response = await fetch('/api/webhooks/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({}),
+      })
+      const payload = (await response.json()) as {
+        ok?: boolean
+        message?: string
+        subscriptions?: unknown[]
+      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Webhook setup failed')
+
+      setOrderActionMessage(
+        `Website order webhooks are connected for ${payload.subscriptions?.length ?? 0} topics.`,
+      )
+    } catch (error) {
+      setOrderActionMessage(error instanceof Error ? error.message : 'Could not register webhooks.')
+    } finally {
+      setIsRegisteringWebhooks(false)
+    }
+  }
+
+  async function sendInvoiceForJob(job: OrderJob) {
+    if (!job.shopifyDraftOrderId) return
+
+    try {
+      setOrderActionMessage(`Sending invoice for ${job.shopifyDraftOrderName || 'draft order'}...`)
+      const response = await fetch('/api/draft-orders/send-invoice', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ draftOrderId: job.shopifyDraftOrderId }),
+      })
+      const payload = (await response.json()) as { ok?: boolean; message?: string }
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Invoice send failed')
+
+      updateOrderJob(job.id, { invoiceStatus: 'sent' })
+      setOrderActionMessage(`Invoice sent for ${job.shopifyDraftOrderName || 'draft order'}.`)
+    } catch (error) {
+      setOrderActionMessage(error instanceof Error ? error.message : 'Could not send invoice.')
+    }
+  }
+
+  function updateOrderJob(id: string, patch: Partial<OrderJob>) {
+    setOrderJobs((current) =>
+      current.map((job) =>
+        job.id === id
+          ? {
+              ...job,
+              ...patch,
+              updatedAt: new Date().toISOString(),
+            }
+          : job,
+      ),
     )
   }
 
@@ -1512,6 +1970,13 @@ function App() {
               onClick={() => setActiveSection('inventory')}
             >
               Inventory
+            </button>
+            <button
+              type="button"
+              className={activeSection === 'orders' ? 'active' : ''}
+              onClick={() => setActiveSection('orders')}
+            >
+              Orders
             </button>
             <button
               type="button"
@@ -2192,6 +2657,486 @@ function App() {
             </div>
           </section>
         </>
+      ) : activeSection === 'orders' ? (
+        <section className="orders-page">
+          <section className="metrics-grid" aria-label="Order flow summary">
+            <article>
+              <span>Open jobs</span>
+              <strong>{openOrderJobs.length}</strong>
+            </article>
+            <article>
+              <span>Ready / cutting</span>
+              <strong>{readyOrderJobs.length}</strong>
+            </article>
+            <article>
+              <span>Website jobs</span>
+              <strong>{orderJobs.filter((job) => job.origin === 'website').length}</strong>
+            </article>
+            <article>
+              <span>Sales intake</span>
+              <strong>{orderJobs.filter((job) => job.origin === 'internal_sales').length}</strong>
+            </article>
+          </section>
+
+          <section className="orders-layout">
+            <section className="panel order-intake-panel">
+              <div className="section-heading">
+                <p className="eyebrow">Sales intake</p>
+                <h2>Create a Shopify invoice order</h2>
+              </div>
+
+              <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
+                <div className="form-instructions">
+                  <strong>Internal sales orders start as Shopify draft orders</strong>
+                  <p>
+                    Sales reps can enter phone, team, or custom orders here. The app creates
+                    the Shopify draft order, sends the invoice when selected, and drops each
+                    line into the production queue.
+                  </p>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Customer name
+                    <input
+                      value={salesOrderDraft.customerName}
+                      placeholder="Example: Denver Baseball Club"
+                      onChange={(event) => updateSalesDraftField('customerName', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Customer email
+                    <input
+                      type="email"
+                      value={salesOrderDraft.customerEmail}
+                      placeholder="billing@example.com"
+                      onChange={(event) => updateSalesDraftField('customerEmail', event.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Sales rep
+                    <input
+                      value={salesOrderDraft.salesRep}
+                      placeholder="Example: Matt"
+                      onChange={(event) => updateSalesDraftField('salesRep', event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Due date
+                    <input
+                      type="date"
+                      value={salesOrderDraft.dueDate}
+                      onChange={(event) => updateSalesDraftField('dueDate', event.target.value)}
+                    />
+                  </label>
+                </div>
+
+                <div className="sales-line-list">
+                  {salesOrderDraft.lines.map((line, index) => {
+                    const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
+                    const lineVariant = lineProduct?.variants.find(
+                      (variant) => variant.id === line.variantId,
+                    )
+
+                    return (
+                      <article className="sales-line-card" key={line.id}>
+                        <div className="split-heading">
+                          <div>
+                            <span className="profile-type-pill">Line {index + 1}</span>
+                            <h3>{lineProduct?.name || line.title || 'Custom bat'}</h3>
+                          </div>
+                          {salesOrderDraft.lines.length > 1 ? (
+                            <button
+                              type="button"
+                              className="secondary-button destructive-button compact-button"
+                              onClick={() => removeSalesLine(line.id)}
+                            >
+                              Remove
+                            </button>
+                          ) : null}
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Shopify product
+                            <select
+                              value={line.productId}
+                              onChange={(event) => {
+                                const product = shopifyCatalog.find(
+                                  (item) => item.id === event.target.value,
+                                )
+                                updateSalesLine(line.id, {
+                                  productId: event.target.value,
+                                  variantId: product?.variants[0]?.id ?? '',
+                                  title: product?.name ?? line.title,
+                                })
+                              }}
+                            >
+                              <option value="">Custom line item</option>
+                              {shopifyCatalog.map((product) => (
+                                <option key={product.id} value={product.id}>
+                                  {product.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Variant
+                            <select
+                              value={line.variantId}
+                              disabled={!lineProduct}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { variantId: event.target.value })
+                              }
+                            >
+                              <option value="">
+                                {lineProduct ? 'Select variant' : 'Choose a product first'}
+                              </option>
+                              {lineProduct?.variants.map((variant) => (
+                                <option key={variant.id} value={variant.id}>
+                                  {variant.title}
+                                  {variant.sku ? ` / ${variant.sku}` : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Custom title
+                            <input
+                              value={line.title}
+                              placeholder="Example: Custom Pro Model Team Order"
+                              disabled={Boolean(lineProduct)}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { title: event.target.value })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Unit price
+                            <input
+                              inputMode="decimal"
+                              value={line.unitPrice}
+                              placeholder={lineVariant ? 'Shopify price' : 'Example: 189.00'}
+                              disabled={Boolean(lineVariant)}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { unitPrice: event.target.value })
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Quantity
+                            <input
+                              type="number"
+                              min="1"
+                              value={line.quantity}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { quantity: Number(event.target.value) })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Model / turn
+                            <input
+                              value={line.model}
+                              placeholder="Example: T141, CS271, team custom"
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { model: event.target.value })
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Length
+                            <input
+                              value={line.length}
+                              placeholder="Example: 34"
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { length: event.target.value })
+                              }
+                            />
+                          </label>
+                          <label>
+                            Target weight
+                            <input
+                              value={line.targetWeight}
+                              placeholder="Example: 31.5"
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { targetWeight: event.target.value })
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Wood
+                            <select
+                              value={line.wood}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, {
+                                  wood: event.target.value as SalesOrderLineDraft['wood'],
+                                })
+                              }
+                            >
+                              {speciesOptions.map((species) => (
+                                <option key={species}>{species}</option>
+                              ))}
+                              <option>Other</option>
+                            </select>
+                          </label>
+                        </div>
+
+                        <label className="notes-field">
+                          Line notes
+                          <textarea
+                            value={line.notes}
+                            placeholder="Color, engraving, player specs, knobs, cups, team notes"
+                            onChange={(event) =>
+                              updateSalesLine(line.id, { notes: event.target.value })
+                            }
+                          />
+                        </label>
+                      </article>
+                    )
+                  })}
+                </div>
+
+                <button type="button" className="secondary-button" onClick={addSalesLine}>
+                  Add another line
+                </button>
+
+                <label className="notes-field">
+                  Internal order notes
+                  <textarea
+                    value={salesOrderDraft.notes}
+                    placeholder="Payment terms, delivery promise, team contact, or packaging notes"
+                    onChange={(event) => updateSalesDraftField('notes', event.target.value)}
+                  />
+                </label>
+
+                <label className="checkbox-row invoice-toggle">
+                  <input
+                    type="checkbox"
+                    checked={salesOrderDraft.sendInvoice}
+                    onChange={(event) => updateSalesDraftField('sendInvoice', event.target.checked)}
+                  />
+                  <span>Send Shopify invoice after draft order creation</span>
+                </label>
+
+                <button type="submit" disabled={isCreatingDraftOrder}>
+                  {isCreatingDraftOrder ? 'Creating draft...' : 'Create draft order'}
+                </button>
+              </form>
+            </section>
+
+            <section className="panel order-queue-panel">
+              <div className="inventory-toolbar profile-toolbar">
+                <div className="section-heading">
+                  <p className="eyebrow">Order flow</p>
+                  <h2>Production queue</h2>
+                </div>
+                <div className="filters">
+                  <input
+                    aria-label="Search order jobs"
+                    placeholder="Search customer, model, order, billet..."
+                    value={orderQuery}
+                    onChange={(event) => setOrderQuery(event.target.value)}
+                  />
+                  <select
+                    aria-label="Filter production status"
+                    value={orderStatusFilter}
+                    onChange={(event) =>
+                      setOrderStatusFilter(event.target.value as 'all' | ProductionStatus)
+                    }
+                  >
+                    <option value="all">All statuses</option>
+                    {Object.entries(productionStatusLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="order-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={importRecentOrders}
+                  disabled={isImportingOrders}
+                >
+                  {isImportingOrders ? 'Importing...' : 'Import recent website orders'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={registerOrderWebhooks}
+                  disabled={isRegisteringWebhooks}
+                >
+                  {isRegisteringWebhooks ? 'Connecting...' : 'Connect website webhooks'}
+                </button>
+              </div>
+
+              {orderActionMessage ? <p className="helper-text">{orderActionMessage}</p> : null}
+
+              <div className="order-job-list">
+                {filteredOrderJobs.length === 0 ? (
+                  <p className="empty-state">No order jobs match this view yet.</p>
+                ) : (
+                  filteredOrderJobs.map((job) => {
+                    const assignedBillet = billets.find((billet) => billet.id === job.assignedBilletId)
+                    const availableBilletsForJob = billets.filter(
+                      (billet) => billet.status === 'storage' || billet.id === job.assignedBilletId,
+                    )
+
+                    return (
+                      <article className="order-job-card" key={job.id}>
+                        <div className="split-heading">
+                          <div>
+                            <span className="profile-type-pill">
+                              {job.origin === 'website' ? 'Website' : 'Sales intake'}
+                            </span>
+                            <h3>
+                              {job.shopifyOrderName ||
+                                job.shopifyDraftOrderName ||
+                                'Unnumbered Shopify order'}
+                            </h3>
+                            <p>
+                              {job.customerName || job.customerEmail || 'No customer saved'} ·{' '}
+                              {job.productTitle}
+                              {job.variantTitle ? ` / ${job.variantTitle}` : ''}
+                            </p>
+                          </div>
+                          <div className="profile-actions">
+                            <span className={`pill ${job.invoiceStatus === 'paid' ? 'yes' : ''}`}>
+                              {invoiceStatusLabels[job.invoiceStatus]}
+                            </span>
+                            <span className="profile-count">Qty {job.quantity}</span>
+                          </div>
+                        </div>
+
+                        <div className="order-job-grid">
+                          <div className="compatible-list">
+                            <span>Build specs</span>
+                            <p>Model: {job.specs.model || 'Not specified'}</p>
+                            <p>Length: {job.specs.length || 'N/A'}</p>
+                            <p>Target weight: {job.specs.targetWeight || 'N/A'}</p>
+                            <p>Wood: {job.specs.wood || 'N/A'}</p>
+                            {job.specs.notes ? <p>{job.specs.notes}</p> : null}
+                          </div>
+
+                          <div className="job-controls">
+                            <label>
+                              Production status
+                              <select
+                                value={job.productionStatus}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, {
+                                    productionStatus: event.target.value as ProductionStatus,
+                                  })
+                                }
+                              >
+                                {Object.entries(productionStatusLabels).map(([value, label]) => (
+                                  <option key={value} value={value}>
+                                    {label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <label>
+                              Assigned billet
+                              <select
+                                value={job.assignedBilletId}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { assignedBilletId: event.target.value })
+                                }
+                              >
+                                <option value="">No billet assigned</option>
+                                {availableBilletsForJob.map((billet) => (
+                                  <option key={billet.id} value={billet.id}>
+                                    {getBilletLabel(billet)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <div className="form-row">
+                              <label>
+                                Due date
+                                <input
+                                  type="date"
+                                  value={job.dueDate}
+                                  onChange={(event) =>
+                                    updateOrderJob(job.id, { dueDate: event.target.value })
+                                  }
+                                />
+                              </label>
+                              <label>
+                                Sales rep
+                                <input
+                                  value={job.salesRep}
+                                  onChange={(event) =>
+                                    updateOrderJob(job.id, { salesRep: event.target.value })
+                                  }
+                                />
+                              </label>
+                            </div>
+
+                            <label className="notes-field">
+                              Internal notes
+                              <textarea
+                                value={job.internalNotes}
+                                placeholder="Production, invoicing, or customer communication notes"
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { internalNotes: event.target.value })
+                                }
+                              />
+                            </label>
+
+                            {job.shopifyDraftOrderId && job.invoiceStatus === 'draft' ? (
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => sendInvoiceForJob(job)}
+                              >
+                                Send Shopify invoice
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="order-job-footer">
+                          <p>
+                            Payment: {job.financialStatus || 'unknown'} · Fulfillment:{' '}
+                            {job.fulfillmentStatus || 'unknown'}
+                          </p>
+                          <p>
+                            {assignedBillet
+                              ? `Billet ${assignedBillet.barcode} assigned`
+                              : 'No billet assigned yet'}
+                          </p>
+                        </div>
+                      </article>
+                    )
+                  })
+                )}
+              </div>
+            </section>
+          </section>
+        </section>
       ) : activeSection === 'players' ? (
         <section className="profiles-page">
           <section className="panel profile-entry-panel">

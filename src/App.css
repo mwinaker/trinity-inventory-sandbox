@@ -449,7 +449,8 @@ button:hover {
 
 .players-layout,
 .profiles-page,
-.models-page {
+.models-page,
+.orders-layout {
   display: grid;
   grid-template-columns: minmax(300px, 0.36fr) minmax(0, 1fr);
   gap: 24px;
@@ -462,6 +463,97 @@ button:hover {
 
 .models-page {
   grid-template-columns: 1fr;
+}
+
+.orders-page,
+.order-intake-panel,
+.order-queue-panel,
+.order-intake-form,
+.sales-line-list,
+.order-job-list {
+  display: grid;
+  gap: 16px;
+}
+
+.order-queue-panel {
+  align-content: start;
+}
+
+.orders-layout {
+  grid-template-columns: minmax(380px, 0.9fr) minmax(0, 1.1fr);
+}
+
+.sales-line-card,
+.order-job-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid rgba(72, 50, 31, 0.13);
+  border-radius: 22px;
+  padding: 18px;
+  background: #fffaf0;
+}
+
+.sales-line-card h3,
+.order-job-card h3 {
+  margin: 8px 0 0;
+  color: #26190f;
+  font-size: clamp(1.5rem, 2.6vw, 2rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.sales-line-card p,
+.order-job-card p {
+  margin: 6px 0 0;
+  color: #5d4b3c;
+}
+
+.compact-button {
+  width: auto;
+  min-height: 42px;
+  margin: 0;
+  padding: 0 14px;
+}
+
+.invoice-toggle {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.order-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.order-actions button {
+  min-height: 54px;
+}
+
+.order-job-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.38fr) minmax(0, 0.62fr);
+  gap: 16px;
+}
+
+.job-controls {
+  display: grid;
+  gap: 14px;
+}
+
+.order-job-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgba(72, 50, 31, 0.12);
+  padding-top: 12px;
+  flex-wrap: wrap;
+}
+
+.order-job-footer p {
+  margin: 0;
+  color: #735f4d;
+  font-size: 0.9rem;
 }
 
 .players-sidebar,
@@ -847,6 +939,9 @@ td select {
   .players-layout,
   .profiles-page,
   .models-page,
+  .orders-layout,
+  .order-job-grid,
+  .order-actions,
   .cost-results,
   .profile-toolbar,
   .inventory-toolbar,
