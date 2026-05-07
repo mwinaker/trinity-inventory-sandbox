@@ -29,6 +29,8 @@ Required environment variables:
 - `SHOPIFY_SHOP`
 - `SHOPIFY_ADMIN_ACCESS_TOKEN`
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
+- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
+- `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
 
 Render:
 

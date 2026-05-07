@@ -28,6 +28,21 @@ const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
 const shopDomain = process.env.SHOPIFY_SHOP
 const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
 const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? process.env.SHOPIFY_API_SECRET
+const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
+const defaultInternalOrderNotificationEmails = [
+  'matt@trinitybats.com',
+  'jeremy@trinitybats.com',
+  'stefan@trinitybats.com',
+  'keith@trinitybats.com',
+]
+const requiredInternalOrderNotificationEmails = ['matt@trinitybats.com']
+const internalOrderNotificationEmails = parseEmailList(
+  process.env.TRINITY_ORDER_NOTIFICATION_EMAILS ??
+    process.env.SHOPIFY_STAFF_NOTIFICATION_BCC ??
+    '',
+  defaultInternalOrderNotificationEmails,
+  requiredInternalOrderNotificationEmails,
+)
 
 const resourceConfigs = {
   billets: {
@@ -150,8 +165,17 @@ const resourceConfigs = {
         fieldValue('shopify_draft_order_id', item.shopifyDraftOrderId),
         fieldValue('shopify_draft_order_name', item.shopifyDraftOrderName),
         fieldValue('line_item_id', item.lineItemId),
+        fieldValue('order_submitted_at', item.orderSubmittedAt),
         fieldValue('customer_name', item.customerName),
         fieldValue('customer_email', item.customerEmail),
+        fieldValue('player_name', item.playerName),
+        fieldValue('player_email', item.playerEmail),
+        fieldValue('billing_different', item.billingDifferent ? 'true' : ''),
+        fieldValue('billing_name', item.billingName),
+        fieldValue('billing_email', item.billingEmail),
+        fieldValue('billing_phone', item.billingPhone),
+        fieldValue('billing_company', item.billingCompany),
+        fieldValue('billing_relationship', item.billingRelationship),
         fieldValue('product_title', item.productTitle),
         fieldValue('variant_title', item.variantTitle),
         fieldValue('quantity', item.quantity),
@@ -160,12 +184,12 @@ const resourceConfigs = {
         fieldValue('invoice_status', item.invoiceStatus),
         fieldValue('production_status', item.productionStatus),
         fieldValue('assigned_billet_id', item.assignedBilletId),
-        fieldValue('due_date', item.dueDate),
         fieldValue('sales_rep', item.salesRep),
         fieldValue('total_price', item.totalPrice),
         fieldValue('specs_json', JSON.stringify(item.specs ?? {})),
         fieldValue('line_items_json', JSON.stringify(item.lineItems ?? [])),
         fieldValue('internal_notes', item.internalNotes),
+        fieldValue('created_at', item.createdAt),
         fieldValue('updated_at', item.updatedAt),
       ].filter(Boolean)
     },
@@ -176,8 +200,17 @@ const resourceConfigs = {
       definitionField('shopify_draft_order_id', 'Shopify Draft Order ID', 'single_line_text_field'),
       definitionField('shopify_draft_order_name', 'Shopify Draft Order Name', 'single_line_text_field'),
       definitionField('line_item_id', 'Line Item ID', 'single_line_text_field'),
+      definitionField('order_submitted_at', 'Order Submitted At', 'single_line_text_field'),
       definitionField('customer_name', 'Customer Name', 'single_line_text_field'),
       definitionField('customer_email', 'Customer Email', 'single_line_text_field'),
+      definitionField('player_name', 'Player Name', 'single_line_text_field'),
+      definitionField('player_email', 'Player Email', 'single_line_text_field'),
+      definitionField('billing_different', 'Billing Different', 'single_line_text_field'),
+      definitionField('billing_name', 'Billing Name', 'single_line_text_field'),
+      definitionField('billing_email', 'Billing Email', 'single_line_text_field'),
+      definitionField('billing_phone', 'Billing Phone', 'single_line_text_field'),
+      definitionField('billing_company', 'Billing Company', 'single_line_text_field'),
+      definitionField('billing_relationship', 'Billing Relationship', 'single_line_text_field'),
       definitionField('product_title', 'Product Title', 'single_line_text_field'),
       definitionField('variant_title', 'Variant Title', 'single_line_text_field'),
       definitionField('quantity', 'Quantity', 'number_integer'),
@@ -186,12 +219,12 @@ const resourceConfigs = {
       definitionField('invoice_status', 'Invoice Status', 'single_line_text_field'),
       definitionField('production_status', 'Production Status', 'single_line_text_field'),
       definitionField('assigned_billet_id', 'Assigned Billet ID', 'single_line_text_field'),
-      definitionField('due_date', 'Due Date', 'single_line_text_field'),
       definitionField('sales_rep', 'Sales Rep', 'single_line_text_field'),
       definitionField('total_price', 'Total Price', 'single_line_text_field'),
       definitionField('specs_json', 'Specs JSON', 'json'),
       definitionField('line_items_json', 'Line Items JSON', 'json'),
       definitionField('internal_notes', 'Internal Notes', 'multi_line_text_field'),
+      definitionField('created_at', 'Created At', 'single_line_text_field'),
       definitionField('updated_at', 'Updated At', 'single_line_text_field'),
     ],
   },
@@ -212,6 +245,32 @@ const resourceConfigs = {
       definitionField('name', 'Name', 'single_line_text_field'),
       definitionField('category', 'Category', 'single_line_text_field'),
       definitionField('url', 'URL', 'single_line_text_field'),
+    ],
+  },
+  billingContacts: {
+    type: '$app:trinity_billing_contact',
+    name: 'Trinity Billing Contact',
+    deleteMissing: false,
+    labelFor(item) {
+      return `${item.name || item.id} ${item.company || ''}`.trim()
+    },
+    fieldsFor(item) {
+      return [
+        fieldValue('name', item.name),
+        fieldValue('email', item.email),
+        fieldValue('phone', item.phone),
+        fieldValue('company', item.company),
+        fieldValue('relationship', item.relationship),
+        fieldValue('notes', item.notes),
+      ].filter(Boolean)
+    },
+    fieldDefinitions: [
+      definitionField('name', 'Name', 'single_line_text_field'),
+      definitionField('email', 'Email', 'single_line_text_field'),
+      definitionField('phone', 'Phone', 'single_line_text_field'),
+      definitionField('company', 'Company', 'single_line_text_field'),
+      definitionField('relationship', 'Relationship', 'single_line_text_field'),
+      definitionField('notes', 'Notes', 'multi_line_text_field'),
     ],
   },
 }
@@ -280,13 +339,15 @@ app.get('/api/state', async (_request, response) => {
     }
 
     await ensureDefinitions()
-    const [billets, players, producedBats, customBatModels, orderJobs] = await Promise.all([
-      listRecords(resourceConfigs.billets),
-      listRecords(resourceConfigs.players),
-      listRecords(resourceConfigs.producedBats),
-      listRecords(resourceConfigs.customBatModels),
-      listRecords(resourceConfigs.orderJobs),
-    ])
+    const [billets, players, producedBats, customBatModels, orderJobs, billingContacts] =
+      await Promise.all([
+        listRecords(resourceConfigs.billets),
+        listRecords(resourceConfigs.players),
+        listRecords(resourceConfigs.producedBats),
+        listRecords(resourceConfigs.customBatModels),
+        listRecords(resourceConfigs.orderJobs),
+        listRecords(resourceConfigs.billingContacts),
+      ])
 
     response.json({
       ok: true,
@@ -295,6 +356,7 @@ app.get('/api/state', async (_request, response) => {
       producedBats,
       customBatModels,
       orderJobs,
+      billingContacts,
     })
   } catch (error) {
     response.status(500).json({
@@ -345,6 +407,9 @@ app.put('/api/state', async (request, response) => {
       upsertRecords(resourceConfigs.orderJobs, payload.orderJobs ?? [], {
         deleteMissing: false,
       }),
+      upsertRecords(resourceConfigs.billingContacts, payload.billingContacts ?? [], {
+        deleteMissing: false,
+      }),
     ])
 
     await syncOrderJobMetafields(payload.orderJobs ?? [])
@@ -373,24 +438,38 @@ app.post('/api/sales-orders', async (request, response) => {
 
     const payload = request.body ?? {}
     const intakeId = createPlainId('sales')
-    const draftInput = buildDraftOrderInput(payload, intakeId)
+    const orderSubmittedAt = new Date().toISOString()
+    const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
+    const shouldSendInvoice = payload.sendInvoice !== false || isZeroDollarOrder
+    const orderInput = buildOrderCreateInput(payload, intakeId, orderSubmittedAt)
 
     await ensureDefinitions()
-    const draftOrder = await createDraftOrder(draftInput)
+    const order = await createPendingOrder(orderInput, {
+      sendReceipt: shouldSendInvoice && isZeroDollarOrder,
+    })
 
-    let invoiceSent = false
-    if (payload.sendInvoice !== false) {
-      await sendDraftOrderInvoice(draftOrder.id)
+    let invoiceSent = shouldSendInvoice && isZeroDollarOrder
+    if (shouldSendInvoice && !isZeroDollarOrder && order?.id) {
+      await sendOrderInvoice(order.id, buildOrderInvoiceEmailInput(payload, order))
       invoiceSent = true
     }
 
-    const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, invoiceSent)
+    const jobs = mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt)
     await Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+    await syncOrderJobMetafields(jobs)
 
     response.json({
       ok: true,
-      draftOrder,
+      order,
       invoiceSent,
+      zeroDollarDocumentationInvoice: isZeroDollarOrder,
+      emailNotificationMethod: shouldSendInvoice
+        ? isZeroDollarOrder
+          ? 'order_receipt'
+          : 'order_invoice'
+        : 'none',
+      internalNotificationRecipients: internalOrderNotificationEmails,
+      staffNotificationFlow: 'shopify_new_order',
       orderJobs: jobs,
     })
   } catch (error) {
@@ -801,6 +880,7 @@ async function listCatalogProducts() {
                 nodes {
                   id
                   title
+                  price
                   inventoryQuantity
                   sku
                 }
@@ -815,22 +895,25 @@ async function listCatalogProducts() {
     const connection = result?.data?.products
     const nodes = connection?.nodes ?? []
     allProducts.push(
-      ...nodes.map((product) => ({
-        id: product.id,
-        name: product.title,
-        category: product.productType || 'Uncategorized',
-        handle: product.handle,
-        url: product.onlineStoreUrl || `https://${shopDomain}/products/${product.handle}`,
-        status: product.status,
-        tags: product.tags ?? [],
-        imageUrl: product.featuredImage?.url ?? '',
-        variants: (product.variants?.nodes ?? []).map((variant) => ({
-          id: variant.id,
-          title: variant.title,
-          inventoryQuantity: variant.inventoryQuantity ?? 0,
-          sku: variant.sku ?? '',
+      ...nodes
+        .filter(isBatProductLike)
+        .map((product) => ({
+          id: product.id,
+          name: product.title,
+          category: product.productType || 'Uncategorized',
+          handle: product.handle,
+          url: product.onlineStoreUrl || `https://${shopDomain}/products/${product.handle}`,
+          status: product.status,
+          tags: product.tags ?? [],
+          imageUrl: product.featuredImage?.url ?? '',
+          variants: (product.variants?.nodes ?? []).map((variant) => ({
+            id: variant.id,
+            title: variant.title,
+            price: cleanString(variant.price),
+            inventoryQuantity: variant.inventoryQuantity ?? 0,
+            sku: variant.sku ?? '',
+          })),
         })),
-      })),
     )
 
     hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
@@ -903,6 +986,161 @@ async function createDraftOrder(input) {
   return result?.data?.draftOrderCreate?.draftOrder
 }
 
+async function createPendingOrder(order, options = {}) {
+  const result = await shopifyGraphQL(
+    `
+      mutation CreatePendingSalesOrder(
+        $order: OrderCreateOrderInput!
+        $options: OrderCreateOptionsInput
+      ) {
+        orderCreate(order: $order, options: $options) {
+          order {
+            id
+            name
+            email
+            createdAt
+            updatedAt
+            displayFinancialStatus
+            displayFulfillmentStatus
+            tags
+            note
+            customAttributes {
+              key
+              value
+            }
+            currentTotalPriceSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
+            }
+            customer {
+              id
+              displayName
+              email
+            }
+            lineItems(first: 50) {
+              nodes {
+                id
+                title
+                quantity
+                variant {
+                  id
+                  title
+                  sku
+                  product {
+                    id
+                    title
+                    productType
+                  }
+                }
+                customAttributes {
+                  key
+                  value
+                }
+              }
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      order,
+      options: {
+        inventoryBehaviour: 'DECREMENT_OBEYING_POLICY',
+        sendReceipt: Boolean(options.sendReceipt),
+        sendFulfillmentReceipt: false,
+      },
+    },
+  )
+
+  const errors = result?.data?.orderCreate?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Shopify order error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+
+  return result?.data?.orderCreate?.order
+}
+
+async function completeDraftOrderAsPending(draftOrderId) {
+  const result = await shopifyGraphQL(
+    `
+      mutation CompleteSalesDraftOrder($id: ID!) {
+        draftOrderComplete(id: $id) {
+          draftOrder {
+            id
+            name
+            status
+            order {
+              id
+              name
+              email
+              createdAt
+              updatedAt
+              displayFinancialStatus
+              displayFulfillmentStatus
+              tags
+              note
+              customAttributes {
+                key
+                value
+              }
+              currentTotalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              customer {
+                id
+                displayName
+                email
+              }
+              lineItems(first: 50) {
+                nodes {
+                  id
+                  title
+                  quantity
+                  variant {
+                    id
+                    title
+                    sku
+                    product {
+                      id
+                      title
+                      productType
+                    }
+                  }
+                  customAttributes {
+                    key
+                    value
+                  }
+                }
+              }
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    { id: draftOrderId },
+  )
+
+  const errors = result?.data?.draftOrderComplete?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Draft order completion error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+
+  return result?.data?.draftOrderComplete?.draftOrder
+}
+
 async function sendDraftOrderInvoice(draftOrderId) {
   const result = await shopifyGraphQL(
     `
@@ -925,6 +1163,31 @@ async function sendDraftOrderInvoice(draftOrderId) {
   const errors = result?.data?.draftOrderInvoiceSend?.userErrors ?? []
   if (errors.length > 0) {
     throw new Error(`Invoice send error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+}
+
+async function sendOrderInvoice(orderId, emailInput) {
+  const result = await shopifyGraphQL(
+    `
+      mutation SendOrderInvoice($orderId: ID!, $email: EmailInput) {
+        orderInvoiceSend(id: $orderId, email: $email) {
+          order {
+            id
+            name
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    { orderId, email: emailInput },
+  )
+
+  const errors = result?.data?.orderInvoiceSend?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Order invoice send error: ${errors.map((item) => item.message).join(', ')}`)
   }
 }
 
@@ -1045,8 +1308,15 @@ async function syncOrderJobMetafields(orderJobs) {
       orderMetafield(ownerId, 'production_job_id', job.id),
       orderMetafield(ownerId, 'production_status', job.productionStatus),
       orderMetafield(ownerId, 'assigned_billet', job.assignedBilletId),
-      orderMetafield(ownerId, 'due_date', job.dueDate),
+      orderMetafield(ownerId, 'order_submitted_at', job.orderSubmittedAt),
       orderMetafield(ownerId, 'sales_rep', job.salesRep),
+      orderMetafield(ownerId, 'player_name', job.playerName),
+      orderMetafield(ownerId, 'player_email', job.playerEmail),
+      orderMetafield(ownerId, 'billing_name', job.billingName),
+      orderMetafield(ownerId, 'billing_email', job.billingEmail),
+      orderMetafield(ownerId, 'billing_phone', job.billingPhone),
+      orderMetafield(ownerId, 'billing_company', job.billingCompany),
+      orderMetafield(ownerId, 'billing_relationship', job.billingRelationship),
       {
         namespace: 'trinity',
         key: 'specs',
@@ -1085,48 +1355,398 @@ async function syncOrderJobMetafields(orderJobs) {
   }
 }
 
-function buildDraftOrderInput(payload, intakeId) {
+function resolvePayer(payload) {
+  const billingDifferent = isTruthy(payload.billingDifferent)
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const playerEmail = cleanString(payload.playerEmail || payload.customerEmail)
+  const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
+
+  if (!billingDifferent) {
+    return {
+      name: playerName,
+      email: playerEmail,
+      phone: playerPhone,
+      company: '',
+      relationship: '',
+    }
+  }
+
+  return {
+    name: cleanString(payload.billingName || payload.customerName),
+    email: cleanString(payload.billingEmail || payload.customerEmail),
+    phone: cleanString(payload.billingPhone),
+    company: cleanString(payload.billingCompany),
+    relationship: cleanString(payload.billingRelationship),
+  }
+}
+
+function buildDirectOrderAddresses(payload) {
+  if (isTruthy(payload.billingDifferent)) {
+    return {
+      shippingAddress: null,
+      billingAddress: null,
+      billingAddressDifferent: false,
+    }
+  }
+
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
+  const shippingAddress = buildMailingAddressInput(payload, 'shipping', playerName, playerPhone)
+  const billingAddressDifferent = isTruthy(payload.billingAddressDifferent)
+  const billingAddress = billingAddressDifferent
+    ? buildMailingAddressInput(payload, 'billing', playerName, playerPhone)
+    : shippingAddress
+
+  return {
+    shippingAddress,
+    billingAddress,
+    billingAddressDifferent,
+  }
+}
+
+function buildMailingAddressInput(payload, prefix, fullName, phone) {
+  const address1 = cleanString(payload[`${prefix}Address1`])
+  const address2 = cleanString(payload[`${prefix}Address2`])
+  const city = cleanString(payload[`${prefix}City`])
+  const provinceCode = cleanString(payload[`${prefix}ProvinceCode`]).toUpperCase()
+  const zip = cleanString(payload[`${prefix}Zip`])
+  const countryCode = cleanString(payload[`${prefix}CountryCode`] || 'US').toUpperCase()
+
+  if (!address1 && !city && !provinceCode && !zip) return null
+
+  const { firstName, lastName } = splitName(fullName)
+  return {
+    ...(firstName ? { firstName } : {}),
+    ...(lastName ? { lastName } : {}),
+    ...(address1 ? { address1 } : {}),
+    ...(address2 ? { address2 } : {}),
+    ...(city ? { city } : {}),
+    ...(provinceCode ? { provinceCode } : {}),
+    ...(zip ? { zip } : {}),
+    ...(countryCode ? { countryCode } : {}),
+    ...(phone ? { phone } : {}),
+  }
+}
+
+function splitName(fullName) {
+  const parts = cleanString(fullName).split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return { firstName: '', lastName: '' }
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
+  return {
+    firstName: parts[0],
+    lastName: parts.slice(1).join(' '),
+  }
+}
+
+function formatMailingAddress(address) {
+  if (!address) return ''
+
+  return [
+    address.address1,
+    address.address2,
+    [address.city, address.provinceCode, address.zip].filter(Boolean).join(', '),
+    address.countryCode,
+  ]
+    .filter(Boolean)
+    .join(' | ')
+}
+
+function isZeroDollarSalesOrder(payload) {
+  const lines = Array.isArray(payload?.lines) ? payload.lines : []
+  if (lines.length === 0) return false
+
+  let total = 0
+  for (const line of lines) {
+    const priceText = cleanString(line?.unitPrice)
+    const quantity = Number(line?.quantity || 1)
+    const unitPrice = Number(priceText)
+    if (
+      priceText === '' ||
+      !Number.isFinite(unitPrice) ||
+      unitPrice < 0 ||
+      !Number.isFinite(quantity) ||
+      quantity < 1
+    ) {
+      return false
+    }
+    total += unitPrice * quantity
+  }
+
+  return Math.abs(total) < 0.005
+}
+
+function formatSalesLineShopifyTitle(line, isProOrder) {
+  const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+  if (!isProOrder) return title
+
+  return /^pro order\b/i.test(title) ? title : `Pro Order - ${title}`
+}
+
+function buildProOrderNotificationLabel(payload, payer) {
+  const playerName = cleanString(payload?.playerName || payload?.customerName)
+  const teamOrAgency = cleanString(payload?.billingCompany || payer?.company)
+  const payerName = cleanString(payload?.billingName || payer?.name)
+  const displayName = isTruthy(payload?.billingDifferent)
+    ? teamOrAgency || payerName || playerName
+    : playerName || teamOrAgency || payerName
+
+  return ['Pro Order', displayName].filter(Boolean).join(' - ').slice(0, 255)
+}
+
+function buildOrderInvoiceEmailInput(payload, order) {
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
+  const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
+  const payer = resolvePayer(payload)
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const billingCompany = cleanString(payload.billingCompany)
+  const customMessage = [
+    'A Trinity Bat Company invoice has been created from an internal sales order.',
+    hasProOrder ? 'Order type: Pro Order' : '',
+    isZeroDollarOrder ? '$0 sample order: no payment is due; invoice sent for documentation.' : '',
+    playerName ? `Player: ${playerName}` : '',
+    billingCompany ? `Team/agency: ${billingCompany}` : '',
+    cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const emailInput = {
+    to: payer.email,
+    subject: isZeroDollarOrder
+      ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Bat Company`
+      : `${order?.name ?? 'Shopify order'} invoice from Trinity Bat Company`,
+    customMessage,
+  }
+
+  if (internalOrderNotificationEmails.length > 0) {
+    emailInput.bcc = internalOrderNotificationEmails
+  }
+
+  return emailInput
+}
+
+function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const salesRep = cleanString(payload.salesRep)
-  const dueDate = cleanString(payload.dueDate)
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const playerEmail = cleanString(payload.playerEmail)
+  const billingDifferent = isTruthy(payload.billingDifferent)
+  const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
+  const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
+  const payer = resolvePayer(payload)
+  const proOrderNotificationLabel = hasProOrder
+    ? buildProOrderNotificationLabel(payload, payer)
+    : ''
+  const { shippingAddress, billingAddress, billingAddressDifferent } =
+    buildDirectOrderAddresses(payload)
+  const formattedShippingAddress = formatMailingAddress(shippingAddress)
+  const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
+    hasProOrder ? 'Order type: Pro Order' : '',
+    isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
+    playerName ? `Player: ${playerName}` : '',
+    playerEmail ? `Player email: ${playerEmail}` : '',
+    !billingDifferent && payer.phone ? `Player phone: ${payer.phone}` : '',
+    formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
+    billingAddressDifferent ? 'Billing address differs from shipping address' : '',
+    billingAddressDifferent && formattedBillingAddress
+      ? `Billing address: ${formattedBillingAddress}`
+      : '',
+    billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
+    billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
+    payer.company ? `Team/agency: ${payer.company}` : '',
+    payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
-    dueDate ? `Due date: ${dueDate}` : '',
+    orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
   ]
     .filter(Boolean)
     .join('\n')
 
   return {
-    email: cleanString(payload.customerEmail) || undefined,
+    email: payer.email || undefined,
+    phone: payer.phone || undefined,
+    currency: shopCurrencyCode,
+    financialStatus: 'PENDING',
+    ...(proOrderNotificationLabel
+      ? {
+          sourceName: proOrderNotificationLabel,
+          sourceIdentifier: intakeId,
+          poNumber: proOrderNotificationLabel,
+        }
+      : {}),
+    ...(shippingAddress ? { shippingAddress } : {}),
+    ...(billingAddress ? { billingAddress } : {}),
     note,
-    tags: ['Trinity Intake', 'Internal Sales'].concat(salesRep ? [`Sales Rep: ${salesRep}`] : []),
+    tags: ['Trinity Intake', 'Internal Sales'].concat(
+      salesRep ? [`Sales Rep: ${salesRep}`] : [],
+      playerName ? [`Player: ${playerName}`] : [],
+      hasProOrder ? ['Pro Order'] : [],
+    ),
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
       trinity_intake_id: intakeId,
+      trinity_has_pro_order: hasProOrder ? 'true' : '',
+      trinity_order_type: hasProOrder ? 'Pro Order' : '',
+      trinity_notification_label: proOrderNotificationLabel,
+      trinity_zero_dollar_sample: isZeroDollarOrder ? 'true' : '',
+      trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
-      trinity_due_date: dueDate,
+      trinity_player_name: playerName,
+      trinity_player_email: playerEmail,
+      trinity_player_phone: !billingDifferent ? payer.phone : '',
+      trinity_shipping_address: formattedShippingAddress,
+      trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
+      trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
+      trinity_billing_different: billingDifferent ? 'true' : '',
+      trinity_billing_name: payer.name,
+      trinity_billing_email: payer.email,
+      trinity_billing_phone: payer.phone,
+      trinity_billing_company: payer.company,
+      trinity_billing_relationship: payer.relationship,
+      trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines.map((line) => {
-      const customAttributes = compactAttributes({
-        trinity_model: line.model,
+      const unitPrice = toMoneyBagInput(line.unitPrice)
+      const isProOrder = isTruthy(line.isProOrder)
+      const variantId = isProOrder ? '' : cleanString(line.variantId)
+      const title = formatSalesLineShopifyTitle(line, isProOrder)
+      const properties = compactLineItemProperties({
+        'Order type': isProOrder ? 'Pro Order' : '',
+        trinity_player_name: playerName,
+        trinity_pro_order: isProOrder ? 'true' : '',
+        trinity_model: cleanString(line.title || line.model),
         trinity_length: line.length,
         trinity_weight: line.targetWeight,
         trinity_wood: line.wood,
+        trinity_handle_color: line.handleColor,
+        trinity_barrel_color: line.barrelColor,
+        trinity_logo_color: line.logoColor,
+        trinity_engraving: line.engraving,
+        trinity_cupped: line.cupped,
         trinity_notes: line.notes,
+        trinity_product_title: line.title,
       })
 
-      if (line.variantId) {
+      return {
+        ...(variantId ? { variantId } : {}),
+        title,
+        quantity: Number(line.quantity || 1),
+        requiresShipping: true,
+        taxable: false,
+        ...(unitPrice ? { priceSet: unitPrice } : {}),
+        properties,
+      }
+    }),
+  }
+}
+
+function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const salesRep = cleanString(payload.salesRep)
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const playerEmail = cleanString(payload.playerEmail)
+  const billingDifferent = isTruthy(payload.billingDifferent)
+  const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
+  const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
+  const payer = resolvePayer(payload)
+  const { shippingAddress, billingAddress, billingAddressDifferent } =
+    buildDirectOrderAddresses(payload)
+  const formattedShippingAddress = formatMailingAddress(shippingAddress)
+  const formattedBillingAddress = formatMailingAddress(billingAddress)
+  const note = [
+    cleanString(payload.notes),
+    hasProOrder ? 'Order type: Pro Order' : '',
+    isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
+    playerName ? `Player: ${playerName}` : '',
+    playerEmail ? `Player email: ${playerEmail}` : '',
+    !billingDifferent && payer.phone ? `Player phone: ${payer.phone}` : '',
+    formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
+    billingAddressDifferent ? 'Billing address differs from shipping address' : '',
+    billingAddressDifferent && formattedBillingAddress
+      ? `Billing address: ${formattedBillingAddress}`
+      : '',
+    billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
+    billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
+    payer.company ? `Team/agency: ${payer.company}` : '',
+    payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
+    salesRep ? `Sales rep: ${salesRep}` : '',
+    orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return {
+    email: payer.email || undefined,
+    phone: payer.phone || undefined,
+    ...(shippingAddress ? { shippingAddress } : {}),
+    ...(billingAddress ? { billingAddress } : {}),
+    note,
+    tags: ['Trinity Intake', 'Internal Sales'].concat(
+      salesRep ? [`Sales Rep: ${salesRep}`] : [],
+      playerName ? [`Player: ${playerName}`] : [],
+      hasProOrder ? ['Pro Order'] : [],
+    ),
+    customAttributes: compactAttributes({
+      trinity_origin: 'internal_sales',
+      trinity_intake_id: intakeId,
+      trinity_has_pro_order: hasProOrder ? 'true' : '',
+      trinity_order_type: hasProOrder ? 'Pro Order' : '',
+      trinity_zero_dollar_sample: isZeroDollarOrder ? 'true' : '',
+      trinity_order_submitted_at: orderSubmittedAt,
+      trinity_sales_rep: salesRep,
+      trinity_player_name: playerName,
+      trinity_player_email: playerEmail,
+      trinity_player_phone: !billingDifferent ? payer.phone : '',
+      trinity_shipping_address: formattedShippingAddress,
+      trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
+      trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
+      trinity_billing_different: billingDifferent ? 'true' : '',
+      trinity_billing_name: payer.name,
+      trinity_billing_email: payer.email,
+      trinity_billing_phone: payer.phone,
+      trinity_billing_company: payer.company,
+      trinity_billing_relationship: payer.relationship,
+      trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
+    }),
+    lineItems: lines.map((line) => {
+      const unitPrice = toMoneyInput(line.unitPrice)
+      const isProOrder = isTruthy(line.isProOrder)
+      const variantId = isProOrder ? '' : cleanString(line.variantId)
+      const title = formatSalesLineShopifyTitle(line, isProOrder)
+      const customAttributes = compactAttributes({
+        order_type: isProOrder ? 'Pro Order' : '',
+        trinity_player_name: playerName,
+        trinity_pro_order: isProOrder ? 'true' : '',
+        trinity_model: cleanString(line.title || line.model),
+        trinity_length: line.length,
+        trinity_weight: line.targetWeight,
+        trinity_wood: line.wood,
+        trinity_handle_color: line.handleColor,
+        trinity_barrel_color: line.barrelColor,
+        trinity_logo_color: line.logoColor,
+        trinity_engraving: line.engraving,
+        trinity_cupped: line.cupped,
+        trinity_notes: line.notes,
+        trinity_product_title: line.title,
+      })
+
+      if (variantId) {
         return {
-          variantId: line.variantId,
+          variantId,
           quantity: Number(line.quantity || 1),
+          ...(unitPrice ? { priceOverride: unitPrice } : {}),
           customAttributes,
         }
       }
 
       return {
-        title: cleanString(line.title) || 'Custom Trinity bat',
-        originalUnitPrice: Number(line.unitPrice || 0),
+        title,
+        originalUnitPriceWithCurrency: unitPrice ?? {
+          amount: '0',
+          currencyCode: shopCurrencyCode,
+        },
         quantity: Number(line.quantity || 1),
         customAttributes,
       }
@@ -1134,22 +1754,56 @@ function buildDraftOrderInput(payload, intakeId) {
   }
 }
 
-function mapDraftOrderToJobs(draftOrder, payload, intakeId, invoiceSent) {
+function specsFromSalesLine(line = {}) {
+  return {
+    model: cleanString(line.title || line.model),
+    length: cleanString(line.length),
+    targetWeight: cleanString(line.targetWeight),
+    wood: cleanString(line.wood),
+    handleColor: cleanString(line.handleColor),
+    barrelColor: cleanString(line.barrelColor),
+    logoColor: cleanString(line.logoColor),
+    engraving: cleanString(line.engraving),
+    cupped: cleanString(line.cupped),
+    notes: cleanString(line.notes),
+  }
+}
+
+function mergeSpecs(primary = {}, fallback = {}) {
+  return {
+    model: cleanString(primary.model) || cleanString(fallback.model),
+    length: cleanString(primary.length) || cleanString(fallback.length),
+    targetWeight: cleanString(primary.targetWeight) || cleanString(fallback.targetWeight),
+    wood: cleanString(primary.wood) || cleanString(fallback.wood),
+    handleColor: cleanString(primary.handleColor) || cleanString(fallback.handleColor),
+    barrelColor: cleanString(primary.barrelColor) || cleanString(fallback.barrelColor),
+    logoColor: cleanString(primary.logoColor) || cleanString(fallback.logoColor),
+    engraving: cleanString(primary.engraving) || cleanString(fallback.engraving),
+    cupped: cleanString(primary.cupped) || cleanString(fallback.cupped),
+    notes: cleanString(primary.notes) || cleanString(fallback.notes),
+  }
+}
+
+function mapDraftOrderToJobs(
+  draftOrder,
+  payload,
+  intakeId,
+  invoiceSent,
+  orderSubmittedAt = draftOrder?.createdAt ?? new Date().toISOString(),
+) {
   const now = new Date().toISOString()
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const draftLines = draftOrder?.lineItems?.nodes ?? []
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const playerEmail = cleanString(payload.playerEmail)
+  const billingDifferent = isTruthy(payload.billingDifferent)
+  const payer = resolvePayer(payload)
 
   return lines.map((line, index) => {
     const draftLine = draftLines[index] ?? {}
     const variant = draftLine.variant ?? null
     const product = draftLine.product ?? null
-    const specs = {
-      model: cleanString(line.model),
-      length: cleanString(line.length),
-      targetWeight: cleanString(line.targetWeight),
-      wood: cleanString(line.wood),
-      notes: cleanString(line.notes),
-    }
+    const specs = specsFromSalesLine(line)
 
     return {
       id: `draft-${extractNumericId(draftOrder.id)}-line-${index + 1}`,
@@ -1160,9 +1814,18 @@ function mapDraftOrderToJobs(draftOrder, payload, intakeId, invoiceSent) {
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
       lineItemId: draftLine.id ?? '',
-      customerName: cleanString(payload.customerName),
-      customerEmail: cleanString(payload.customerEmail) || draftOrder.email || '',
-      productTitle: draftLine.name ?? cleanString(line.title) ?? product?.title ?? 'Custom Trinity bat',
+      orderSubmittedAt,
+      customerName: payer.name || playerName,
+      customerEmail: payer.email || draftOrder.email || playerEmail,
+      playerName,
+      playerEmail,
+      billingDifferent,
+      billingName: payer.name,
+      billingEmail: payer.email,
+      billingPhone: payer.phone,
+      billingCompany: payer.company,
+      billingRelationship: payer.relationship,
+      productTitle: draftLine.name || cleanString(line.title) || product?.title || 'Custom Trinity bat',
       variantTitle: variant?.title ?? '',
       shopifyProductId: product?.id ?? '',
       shopifyVariantId: variant?.id ?? cleanString(line.variantId),
@@ -1173,14 +1836,13 @@ function mapDraftOrderToJobs(draftOrder, payload, intakeId, invoiceSent) {
       productionStatus: 'new',
       assignedBilletId: '',
       linkedProducedBatId: '',
-      dueDate: cleanString(payload.dueDate),
       salesRep: cleanString(payload.salesRep),
       totalPrice: cleanString(line.unitPrice),
       currency: draftOrder?.totalPriceSet?.shopMoney?.currencyCode ?? '',
       specs,
       lineItems: [
         {
-          title: draftLine.name ?? cleanString(line.title),
+          title: draftLine.name || cleanString(line.title),
           quantity: Number(line.quantity || 1),
           variantId: variant?.id ?? cleanString(line.variantId),
           productId: product?.id ?? '',
@@ -1194,10 +1856,69 @@ function mapDraftOrderToJobs(draftOrder, payload, intakeId, invoiceSent) {
   })
 }
 
+function mapCompletedDraftOrderToJobs(
+  order,
+  draftOrder,
+  payload,
+  intakeId,
+  invoiceSent,
+  orderSubmittedAt = draftOrder?.createdAt ?? order?.createdAt ?? new Date().toISOString(),
+) {
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  return mapGraphQLOrderToJobs(order).map((job, index) => {
+    const line = lines[index] ?? {}
+    const fallbackSpecs = specsFromSalesLine(line)
+
+    return {
+      ...job,
+      origin: 'internal_sales',
+      intakeId,
+      shopifyDraftOrderId: draftOrder.id,
+      shopifyDraftOrderName: draftOrder.name ?? '',
+      orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
+      invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
+      specs: mergeSpecs(job.specs, fallbackSpecs),
+      internalNotes: cleanString(payload.notes),
+      notes: job.notes || cleanString(line.notes),
+      totalPrice: cleanString(line.unitPrice) || job.totalPrice,
+    }
+  })
+}
+
+function mapCreatedOrderToJobs(
+  order,
+  payload,
+  intakeId,
+  invoiceSent,
+  orderSubmittedAt = order?.createdAt ?? new Date().toISOString(),
+) {
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  return mapGraphQLOrderToJobs(order).map((job, index) => {
+    const line = lines[index] ?? {}
+    const fallbackSpecs = specsFromSalesLine(line)
+
+    return {
+      ...job,
+      origin: 'internal_sales',
+      intakeId,
+      orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
+      invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
+      specs: mergeSpecs(job.specs, fallbackSpecs),
+      internalNotes: cleanString(payload.notes),
+      notes: job.notes || cleanString(line.notes),
+      totalPrice: cleanString(line.unitPrice) || job.totalPrice,
+    }
+  })
+}
+
 function mapGraphQLOrderToJobs(order) {
   const orderAttributes = attributesToRecord(order.customAttributes)
   const origin = orderAttributes.trinity_origin === 'internal_sales' ? 'internal_sales' : 'website'
-  const lines = order.lineItems?.nodes ?? []
+  const rawLines = order.lineItems?.nodes ?? []
+  const lines =
+    origin === 'internal_sales'
+      ? rawLines
+      : rawLines.filter((line) => isBatProductLike(line.variant?.product ?? { title: line.title }))
   const money = order.currentTotalPriceSet?.shopMoney ?? {}
 
   return lines.map((line) => {
@@ -1205,6 +1926,12 @@ function mapGraphQLOrderToJobs(order) {
     const variant = line.variant ?? null
     const product = variant?.product ?? null
     const specs = extractSpecs(orderAttributes, lineAttributes)
+    const identity = extractOrderIdentity(
+      orderAttributes,
+      lineAttributes,
+      order.customer?.displayName ?? '',
+      order.email ?? order.customer?.email ?? '',
+    )
 
     return {
       id: `order-${extractNumericId(order.id)}-line-${extractNumericId(line.id)}`,
@@ -1215,8 +1942,17 @@ function mapGraphQLOrderToJobs(order) {
       shopifyDraftOrderId: '',
       shopifyDraftOrderName: '',
       lineItemId: line.id,
+      orderSubmittedAt: orderAttributes.trinity_order_submitted_at ?? order.createdAt,
       customerName: order.customer?.displayName ?? '',
       customerEmail: order.email ?? order.customer?.email ?? '',
+      playerName: identity.playerName,
+      playerEmail: identity.playerEmail,
+      billingDifferent: identity.billingDifferent,
+      billingName: identity.billingName,
+      billingEmail: identity.billingEmail,
+      billingPhone: identity.billingPhone,
+      billingCompany: identity.billingCompany,
+      billingRelationship: identity.billingRelationship,
       productTitle: line.title ?? product?.title ?? '',
       variantTitle: variant?.title ?? '',
       shopifyProductId: product?.id ?? '',
@@ -1232,7 +1968,6 @@ function mapGraphQLOrderToJobs(order) {
       productionStatus: 'new',
       assignedBilletId: '',
       linkedProducedBatId: '',
-      dueDate: orderAttributes.trinity_due_date ?? '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
       totalPrice: money.amount ?? '',
       currency: money.currencyCode ?? '',
@@ -1256,7 +1991,17 @@ function mapGraphQLOrderToJobs(order) {
 function mapOrderWebhookToJobs(order, topic) {
   const orderAttributes = attributesToRecord(order.note_attributes ?? order.customAttributes)
   const origin = orderAttributes.trinity_origin === 'internal_sales' ? 'internal_sales' : 'website'
-  const lines = order.line_items ?? []
+  const rawLines = order.line_items ?? []
+  const lines =
+    origin === 'internal_sales'
+      ? rawLines
+      : rawLines.filter((line) =>
+          isBatProductLike({
+            title: line.title ?? line.name,
+            productType: line.product_type,
+            tags: line.tags,
+          }),
+        )
   const orderId = order.admin_graphql_api_id ?? toShopifyGid('Order', order.id)
   const isCancelled = Boolean(order.cancelled_at) || topic === 'orders/cancelled'
 
@@ -1264,6 +2009,12 @@ function mapOrderWebhookToJobs(order, topic) {
     const lineAttributes = attributesToRecord(line.properties)
     const lineItemId = line.admin_graphql_api_id ?? toShopifyGid('LineItem', line.id)
     const specs = extractSpecs(orderAttributes, lineAttributes)
+    const identity = extractOrderIdentity(
+      orderAttributes,
+      lineAttributes,
+      customerNameFromWebhook(order.customer),
+      order.email ?? order.customer?.email ?? '',
+    )
 
     return {
       id: `order-${extractNumericId(orderId)}-line-${extractNumericId(lineItemId)}`,
@@ -1274,8 +2025,17 @@ function mapOrderWebhookToJobs(order, topic) {
       shopifyDraftOrderId: orderAttributes.trinity_draft_order_id ?? '',
       shopifyDraftOrderName: '',
       lineItemId,
+      orderSubmittedAt: orderAttributes.trinity_order_submitted_at ?? order.created_at,
       customerName: customerNameFromWebhook(order.customer),
       customerEmail: order.email ?? order.customer?.email ?? '',
+      playerName: identity.playerName,
+      playerEmail: identity.playerEmail,
+      billingDifferent: identity.billingDifferent,
+      billingName: identity.billingName,
+      billingEmail: identity.billingEmail,
+      billingPhone: identity.billingPhone,
+      billingCompany: identity.billingCompany,
+      billingRelationship: identity.billingRelationship,
       productTitle: line.title ?? line.name ?? '',
       variantTitle: line.variant_title ?? '',
       shopifyProductId: line.product_id ? toShopifyGid('Product', line.product_id) : '',
@@ -1292,7 +2052,6 @@ function mapOrderWebhookToJobs(order, topic) {
       productionStatus: isCancelled ? 'cancelled' : 'new',
       assignedBilletId: '',
       linkedProducedBatId: '',
-      dueDate: orderAttributes.trinity_due_date ?? '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
       totalPrice: cleanString(line.price),
       currency: order.currency ?? '',
@@ -1325,8 +2084,21 @@ function mergeOrderJob(existing, incoming) {
         : existing.productionStatus || incoming.productionStatus,
     assignedBilletId: existing.assignedBilletId || incoming.assignedBilletId,
     linkedProducedBatId: existing.linkedProducedBatId || incoming.linkedProducedBatId,
-    dueDate: existing.dueDate || incoming.dueDate,
+    orderSubmittedAt:
+      existing.orderSubmittedAt ||
+      incoming.orderSubmittedAt ||
+      existing.createdAt ||
+      incoming.createdAt,
     salesRep: existing.salesRep || incoming.salesRep,
+    playerName: existing.playerName || incoming.playerName,
+    playerEmail: existing.playerEmail || incoming.playerEmail,
+    billingDifferent: existing.billingDifferent || incoming.billingDifferent,
+    billingName: existing.billingName || incoming.billingName,
+    billingEmail: existing.billingEmail || incoming.billingEmail,
+    billingPhone: existing.billingPhone || incoming.billingPhone,
+    billingCompany: existing.billingCompany || incoming.billingCompany,
+    billingRelationship: existing.billingRelationship || incoming.billingRelationship,
+    specs: mergeSpecs(existing.specs, incoming.specs),
     internalNotes: existing.internalNotes || incoming.internalNotes,
     createdAt: existing.createdAt || incoming.createdAt,
     updatedAt: incoming.updatedAt || new Date().toISOString(),
@@ -1352,8 +2124,145 @@ function extractSpecs(orderAttributes, lineAttributes) {
     length: lineAttributes.trinity_length ?? orderAttributes.trinity_length ?? '',
     targetWeight: lineAttributes.trinity_weight ?? orderAttributes.trinity_weight ?? '',
     wood: lineAttributes.trinity_wood ?? orderAttributes.trinity_wood ?? '',
+    handleColor: lineAttributes.trinity_handle_color ?? orderAttributes.trinity_handle_color ?? '',
+    barrelColor: lineAttributes.trinity_barrel_color ?? orderAttributes.trinity_barrel_color ?? '',
+    logoColor: lineAttributes.trinity_logo_color ?? orderAttributes.trinity_logo_color ?? '',
+    engraving: lineAttributes.trinity_engraving ?? orderAttributes.trinity_engraving ?? '',
+    cupped: lineAttributes.trinity_cupped ?? orderAttributes.trinity_cupped ?? '',
     notes: lineAttributes.trinity_notes ?? orderAttributes.trinity_notes ?? '',
   }
+}
+
+function extractOrderIdentity(orderAttributes, lineAttributes, fallbackName, fallbackEmail) {
+  const playerName =
+    attributeValue([lineAttributes, orderAttributes], [
+      'trinity_player_name',
+      'player_name',
+      'player',
+      'player name',
+      'name on bat',
+    ]) || cleanString(fallbackName)
+  const playerEmail =
+    attributeValue([lineAttributes, orderAttributes], [
+      'trinity_player_email',
+      'player_email',
+      'player email',
+    ]) || ''
+  const billingName =
+    attributeValue([orderAttributes, lineAttributes], [
+      'trinity_billing_name',
+      'billing_name',
+      'bill_to_name',
+      'bill to',
+      'payer_name',
+      'team',
+      'agent',
+    ]) || cleanString(fallbackName)
+  const billingEmail =
+    attributeValue([orderAttributes, lineAttributes], [
+      'trinity_billing_email',
+      'billing_email',
+      'bill_to_email',
+      'payer_email',
+    ]) || cleanString(fallbackEmail)
+  const billingPhone =
+    attributeValue([orderAttributes, lineAttributes], [
+      'trinity_billing_phone',
+      'billing_phone',
+      'bill_to_phone',
+      'payer_phone',
+      'phone',
+    ]) || ''
+  const billingCompany =
+    attributeValue([orderAttributes, lineAttributes], [
+      'trinity_billing_company',
+      'billing_company',
+      'team',
+      'agency',
+    ]) || ''
+  const billingRelationship =
+    attributeValue([orderAttributes, lineAttributes], [
+      'trinity_billing_relationship',
+      'billing_relationship',
+      'payer_relationship',
+      'relationship',
+    ]) || ''
+  const explicitDifferent = attributeValue([orderAttributes, lineAttributes], [
+    'trinity_billing_different',
+    'billing_different',
+  ])
+
+  return {
+    playerName,
+    playerEmail,
+    billingDifferent:
+      isTruthy(explicitDifferent) ||
+      Boolean(playerName && billingName && playerName.toLowerCase() !== billingName.toLowerCase()),
+    billingName,
+    billingEmail,
+    billingPhone,
+    billingCompany,
+    billingRelationship,
+  }
+}
+
+function attributeValue(records, keys) {
+  const normalizedKeys = keys.map(normalizeAttributeKey)
+
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record ?? {})) {
+      if (normalizedKeys.includes(normalizeAttributeKey(key))) {
+        return cleanString(value)
+      }
+    }
+  }
+
+  return ''
+}
+
+function normalizeAttributeKey(key) {
+  return String(key).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+}
+
+function isTruthy(value) {
+  return ['true', 'yes', '1', 'on'].includes(cleanString(value).toLowerCase())
+}
+
+function isBatProductLike(product) {
+  const title = cleanString(product?.title ?? product?.name).toLowerCase()
+  const productType = cleanString(product?.productType ?? product?.category).toLowerCase()
+  const tags = Array.isArray(product?.tags)
+    ? product.tags.map((tag) => cleanString(tag).toLowerCase())
+    : cleanString(product?.tags)
+        .split(',')
+        .map((tag) => tag.trim().toLowerCase())
+        .filter(Boolean)
+  const text = [title, productType, ...tags].join(' ')
+
+  if (
+    productType.includes('apparel') ||
+    text.includes('accessor') ||
+    title.includes('shirt') ||
+    title.includes('hat') ||
+    title.includes('sleeve') ||
+    title.includes('grip') ||
+    title.includes('glove')
+  ) {
+    return false
+  }
+
+  return (
+    productType.includes('series') ||
+    title.includes('bat') ||
+    title.includes('pro model') ||
+    title.includes('pro select') ||
+    title.includes('fungo') ||
+    title.includes('trainer') ||
+    title.includes('boom stick') ||
+    title.includes('platinum') ||
+    title.includes('scvbb') ||
+    tags.some((tag) => ['ash', 'birch', 'maple', 'stock', 'custom', 'semi custom'].includes(tag))
+  )
 }
 
 function attributesToRecord(attributes) {
@@ -1373,6 +2282,12 @@ function compactAttributes(values) {
   return Object.entries(values)
     .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
     .map(([key, value]) => ({ key, value: String(value) }))
+}
+
+function compactLineItemProperties(values) {
+  return Object.entries(values)
+    .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+    .map(([name, value]) => ({ name, value: String(value) }))
 }
 
 function verifyShopifyWebhook(request) {
@@ -1423,6 +2338,45 @@ function extractNumericId(value) {
 
 function createPlainId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function parseEmailList(value, fallback = [], required = []) {
+  const configuredEmails = cleanString(value)
+    .split(/[\s,;]+/)
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean)
+  const emails = (configuredEmails.length > 0 ? configuredEmails : fallback).concat(required)
+
+  return Array.from(
+    new Set(
+      emails
+        .map((email) => cleanString(email).toLowerCase())
+        .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
+    ),
+  )
+}
+
+function toMoneyInput(value) {
+  const amount = cleanString(value)
+  if (!amount) return null
+
+  const normalizedAmount = Number(amount)
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) return null
+
+  return {
+    amount,
+    currencyCode: shopCurrencyCode,
+  }
+}
+
+function toMoneyBagInput(value) {
+  const money = toMoneyInput(value)
+  if (!money) return null
+
+  return {
+    shopMoney: money,
+    presentmentMoney: money,
+  }
 }
 
 function cleanString(value) {

@@ -136,6 +136,7 @@ type ShopifyCatalogProduct = {
   variants: {
     id: string
     title: string
+    price: string
     inventoryQuantity: number
     sku: string
   }[]
@@ -165,6 +166,11 @@ type OrderSpecs = {
   length: string
   targetWeight: string
   wood: string
+  handleColor: string
+  barrelColor: string
+  logoColor: string
+  engraving: string
+  cupped: string
   notes: string
 }
 
@@ -177,8 +183,17 @@ type OrderJob = {
   shopifyDraftOrderId: string
   shopifyDraftOrderName: string
   lineItemId: string
+  orderSubmittedAt: string
   customerName: string
   customerEmail: string
+  playerName: string
+  playerEmail: string
+  billingDifferent: boolean
+  billingName: string
+  billingEmail: string
+  billingPhone: string
+  billingCompany: string
+  billingRelationship: string
   productTitle: string
   variantTitle: string
   shopifyProductId: string
@@ -190,7 +205,6 @@ type OrderJob = {
   productionStatus: ProductionStatus
   assignedBilletId: string
   linkedProducedBatId: string
-  dueDate: string
   salesRep: string
   totalPrice: string
   currency: string
@@ -209,26 +223,67 @@ type OrderJob = {
 
 type SalesOrderLineDraft = {
   id: string
+  isProOrder: boolean
   productId: string
   variantId: string
   title: string
   quantity: number
   unitPrice: string
-  model: string
   length: string
   targetWeight: string
+  handleColor: string
+  barrelColor: string
+  logoColor: string
+  engraving: string
+  cupped: 'Yes' | 'No'
   wood: Species | 'Other'
   notes: string
 }
 
 type SalesOrderDraft = {
-  customerName: string
-  customerEmail: string
+  playerName: string
+  playerEmail: string
+  playerPhone: string
+  shippingAddress1: string
+  shippingAddress2: string
+  shippingCity: string
+  shippingProvinceCode: string
+  shippingZip: string
+  shippingCountryCode: string
+  billingAddressDifferent: boolean
+  billingAddress1: string
+  billingAddress2: string
+  billingCity: string
+  billingProvinceCode: string
+  billingZip: string
+  billingCountryCode: string
+  billingDifferent: boolean
+  billingName: string
+  billingEmail: string
+  billingPhone: string
+  billingCompany: string
+  billingRelationship: string
   salesRep: string
-  dueDate: string
   notes: string
   sendInvoice: boolean
   lines: SalesOrderLineDraft[]
+}
+
+type BillingContact = {
+  id: string
+  name: string
+  email: string
+  phone: string
+  company: string
+  relationship: string
+  notes: string
+}
+
+type BillingContactSearchOption = {
+  id: string
+  value: string
+  label: string
+  contactId: string
 }
 
 type BilletCostReference = {
@@ -248,6 +303,7 @@ type RemoteState = {
   producedBats: ProducedBatRecord[]
   customBatModels: BatModelProduct[]
   orderJobs: OrderJob[]
+  billingContacts: BillingContact[]
 }
 
 const billetStorageKey = 'trinity-billet-sandbox-v5'
@@ -255,6 +311,7 @@ const playerStorageKey = 'trinity-player-profiles-v3'
 const producedBatStorageKey = 'trinity-produced-bats-v1'
 const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
 const orderJobStorageKey = 'trinity-order-jobs-v1'
+const billingContactStorageKey = 'trinity-billing-contacts-v1'
 
 const standardBilletLength = 37
 const standardBilletDiameter = 2.75
@@ -271,6 +328,34 @@ const sourceGradeOptions: Record<Source, Grade[]> = {
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Cahan', 'Champeau']
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
+const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
+const customizerColorOptions = [
+  'Black',
+  'Dark Gray',
+  'Light Gray',
+  'White',
+  'Solid White Gloss',
+  'Solid Black Gloss',
+  'Walker Black',
+  'Cherry',
+  'Flame Temper',
+  'Medium Brown',
+  'Dark Brown',
+  'Walnut',
+  'Navy Blue',
+  'Royal Blue',
+  'Sky Blue',
+  'Seafoam Green',
+  'Forest Green',
+  'Yellow',
+  'Orange',
+  'Red',
+  'Maroon',
+  'Pink',
+  'Purple',
+  'Matte Black',
+  'Matte Dark Gray',
+]
 const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
 const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
 
@@ -446,6 +531,18 @@ const seedPlayers: PlayerProfile[] = [
   },
 ]
 
+const seedBillingContacts: BillingContact[] = [
+  {
+    id: 'billing-contact-john-mullin-mets',
+    name: 'John Mullin',
+    email: 'jmullin@nymets.com',
+    phone: '(321) 652-1800',
+    company: 'New York Mets',
+    relationship: 'Minor league clubhouse manager',
+    notes: 'Primary saved payer contact for Mets minor league player bat orders.',
+  },
+]
+
 const emptyBillet: Omit<Billet, 'id'> = {
   barcode: '',
   species: 'Maple',
@@ -500,23 +597,47 @@ const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
 
 const emptySalesLine = (): SalesOrderLineDraft => ({
   id: createId('sales-line'),
+  isProOrder: false,
   productId: '',
   variantId: '',
   title: '',
   quantity: 1,
   unitPrice: '',
-  model: '',
   length: '',
   targetWeight: '',
+  handleColor: '',
+  barrelColor: '',
+  logoColor: '',
+  engraving: '',
+  cupped: 'No',
   wood: 'Maple',
   notes: '',
 })
 
 const emptySalesOrderDraft = (): SalesOrderDraft => ({
-  customerName: '',
-  customerEmail: '',
+  playerName: '',
+  playerEmail: '',
+  playerPhone: '',
+  shippingAddress1: '',
+  shippingAddress2: '',
+  shippingCity: '',
+  shippingProvinceCode: '',
+  shippingZip: '',
+  shippingCountryCode: 'US',
+  billingAddressDifferent: false,
+  billingAddress1: '',
+  billingAddress2: '',
+  billingCity: '',
+  billingProvinceCode: '',
+  billingZip: '',
+  billingCountryCode: 'US',
+  billingDifferent: false,
+  billingName: '',
+  billingEmail: '',
+  billingPhone: '',
+  billingCompany: '',
+  billingRelationship: '',
   salesRep: '',
-  dueDate: '',
   notes: '',
   sendInvoice: true,
   lines: [emptySalesLine()],
@@ -658,6 +779,10 @@ function normalizeInvoiceStatus(status: InvoiceStatus | string | null | undefine
 
 function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): OrderJob {
   const specs = (record.specs ?? {}) as Partial<OrderSpecs>
+  const billingDifferent =
+    record.billingDifferent === true || String(record.billingDifferent).toLowerCase() === 'true'
+  const billingName = record.billingName ?? ''
+  const billingEmail = record.billingEmail ?? ''
 
   return {
     id: record.id,
@@ -668,8 +793,17 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     shopifyDraftOrderId: record.shopifyDraftOrderId ?? '',
     shopifyDraftOrderName: record.shopifyDraftOrderName ?? '',
     lineItemId: record.lineItemId ?? '',
+    orderSubmittedAt: record.orderSubmittedAt ?? record.createdAt ?? new Date().toISOString(),
     customerName: record.customerName ?? '',
     customerEmail: record.customerEmail ?? '',
+    playerName: record.playerName ?? '',
+    playerEmail: record.playerEmail ?? '',
+    billingDifferent,
+    billingName,
+    billingEmail,
+    billingPhone: record.billingPhone ?? '',
+    billingCompany: record.billingCompany ?? '',
+    billingRelationship: record.billingRelationship ?? '',
     productTitle: record.productTitle ?? '',
     variantTitle: record.variantTitle ?? '',
     shopifyProductId: record.shopifyProductId ?? '',
@@ -681,7 +815,6 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     productionStatus: normalizeProductionStatus(record.productionStatus),
     assignedBilletId: record.assignedBilletId ?? '',
     linkedProducedBatId: record.linkedProducedBatId ?? '',
-    dueDate: record.dueDate ?? '',
     salesRep: record.salesRep ?? '',
     totalPrice: record.totalPrice ?? '',
     currency: record.currency ?? '',
@@ -690,6 +823,11 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
       length: specs.length ?? '',
       targetWeight: specs.targetWeight ?? '',
       wood: specs.wood ?? '',
+      handleColor: specs.handleColor ?? '',
+      barrelColor: specs.barrelColor ?? '',
+      logoColor: specs.logoColor ?? '',
+      engraving: specs.engraving ?? '',
+      cupped: specs.cupped ?? '',
       notes: specs.notes ?? '',
     },
     lineItems: record.lineItems ?? [],
@@ -698,6 +836,49 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     createdAt: record.createdAt ?? new Date().toISOString(),
     updatedAt: record.updatedAt ?? new Date().toISOString(),
   }
+}
+
+function normalizeBillingContact(
+  record: Partial<BillingContact> & Pick<BillingContact, 'id'>,
+): BillingContact {
+  return {
+    id: record.id,
+    name: record.name ?? '',
+    email: record.email ?? '',
+    phone: record.phone ?? '',
+    company: record.company ?? '',
+    relationship: record.relationship ?? '',
+    notes: record.notes ?? '',
+  }
+}
+
+function mergeOrderSpecs(primary?: OrderSpecs, fallback?: OrderSpecs): OrderSpecs {
+  return {
+    model: primary?.model || fallback?.model || '',
+    length: primary?.length || fallback?.length || '',
+    targetWeight: primary?.targetWeight || fallback?.targetWeight || '',
+    wood: primary?.wood || fallback?.wood || '',
+    handleColor: primary?.handleColor || fallback?.handleColor || '',
+    barrelColor: primary?.barrelColor || fallback?.barrelColor || '',
+    logoColor: primary?.logoColor || fallback?.logoColor || '',
+    engraving: primary?.engraving || fallback?.engraving || '',
+    cupped: primary?.cupped || fallback?.cupped || '',
+    notes: primary?.notes || fallback?.notes || '',
+  }
+}
+
+function formatOrderDateTime(value: string) {
+  if (!value) return 'Not recorded'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
@@ -715,9 +896,18 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
       productionStatus: job.productionStatus || existing?.productionStatus || 'new',
       assignedBilletId: job.assignedBilletId || existing?.assignedBilletId || '',
       linkedProducedBatId: job.linkedProducedBatId || existing?.linkedProducedBatId || '',
+      orderSubmittedAt: job.orderSubmittedAt || existing?.orderSubmittedAt || job.createdAt,
       internalNotes: job.internalNotes || existing?.internalNotes || '',
-      dueDate: job.dueDate || existing?.dueDate || '',
       salesRep: job.salesRep || existing?.salesRep || '',
+      playerName: job.playerName || existing?.playerName || '',
+      playerEmail: job.playerEmail || existing?.playerEmail || '',
+      billingDifferent: job.billingDifferent || existing?.billingDifferent || false,
+      billingName: job.billingName || existing?.billingName || '',
+      billingEmail: job.billingEmail || existing?.billingEmail || '',
+      billingPhone: job.billingPhone || existing?.billingPhone || '',
+      billingCompany: job.billingCompany || existing?.billingCompany || '',
+      billingRelationship: job.billingRelationship || existing?.billingRelationship || '',
+      specs: mergeOrderSpecs(job.specs, existing?.specs),
     })
   }
 
@@ -986,6 +1176,55 @@ function getBatModelName(modelId: string, models: BatModelProduct[]) {
   return models.find((model) => model.id === modelId)?.name ?? modelId
 }
 
+function normalizeContactSearchText(value: string) {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function getBillingContactOptionLabel(contact: BillingContact) {
+  return [contact.email, contact.phone, contact.relationship]
+    .filter(Boolean)
+    .join(' · ')
+}
+
+function getBillingContactSearchOptions(contact: BillingContact): BillingContactSearchOption[] {
+  const label = getBillingContactOptionLabel(contact)
+  const value = [contact.name, contact.company].filter(Boolean).join(' · ')
+
+  return [{
+    id: contact.id,
+    value,
+    label,
+    contactId: contact.id,
+  }]
+}
+
+function getBillingContactForSearchValue(
+  value: string,
+  contacts: BillingContact[],
+  searchOptions: BillingContactSearchOption[],
+) {
+  const normalizedValue = normalizeContactSearchText(value)
+  const selectedOption = searchOptions.find(
+    (option) => normalizeContactSearchText(option.value) === normalizedValue,
+  )
+
+  if (selectedOption) {
+    return contacts.find((contact) => contact.id === selectedOption.contactId) ?? null
+  }
+
+  const directMatches = contacts.filter((contact) =>
+    [
+      contact.name,
+      contact.email,
+      contact.phone,
+      contact.company,
+      contact.relationship,
+    ].some((field) => normalizeContactSearchText(field) === normalizedValue),
+  )
+
+  return directMatches.length === 1 ? directMatches[0] : null
+}
+
 function isTrainerModel(model: BatModelProduct) {
   return model.category.toLowerCase().includes('training')
 }
@@ -1026,6 +1265,13 @@ function App() {
   const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
     const stored = window.localStorage.getItem(orderJobStorageKey)
     return stored ? (JSON.parse(stored) as OrderJob[]).map((job) => normalizeOrderJob(job)) : []
+  })
+  const [billingContacts, setBillingContacts] = useState<BillingContact[]>(() => {
+    const stored = window.localStorage.getItem(billingContactStorageKey)
+    const parsed = stored ? (JSON.parse(stored) as BillingContact[]) : []
+    return mergeRecordsByKey(seedBillingContacts, parsed, (contact) => contact.id).map((contact) =>
+      normalizeBillingContact(contact),
+    )
   })
   const [draft, setDraft] = useState(emptyBillet)
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
@@ -1092,6 +1338,10 @@ function App() {
     window.localStorage.setItem(orderJobStorageKey, JSON.stringify(orderJobs))
   }, [orderJobs])
 
+  useEffect(() => {
+    window.localStorage.setItem(billingContactStorageKey, JSON.stringify(billingContacts))
+  }, [billingContacts])
+
   const loadRemoteState = useEffectEvent(async () => {
     try {
       const response = await fetch('/api/state')
@@ -1109,6 +1359,10 @@ function App() {
       const localOrderJobs = safeReadStorage<OrderJob[]>(orderJobStorageKey, []).map((job) =>
         normalizeOrderJob(job),
       )
+      const localBillingContacts = safeReadStorage<BillingContact[]>(
+        billingContactStorageKey,
+        seedBillingContacts,
+      ).map((contact) => normalizeBillingContact(contact))
 
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
@@ -1122,6 +1376,9 @@ function App() {
         : []
       const remoteOrderJobs = Array.isArray(remote.orderJobs)
         ? remote.orderJobs.map((job) => normalizeOrderJob(job))
+        : []
+      const remoteBillingContacts = Array.isArray(remote.billingContacts)
+        ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
         : []
 
       setBillets(
@@ -1145,6 +1402,13 @@ function App() {
         mergeRecordsByKey(remoteCustomBatModels, localCustomBatModels, (model) => model.id),
       )
       setOrderJobs(mergeOrderJobs(remoteOrderJobs, localOrderJobs))
+      setBillingContacts(
+        mergeRecordsByKey(
+          seedBillingContacts,
+          mergeRecordsByKey(remoteBillingContacts, localBillingContacts, (contact) => contact.id),
+          (contact) => contact.id,
+        ),
+      )
 
       setBackendStatus('connected')
       setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
@@ -1218,6 +1482,7 @@ function App() {
             producedBats,
             customBatModels,
             orderJobs,
+            billingContacts,
           } satisfies RemoteState),
         })
         if (!response.ok) throw new Error('Sync failed')
@@ -1240,7 +1505,7 @@ function App() {
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [backendStatus, billets, players, producedBats, customBatModels, orderJobs])
+  }, [backendStatus, billets, players, producedBats, customBatModels, orderJobs, billingContacts])
 
   const deliveryDateOptions = Array.from(
     new Set(billets.map((billet) => billet.deliveryDate).filter(Boolean)),
@@ -1352,6 +1617,10 @@ function App() {
     return searchable.includes(playerQuery.toLowerCase())
   })
 
+  const billingContactSearchOptions = billingContacts.flatMap((contact) =>
+    getBillingContactSearchOptions(contact),
+  )
+
   const shopifyBatModels: BatModelProduct[] = shopifyCatalog.map((product) => ({
     id: product.id,
     name: product.name,
@@ -1401,6 +1670,13 @@ function App() {
       job.shopifyDraftOrderName,
       job.customerName,
       job.customerEmail,
+      job.playerName,
+      job.playerEmail,
+      job.billingName,
+      job.billingEmail,
+      job.billingPhone,
+      job.billingCompany,
+      job.billingRelationship,
       job.productTitle,
       job.variantTitle,
       job.origin,
@@ -1409,7 +1685,7 @@ function App() {
       job.invoiceStatus,
       job.productionStatus,
       job.salesRep,
-      job.dueDate,
+      job.orderSubmittedAt,
       job.assignedBilletId
         ? billets.find((billet) => billet.id === job.assignedBilletId)?.barcode ?? job.assignedBilletId
         : '',
@@ -1417,6 +1693,11 @@ function App() {
       job.specs.length,
       job.specs.targetWeight,
       job.specs.wood,
+      job.specs.handleColor,
+      job.specs.barrelColor,
+      job.specs.logoColor,
+      job.specs.engraving,
+      job.specs.cupped,
       job.specs.notes,
       job.notes,
       job.internalNotes,
@@ -1523,6 +1804,39 @@ function App() {
     setSalesOrderDraft((current) => ({ ...current, [key]: value }))
   }
 
+  function applyBillingContact(contact: BillingContact) {
+    setSalesOrderDraft((current) => ({
+      ...current,
+      billingDifferent: true,
+      billingName: contact.name,
+      billingEmail: contact.email,
+      billingPhone: contact.phone,
+      billingCompany: contact.company,
+      billingRelationship: contact.relationship,
+    }))
+  }
+
+  function updateBillingName(value: string) {
+    const matchedContact = getBillingContactForSearchValue(
+      value,
+      billingContacts,
+      billingContactSearchOptions,
+    )
+
+    setSalesOrderDraft((current) => ({
+      ...current,
+      billingName: matchedContact ? matchedContact.name : value,
+      ...(matchedContact
+        ? {
+            billingEmail: matchedContact.email,
+            billingPhone: matchedContact.phone,
+            billingCompany: matchedContact.company,
+            billingRelationship: matchedContact.relationship,
+          }
+        : {}),
+    }))
+  }
+
   function updateSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
     setSalesOrderDraft((current) => ({
       ...current,
@@ -1555,21 +1869,49 @@ function App() {
 
   async function createSalesDraftOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const payerEmail = salesOrderDraft.billingDifferent
+      ? salesOrderDraft.billingEmail
+      : salesOrderDraft.playerEmail
+    const isDirectBillOrder = !salesOrderDraft.billingDifferent
+    const hasMissingDirectContact =
+      isDirectBillOrder &&
+      (!salesOrderDraft.playerPhone.trim() ||
+        !salesOrderDraft.shippingAddress1.trim() ||
+        !salesOrderDraft.shippingCity.trim() ||
+        !salesOrderDraft.shippingProvinceCode.trim() ||
+        !salesOrderDraft.shippingZip.trim() ||
+        !salesOrderDraft.shippingCountryCode.trim() ||
+        (salesOrderDraft.billingAddressDifferent &&
+          (!salesOrderDraft.billingAddress1.trim() ||
+            !salesOrderDraft.billingCity.trim() ||
+            !salesOrderDraft.billingProvinceCode.trim() ||
+            !salesOrderDraft.billingZip.trim() ||
+            !salesOrderDraft.billingCountryCode.trim())))
     const hasInvalidLine = salesOrderDraft.lines.some(
       (line) =>
-        (!line.variantId && (!line.title.trim() || !line.unitPrice.trim())) ||
+        !line.title.trim() ||
+        !line.unitPrice.trim() ||
+        !Number.isFinite(Number(line.unitPrice)) ||
+        Number(line.unitPrice) < 0 ||
         !line.quantity ||
         line.quantity < 1,
     )
 
-    if (!salesOrderDraft.customerEmail.trim() || hasInvalidLine) {
-      setOrderActionMessage('Add a customer email and complete each line before creating the draft.')
+    if (
+      !salesOrderDraft.playerName.trim() ||
+      !payerEmail.trim() ||
+      hasMissingDirectContact ||
+      hasInvalidLine
+    ) {
+      setOrderActionMessage(
+        'Add the player, payer email, direct-bill contact/address details, bat model, unit price, and complete each line before creating the order.',
+      )
       return
     }
 
     try {
       setIsCreatingDraftOrder(true)
-      setOrderActionMessage('Creating Shopify draft order...')
+      setOrderActionMessage('Creating Shopify order...')
       const response = await fetch('/api/sales-orders', {
         method: 'POST',
         headers: {
@@ -1581,20 +1923,29 @@ function App() {
         ok?: boolean
         message?: string
         invoiceSent?: boolean
+        emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
         orderJobs?: OrderJob[]
         draftOrder?: { name?: string }
+        order?: { name?: string }
+        internalNotificationRecipients?: string[]
       }
-      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Draft order failed')
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
 
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
+      const notificationNames = payload.internalNotificationRecipients?.length
+        ? ' and Jeremy, Stefan, and Keith copied through Shopify'
+        : ''
+      const emailMessage = payload.invoiceSent
+        ? payload.emailNotificationMethod === 'order_receipt'
+          ? ' and documentation email sent'
+          : ' and invoice sent'
+        : ''
       setOrderActionMessage(
-        `${payload.draftOrder?.name ?? 'Draft order'} created${
-          payload.invoiceSent ? ' and invoice sent' : ''
-        }.`,
+        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${notificationNames}.`,
       )
     } catch (error) {
-      setOrderActionMessage(error instanceof Error ? error.message : 'Could not create draft order.')
+      setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
     } finally {
       setIsCreatingDraftOrder(false)
     }
@@ -2687,52 +3038,365 @@ function App() {
 
               <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
                 <div className="form-instructions">
-                  <strong>Internal sales orders start as Shopify draft orders</strong>
+                  <strong>Internal sales orders create payment-pending Shopify orders</strong>
                   <p>
                     Sales reps can enter phone, team, or custom orders here. The app creates
-                    the Shopify draft order, sends the invoice when selected, and drops each
-                    line into the production queue.
+                    the Shopify order, triggers the same staff order notifications as the site,
+                    sends the invoice when selected, and drops each line into the production queue.
                   </p>
                 </div>
 
-                <div className="form-row">
+                <datalist id="player-name-options">
+                  {players.map((player) => (
+                    <option key={player.id} value={player.playerName} />
+                  ))}
+                </datalist>
+
+                <datalist id="shopify-bat-products">
+                  {shopifyCatalog.map((product) => (
+                    <option key={product.id} value={product.name} />
+                  ))}
+                </datalist>
+
+                <datalist id="billing-contact-options">
+                  {billingContactSearchOptions.map((option) => (
+                    <option key={option.id} value={option.value} label={option.label} />
+                  ))}
+                </datalist>
+
+                <div
+                  className={`form-row ${
+                    salesOrderDraft.billingDifferent ? 'single-field-row' : ''
+                  }`}
+                >
                   <label>
-                    Customer name
+                    Player name
                     <input
-                      value={salesOrderDraft.customerName}
-                      placeholder="Example: Denver Baseball Club"
-                      onChange={(event) => updateSalesDraftField('customerName', event.target.value)}
+                      list="player-name-options"
+                      value={salesOrderDraft.playerName}
+                      placeholder="Example: Jordan Smith"
+                      onChange={(event) => updateSalesDraftField('playerName', event.target.value)}
                     />
                   </label>
-                  <label>
-                    Customer email
-                    <input
-                      type="email"
-                      value={salesOrderDraft.customerEmail}
-                      placeholder="billing@example.com"
-                      onChange={(event) => updateSalesDraftField('customerEmail', event.target.value)}
-                    />
-                  </label>
+                  {!salesOrderDraft.billingDifferent ? (
+                    <label>
+                      Player email
+                      <input
+                        type="email"
+                        value={salesOrderDraft.playerEmail}
+                        placeholder="player@example.com"
+                        onChange={(event) =>
+                          updateSalesDraftField('playerEmail', event.target.value)
+                        }
+                      />
+                    </label>
+                  ) : null}
                 </div>
 
-                <div className="form-row">
-                  <label>
-                    Sales rep
-                    <input
-                      value={salesOrderDraft.salesRep}
-                      placeholder="Example: Matt"
-                      onChange={(event) => updateSalesDraftField('salesRep', event.target.value)}
-                    />
-                  </label>
-                  <label>
-                    Due date
-                    <input
-                      type="date"
-                      value={salesOrderDraft.dueDate}
-                      onChange={(event) => updateSalesDraftField('dueDate', event.target.value)}
-                    />
-                  </label>
-                </div>
+                <label className="checkbox-row billing-toggle">
+                  <input
+                    type="checkbox"
+                    checked={salesOrderDraft.billingDifferent}
+                    onChange={(event) => {
+                      const billingDifferent = event.target.checked
+                      setSalesOrderDraft((current) => ({
+                        ...current,
+                        billingDifferent,
+                        playerEmail: billingDifferent ? '' : current.playerEmail,
+                        playerPhone: billingDifferent ? '' : current.playerPhone,
+                        shippingAddress1: billingDifferent ? '' : current.shippingAddress1,
+                        shippingAddress2: billingDifferent ? '' : current.shippingAddress2,
+                        shippingCity: billingDifferent ? '' : current.shippingCity,
+                        shippingProvinceCode: billingDifferent ? '' : current.shippingProvinceCode,
+                        shippingZip: billingDifferent ? '' : current.shippingZip,
+                        shippingCountryCode: billingDifferent ? 'US' : current.shippingCountryCode,
+                        billingAddressDifferent: billingDifferent
+                          ? false
+                          : current.billingAddressDifferent,
+                        billingAddress1: billingDifferent ? '' : current.billingAddress1,
+                        billingAddress2: billingDifferent ? '' : current.billingAddress2,
+                        billingCity: billingDifferent ? '' : current.billingCity,
+                        billingProvinceCode: billingDifferent ? '' : current.billingProvinceCode,
+                        billingZip: billingDifferent ? '' : current.billingZip,
+                        billingCountryCode: billingDifferent ? 'US' : current.billingCountryCode,
+                      }))
+                    }}
+                  />
+                  <span>Bill a team, agent, or other payer</span>
+                </label>
+
+                {salesOrderDraft.billingDifferent ? (
+                  <div className="billing-panel">
+                    <div className="form-row">
+                      <label>
+                        Payer name
+                        <input
+                          list="billing-contact-options"
+                          value={salesOrderDraft.billingName}
+                          placeholder="Search name, team, agent, or agency"
+                          onChange={(event) => updateBillingName(event.target.value)}
+                        />
+                      </label>
+                      <label>
+                        Payer email
+                        <input
+                          type="email"
+                          value={salesOrderDraft.billingEmail}
+                          placeholder="billing@example.com"
+                          onChange={(event) =>
+                            updateSalesDraftField('billingEmail', event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Payer phone
+                        <input
+                          type="tel"
+                          value={salesOrderDraft.billingPhone}
+                          placeholder="Example: (321) 652-1800"
+                          onChange={(event) =>
+                            updateSalesDraftField('billingPhone', event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Team or agency
+                        <input
+                          value={salesOrderDraft.billingCompany}
+                          placeholder="Example: New York Mets"
+                          onChange={(event) =>
+                            updateSalesDraftField('billingCompany', event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Billing relationship
+                        <input
+                          value={salesOrderDraft.billingRelationship}
+                          placeholder="Example: Minor league clubhouse manager"
+                          onChange={(event) =>
+                            updateSalesDraftField('billingRelationship', event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="saved-contact-panel">
+                      <span>Saved payer contacts</span>
+                      <div className="saved-contact-list">
+                        {billingContacts.map((contact) => (
+                          <button
+                            type="button"
+                            className="secondary-button compact-button"
+                            key={contact.id}
+                            onClick={() => applyBillingContact(contact)}
+                          >
+                            {contact.name} · {contact.company}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="billing-panel">
+                    <div className="form-row">
+                      <label>
+                        Player phone
+                        <input
+                          type="tel"
+                          value={salesOrderDraft.playerPhone}
+                          placeholder="Example: (321) 652-1800"
+                          onChange={(event) =>
+                            updateSalesDraftField('playerPhone', event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Shipping country code
+                        <input
+                          value={salesOrderDraft.shippingCountryCode}
+                          placeholder="US"
+                          onChange={(event) =>
+                            updateSalesDraftField(
+                              'shippingCountryCode',
+                              event.target.value.toUpperCase(),
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Shipping address
+                        <input
+                          value={salesOrderDraft.shippingAddress1}
+                          placeholder="Street address"
+                          onChange={(event) =>
+                            updateSalesDraftField('shippingAddress1', event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Apartment, suite, etc.
+                        <input
+                          value={salesOrderDraft.shippingAddress2}
+                          placeholder="Optional"
+                          onChange={(event) =>
+                            updateSalesDraftField('shippingAddress2', event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Shipping city
+                        <input
+                          value={salesOrderDraft.shippingCity}
+                          placeholder="City"
+                          onChange={(event) =>
+                            updateSalesDraftField('shippingCity', event.target.value)
+                          }
+                        />
+                      </label>
+                      <label>
+                        Shipping state
+                        <input
+                          value={salesOrderDraft.shippingProvinceCode}
+                          placeholder="Example: CO"
+                          onChange={(event) =>
+                            updateSalesDraftField(
+                              'shippingProvinceCode',
+                              event.target.value.toUpperCase(),
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Shipping ZIP
+                        <input
+                          value={salesOrderDraft.shippingZip}
+                          placeholder="ZIP code"
+                          onChange={(event) =>
+                            updateSalesDraftField('shippingZip', event.target.value)
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <label className="checkbox-row billing-toggle">
+                      <input
+                        type="checkbox"
+                        checked={salesOrderDraft.billingAddressDifferent}
+                        onChange={(event) =>
+                          updateSalesDraftField('billingAddressDifferent', event.target.checked)
+                        }
+                      />
+                      <span>Billing address is different from shipping address</span>
+                    </label>
+
+                    {salesOrderDraft.billingAddressDifferent ? (
+                      <>
+                        <div className="form-row">
+                          <label>
+                            Billing country code
+                            <input
+                              value={salesOrderDraft.billingCountryCode}
+                              placeholder="US"
+                              onChange={(event) =>
+                                updateSalesDraftField(
+                                  'billingCountryCode',
+                                  event.target.value.toUpperCase(),
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Billing address
+                            <input
+                              value={salesOrderDraft.billingAddress1}
+                              placeholder="Street address"
+                              onChange={(event) =>
+                                updateSalesDraftField('billingAddress1', event.target.value)
+                              }
+                            />
+                          </label>
+                          <label>
+                            Apartment, suite, etc.
+                            <input
+                              value={salesOrderDraft.billingAddress2}
+                              placeholder="Optional"
+                              onChange={(event) =>
+                                updateSalesDraftField('billingAddress2', event.target.value)
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Billing city
+                            <input
+                              value={salesOrderDraft.billingCity}
+                              placeholder="City"
+                              onChange={(event) =>
+                                updateSalesDraftField('billingCity', event.target.value)
+                              }
+                            />
+                          </label>
+                          <label>
+                            Billing state
+                            <input
+                              value={salesOrderDraft.billingProvinceCode}
+                              placeholder="Example: CO"
+                              onChange={(event) =>
+                                updateSalesDraftField(
+                                  'billingProvinceCode',
+                                  event.target.value.toUpperCase(),
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Billing ZIP
+                            <input
+                              value={salesOrderDraft.billingZip}
+                              placeholder="ZIP code"
+                              onChange={(event) =>
+                                updateSalesDraftField('billingZip', event.target.value)
+                              }
+                            />
+                          </label>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                )}
+
+                <label>
+                  Sales rep
+                  <input
+                    value={salesOrderDraft.salesRep}
+                    placeholder="Example: Matt"
+                    onChange={(event) => updateSalesDraftField('salesRep', event.target.value)}
+                  />
+                </label>
 
                 <div className="sales-line-list">
                   {salesOrderDraft.lines.map((line, index) => {
@@ -2740,13 +3404,17 @@ function App() {
                     const lineVariant = lineProduct?.variants.find(
                       (variant) => variant.id === line.variantId,
                     )
+                    const productInputValue = line.isProOrder ? line.title : (lineProduct?.name ?? line.title)
+                    const lineTitle = line.isProOrder
+                      ? line.title || 'Pro custom bat'
+                      : lineProduct?.name || line.title || 'Custom bat'
 
                     return (
                       <article className="sales-line-card" key={line.id}>
                         <div className="split-heading">
                           <div>
                             <span className="profile-type-pill">Line {index + 1}</span>
-                            <h3>{lineProduct?.name || line.title || 'Custom bat'}</h3>
+                            <h3>{lineTitle}</h3>
                           </div>
                           {salesOrderDraft.lines.length > 1 ? (
                             <button
@@ -2759,79 +3427,115 @@ function App() {
                           ) : null}
                         </div>
 
-                        <div className="form-row">
+                        <label className="checkbox-row pro-order-toggle">
+                          <input
+                            type="checkbox"
+                            checked={line.isProOrder}
+                            onChange={(event) => {
+                              const isProOrder = event.target.checked
+                              if (isProOrder) {
+                                updateSalesLine(line.id, {
+                                  isProOrder,
+                                  productId: '',
+                                  variantId: '',
+                                  title: line.title || lineProduct?.name || '',
+                                })
+                                return
+                              }
+
+                              const matchedProduct = shopifyCatalog.find(
+                                (item) =>
+                                  item.name.toLowerCase() === line.title.trim().toLowerCase(),
+                              )
+                              updateSalesLine(line.id, {
+                                isProOrder,
+                                productId: matchedProduct?.id ?? '',
+                                variantId: matchedProduct?.variants[0]?.id ?? '',
+                                title: matchedProduct?.name ?? line.title,
+                                unitPrice: matchedProduct?.variants[0]?.price ?? line.unitPrice,
+                              })
+                            }}
+                          />
+                          <span>Pro order</span>
+                        </label>
+
+                        <div className={`form-row ${line.isProOrder ? 'single-field-row' : ''}`}>
                           <label>
-                            Shopify product
-                            <select
-                              value={line.productId}
+                            {line.isProOrder ? 'Bat model' : 'Shopify product / bat model'}
+                            <input
+                              list={line.isProOrder ? undefined : 'shopify-bat-products'}
+                              value={productInputValue}
+                              placeholder={
+                                line.isProOrder
+                                  ? 'Example: T141 pro custom'
+                                  : 'Start typing a bat model'
+                              }
                               onChange={(event) => {
+                                const typedProduct = event.target.value
+                                if (line.isProOrder) {
+                                  updateSalesLine(line.id, {
+                                    productId: '',
+                                    variantId: '',
+                                    title: typedProduct,
+                                  })
+                                  return
+                                }
+
                                 const product = shopifyCatalog.find(
-                                  (item) => item.id === event.target.value,
+                                  (item) =>
+                                    item.name.toLowerCase() === typedProduct.trim().toLowerCase(),
                                 )
                                 updateSalesLine(line.id, {
-                                  productId: event.target.value,
+                                  productId: product?.id ?? '',
                                   variantId: product?.variants[0]?.id ?? '',
-                                  title: product?.name ?? line.title,
+                                  title: product?.name ?? typedProduct,
+                                  unitPrice: product?.variants[0]?.price ?? line.unitPrice,
                                 })
                               }}
-                            >
-                              <option value="">Custom line item</option>
-                              {shopifyCatalog.map((product) => (
-                                <option key={product.id} value={product.id}>
-                                  {product.name}
-                                </option>
-                              ))}
-                            </select>
+                            />
                           </label>
-                          <label>
-                            Variant
-                            <select
-                              value={line.variantId}
-                              disabled={!lineProduct}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { variantId: event.target.value })
-                              }
-                            >
-                              <option value="">
-                                {lineProduct ? 'Select variant' : 'Choose a product first'}
-                              </option>
-                              {lineProduct?.variants.map((variant) => (
-                                <option key={variant.id} value={variant.id}>
-                                  {variant.title}
-                                  {variant.sku ? ` / ${variant.sku}` : ''}
+                          {!line.isProOrder ? (
+                            <label>
+                              Variant
+                              <select
+                                value={line.variantId}
+                                disabled={!lineProduct}
+                                onChange={(event) => {
+                                  const variant = lineProduct?.variants.find(
+                                    (item) => item.id === event.target.value,
+                                  )
+                                  updateSalesLine(line.id, {
+                                    variantId: event.target.value,
+                                    unitPrice: variant?.price ?? line.unitPrice,
+                                  })
+                                }}
+                              >
+                                <option value="">
+                                  {lineProduct ? 'Select variant' : 'Choose a product first'}
                                 </option>
-                              ))}
-                            </select>
-                          </label>
+                                {lineProduct?.variants.map((variant) => (
+                                  <option key={variant.id} value={variant.id}>
+                                    {variant.title}
+                                    {variant.sku ? ` / ${variant.sku}` : ''}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : null}
                         </div>
 
                         <div className="form-row">
-                          <label>
-                            Custom title
-                            <input
-                              value={line.title}
-                              placeholder="Example: Custom Pro Model Team Order"
-                              disabled={Boolean(lineProduct)}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { title: event.target.value })
-                              }
-                            />
-                          </label>
                           <label>
                             Unit price
                             <input
                               inputMode="decimal"
                               value={line.unitPrice}
-                              placeholder={lineVariant ? 'Shopify price' : 'Example: 189.00'}
-                              disabled={Boolean(lineVariant)}
+                              placeholder={lineVariant ? 'Adjust Shopify price' : 'Example: 189.00'}
                               onChange={(event) =>
                                 updateSalesLine(line.id, { unitPrice: event.target.value })
                               }
                             />
                           </label>
-                        </div>
-
-                        <div className="form-row">
                           <label>
                             Quantity
                             <input
@@ -2840,16 +3544,6 @@ function App() {
                               value={line.quantity}
                               onChange={(event) =>
                                 updateSalesLine(line.id, { quantity: Number(event.target.value) })
-                              }
-                            />
-                          </label>
-                          <label>
-                            Model / turn
-                            <input
-                              value={line.model}
-                              placeholder="Example: T141, CS271, team custom"
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { model: event.target.value })
                               }
                             />
                           </label>
@@ -2867,7 +3561,7 @@ function App() {
                             />
                           </label>
                           <label>
-                            Target weight
+                            Weight
                             <input
                               value={line.targetWeight}
                               placeholder="Example: 31.5"
@@ -2880,7 +3574,52 @@ function App() {
 
                         <div className="form-row">
                           <label>
-                            Wood
+                            Handle color
+                            <select
+                              value={line.handleColor}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { handleColor: event.target.value })
+                              }
+                            >
+                              <option value="">Select handle color</option>
+                              {customizerColorOptions.map((color) => (
+                                <option key={color}>{color}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Barrel color
+                            <select
+                              value={line.barrelColor}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { barrelColor: event.target.value })
+                              }
+                            >
+                              <option value="">Select barrel color</option>
+                              {customizerColorOptions.map((color) => (
+                                <option key={color}>{color}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+
+                        <div className="form-row">
+                          <label>
+                            Logo color
+                            <select
+                              value={line.logoColor}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { logoColor: event.target.value })
+                              }
+                            >
+                              <option value="">Select logo color</option>
+                              {customizerColorOptions.map((color) => (
+                                <option key={color}>{color}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Wood species
                             <select
                               value={line.wood}
                               onChange={(event) =>
@@ -2897,16 +3636,35 @@ function App() {
                           </label>
                         </div>
 
-                        <label className="notes-field">
-                          Line notes
-                          <textarea
-                            value={line.notes}
-                            placeholder="Color, engraving, player specs, knobs, cups, team notes"
-                            onChange={(event) =>
-                              updateSalesLine(line.id, { notes: event.target.value })
-                            }
-                          />
-                        </label>
+                        <div className="form-row">
+                          <label>
+                            Cup
+                            <select
+                              value={line.cupped}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, {
+                                  cupped: event.target.value as SalesOrderLineDraft['cupped'],
+                                })
+                              }
+                            >
+                              {manualCupOptions.map((cup) => (
+                                <option key={cup} value={cup}>
+                                  {cup === 'Yes' ? 'Cup' : 'No cup'}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Engraving
+                            <input
+                              value={line.engraving}
+                              placeholder="Player name, signature, or custom text"
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { engraving: event.target.value })
+                              }
+                            />
+                          </label>
+                        </div>
                       </article>
                     )
                   })}
@@ -2931,11 +3689,11 @@ function App() {
                     checked={salesOrderDraft.sendInvoice}
                     onChange={(event) => updateSalesDraftField('sendInvoice', event.target.checked)}
                   />
-                  <span>Send Shopify invoice after draft order creation</span>
+                  <span>Send Shopify invoice/documentation after order creation</span>
                 </label>
 
                 <button type="submit" disabled={isCreatingDraftOrder}>
-                  {isCreatingDraftOrder ? 'Creating draft...' : 'Create draft order'}
+                  {isCreatingDraftOrder ? 'Creating order...' : 'Create Shopify order'}
                 </button>
               </form>
             </section>
@@ -3000,6 +3758,9 @@ function App() {
                     const availableBilletsForJob = billets.filter(
                       (billet) => billet.status === 'storage' || billet.id === job.assignedBilletId,
                     )
+                    const displayPlayerName = job.playerName || job.customerName || 'No player saved'
+                    const displayPayerName = job.billingName || job.customerName || 'No payer saved'
+                    const displayPayerEmail = job.billingEmail || job.customerEmail
 
                     return (
                       <article className="order-job-card" key={job.id}>
@@ -3014,7 +3775,7 @@ function App() {
                                 'Unnumbered Shopify order'}
                             </h3>
                             <p>
-                              {job.customerName || job.customerEmail || 'No customer saved'} ·{' '}
+                              {displayPlayerName} ·{' '}
                               {job.productTitle}
                               {job.variantTitle ? ` / ${job.variantTitle}` : ''}
                             </p>
@@ -3029,11 +3790,30 @@ function App() {
 
                         <div className="order-job-grid">
                           <div className="compatible-list">
+                            <span>Player and billing</span>
+                            <p>Order placed: {formatOrderDateTime(job.orderSubmittedAt || job.createdAt)}</p>
+                            <p>Player: {displayPlayerName}</p>
+                            {job.playerEmail ? <p>Player email: {job.playerEmail}</p> : null}
+                            <p>Bill to: {displayPayerName}</p>
+                            {displayPayerEmail ? <p>Billing email: {displayPayerEmail}</p> : null}
+                            {job.billingPhone ? <p>Billing phone: {job.billingPhone}</p> : null}
+                            {job.billingCompany ? <p>Team/agency: {job.billingCompany}</p> : null}
+                            {job.billingRelationship ? (
+                              <p>Relationship: {job.billingRelationship}</p>
+                            ) : null}
+                          </div>
+
+                          <div className="compatible-list">
                             <span>Build specs</span>
                             <p>Model: {job.specs.model || 'Not specified'}</p>
                             <p>Length: {job.specs.length || 'N/A'}</p>
-                            <p>Target weight: {job.specs.targetWeight || 'N/A'}</p>
-                            <p>Wood: {job.specs.wood || 'N/A'}</p>
+                            <p>Weight: {job.specs.targetWeight || 'N/A'}</p>
+                            <p>Wood species: {job.specs.wood || 'N/A'}</p>
+                            <p>Handle color: {job.specs.handleColor || 'N/A'}</p>
+                            <p>Barrel color: {job.specs.barrelColor || 'N/A'}</p>
+                            <p>Logo color: {job.specs.logoColor || 'N/A'}</p>
+                            <p>Engraving: {job.specs.engraving || 'N/A'}</p>
+                            <p>Cup: {job.specs.cupped || 'N/A'}</p>
                             {job.specs.notes ? <p>{job.specs.notes}</p> : null}
                           </div>
 
@@ -3075,25 +3855,34 @@ function App() {
 
                             <div className="form-row">
                               <label>
-                                Due date
+                                Player
                                 <input
-                                  type="date"
-                                  value={job.dueDate}
+                                  value={job.playerName}
                                   onChange={(event) =>
-                                    updateOrderJob(job.id, { dueDate: event.target.value })
+                                    updateOrderJob(job.id, { playerName: event.target.value })
                                   }
                                 />
                               </label>
                               <label>
-                                Sales rep
+                                Bill to
                                 <input
-                                  value={job.salesRep}
+                                  value={job.billingName}
                                   onChange={(event) =>
-                                    updateOrderJob(job.id, { salesRep: event.target.value })
+                                    updateOrderJob(job.id, { billingName: event.target.value })
                                   }
                                 />
                               </label>
                             </div>
+
+                            <label>
+                              Sales rep
+                              <input
+                                value={job.salesRep}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { salesRep: event.target.value })
+                                }
+                              />
+                            </label>
 
                             <label className="notes-field">
                               Internal notes
