@@ -48,6 +48,7 @@ const resourceConfigs = {
   billets: {
     type: '$app:trinity_billet',
     name: 'Trinity Billet',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.barcode || item.id} ${item.species || ''} ${item.grade || ''}`.trim()
     },
