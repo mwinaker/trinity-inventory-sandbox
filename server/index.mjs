@@ -331,6 +331,8 @@ app.get('/api/health', async (_request, response) => {
 
 app.get('/api/state', async (_request, response) => {
   try {
+    response.set('Cache-Control', 'no-store')
+
     if (!shopDomain || !adminToken) {
       response.status(503).json({
         ok: false,
@@ -564,9 +566,18 @@ app.post('/api/webhooks/register', async (request, response) => {
   }
 })
 
-app.use(express.static(path.join(rootDir, 'dist')))
+app.use(
+  express.static(path.join(rootDir, 'dist'), {
+    setHeaders(response, filePath) {
+      if (filePath.endsWith('index.html')) {
+        response.setHeader('Cache-Control', 'no-store')
+      }
+    },
+  }),
+)
 
 app.get('/{*path}', (_request, response) => {
+  response.set('Cache-Control', 'no-store')
   response.sendFile(path.join(rootDir, 'dist', 'index.html'))
 })
 

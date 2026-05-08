@@ -933,14 +933,14 @@ function safeReadStorage<T>(key: string, fallback: T): T {
   }
 }
 
-function mergeRecordsByKey<T>(remote: T[], local: T[], getKey: (item: T) => string) {
+function mergeRecordsByKey<T>(base: T[], overrides: T[], getKey: (item: T) => string) {
   const merged = new Map<string, T>()
 
-  for (const item of remote) {
+  for (const item of base) {
     merged.set(getKey(item), item)
   }
 
-  for (const item of local) {
+  for (const item of overrides) {
     merged.set(getKey(item), item)
   }
 
@@ -1344,7 +1344,7 @@ function App() {
 
   const loadRemoteState = useEffectEvent(async () => {
     try {
-      const response = await fetch('/api/state')
+      const response = await fetch('/api/state', { cache: 'no-store' })
       if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
       const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
 
@@ -1382,30 +1382,30 @@ function App() {
         : []
 
       setBillets(
-        mergeRecordsByKey(remoteBillets, localBillets, (billet) => billet.barcode || billet.id),
+        mergeRecordsByKey(localBillets, remoteBillets, (billet) => billet.barcode || billet.id),
       )
       setPlayers(
         mergeRecordsByKey(
-          remotePlayers,
           localPlayers,
+          remotePlayers,
           (profile) => profile.id || `${profile.profileKind}:${profile.playerName}`,
         ),
       )
       setProducedBats(
         mergeRecordsByKey(
-          remoteProducedBats,
           localProducedBats,
+          remoteProducedBats,
           (record) => record.id || record.createdAt,
         ),
       )
       setCustomBatModels(
-        mergeRecordsByKey(remoteCustomBatModels, localCustomBatModels, (model) => model.id),
+        mergeRecordsByKey(localCustomBatModels, remoteCustomBatModels, (model) => model.id),
       )
-      setOrderJobs(mergeOrderJobs(remoteOrderJobs, localOrderJobs))
+      setOrderJobs(mergeOrderJobs(localOrderJobs, remoteOrderJobs))
       setBillingContacts(
         mergeRecordsByKey(
           seedBillingContacts,
-          mergeRecordsByKey(remoteBillingContacts, localBillingContacts, (contact) => contact.id),
+          mergeRecordsByKey(localBillingContacts, remoteBillingContacts, (contact) => contact.id),
           (contact) => contact.id,
         ),
       )
