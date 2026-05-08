@@ -1313,6 +1313,7 @@ function App() {
   const [backendStatus, setBackendStatus] = useState<'connecting' | 'connected' | 'offline'>(
     'connecting',
   )
+  const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(true)
   const [syncMessage, setSyncMessage] = useState('Connecting to Shopify backend...')
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -1413,11 +1414,13 @@ function App() {
       setBackendStatus('connected')
       setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
       hasLoadedRemoteState.current = true
+      setIsLoadingRemoteState(false)
       return true
     } catch {
       setBackendStatus('offline')
       setSyncMessage('Shopify sync is offline. Device changes are safe here and retrying automatically.')
       hasLoadedRemoteState.current = true
+      setIsLoadingRemoteState(false)
       return false
     }
   })
@@ -2361,7 +2364,15 @@ function App() {
         </div>
       </section>
 
-      {activeSection === 'inventory' ? (
+      {isLoadingRemoteState ? (
+        <section className="panel inventory-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Shopify sync</p>
+            <h2>Loading shared inventory</h2>
+          </div>
+          <p className="empty-state">Checking Shopify before showing device-saved records.</p>
+        </section>
+      ) : activeSection === 'inventory' ? (
         <>
           <section className="intake-first">
             <form className="panel intake-panel intake-panel-primary" onSubmit={addBillet}>
