@@ -339,15 +339,12 @@ app.get('/api/state', async (_request, response) => {
     }
 
     await ensureDefinitions()
-    const [billets, players, producedBats, customBatModels, orderJobs, billingContacts] =
-      await Promise.all([
-        listRecords(resourceConfigs.billets),
-        listRecords(resourceConfigs.players),
-        listRecords(resourceConfigs.producedBats),
-        listRecords(resourceConfigs.customBatModels),
-        listRecords(resourceConfigs.orderJobs),
-        listRecords(resourceConfigs.billingContacts),
-      ])
+    const billets = await listRecords(resourceConfigs.billets)
+    const players = await listRecords(resourceConfigs.players)
+    const producedBats = await listRecords(resourceConfigs.producedBats)
+    const customBatModels = await listRecords(resourceConfigs.customBatModels)
+    const orderJobs = await listRecords(resourceConfigs.orderJobs)
+    const billingContacts = await listRecords(resourceConfigs.billingContacts)
 
     response.json({
       ok: true,
@@ -694,7 +691,7 @@ async function upsertRecords(config, items, options = {}) {
   const deleteMissing = options.deleteMissing ?? config.deleteMissing ?? true
   const desiredHandles = new Set()
 
-  await mapWithConcurrency(items, 8, async (item) => {
+  await mapWithConcurrency(items, 4, async (item) => {
     const handle = await upsertRecord(config, item)
     desiredHandles.add(handle)
   })
@@ -704,7 +701,7 @@ async function upsertRecords(config, items, options = {}) {
   const existingNodes = await listMetaobjectNodes(config.type)
   const nodesToDelete = existingNodes.filter((node) => !desiredHandles.has(node.handle))
 
-  await mapWithConcurrency(nodesToDelete, 8, async (node) => {
+  await mapWithConcurrency(nodesToDelete, 4, async (node) => {
     const result = await shopifyGraphQL(
       `
         mutation DeleteMetaobject($id: ID!) {
@@ -871,8 +868,10 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
 
   if (!response.ok) {
     const body = await response.text()
-    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 6) {
-      await sleep(250 * 2 ** attempt)
+    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 10) {
+      const retryAfterSeconds = Number(response.headers.get('retry-after'))
+      const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0
+      await sleep(Math.max(retryAfterMs, getRetryDelayMs(attempt)))
       return shopifyGraphQL(query, variables, attempt + 1)
     }
     throw new Error(`Shopify GraphQL request failed: ${response.status} ${body}`)
@@ -885,14 +884,38 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
         item?.extensions?.code === 'THROTTLED' ||
         /throttled|temporarily unavailable|try again/i.test(item?.message ?? ''),
     )
-    if (shouldRetry && attempt < 6) {
-      await sleep(250 * 2 ** attempt)
+    if (shouldRetry && attempt < 10) {
+      await sleep(getShopifyGraphQLRetryDelayMs(payload, attempt))
       return shopifyGraphQL(query, variables, attempt + 1)
     }
     throw new Error(payload.errors.map((item) => item.message).join(', '))
   }
 
   return payload
+}
+
+function getShopifyGraphQLRetryDelayMs(payload, attempt) {
+  const cost = payload?.extensions?.cost
+  const throttleStatus = cost?.throttleStatus
+  const requestedCost = Number(cost?.requestedQueryCost)
+  const available = Number(throttleStatus?.currentlyAvailable)
+  const restoreRate = Number(throttleStatus?.restoreRate)
+
+  if (
+    Number.isFinite(requestedCost) &&
+    Number.isFinite(available) &&
+    Number.isFinite(restoreRate) &&
+    restoreRate > 0
+  ) {
+    const deficit = Math.max(0, requestedCost - available)
+    return Math.max(750, Math.ceil((deficit / restoreRate) * 1000) + 500)
+  }
+
+  return getRetryDelayMs(attempt)
+}
+
+function getRetryDelayMs(attempt) {
+  return Math.min(1000 * 2 ** attempt, 10000)
 }
 
 function sleep(milliseconds) {
