@@ -654,67 +654,98 @@ async function listRecords(config) {
 }
 
 async function listMetaobjectNodes(type) {
-  const result = await shopifyGraphQL(
-    `
-      query ListMetaobjects($type: String!) {
-        metaobjects(type: $type, first: 250, sortKey: "updated_at", reverse: true) {
-          nodes {
-            id
-            handle
-            updatedAt
-            payload: field(key: "payload") {
-              jsonValue
+  const nodes = []
+  let cursor = null
+  let hasNextPage = true
+
+  while (hasNextPage) {
+    const result = await shopifyGraphQL(
+      `
+        query ListMetaobjects($type: String!, $after: String) {
+          metaobjects(type: $type, first: 250, after: $after, sortKey: "updated_at", reverse: true) {
+            nodes {
+              id
+              handle
+              updatedAt
+              payload: field(key: "payload") {
+                jsonValue
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
             }
           }
         }
-      }
-    `,
-    { type },
-  )
+      `,
+      { type, after: cursor },
+    )
 
-  return result?.data?.metaobjects?.nodes ?? []
+    const connection = result?.data?.metaobjects
+    nodes.push(...(connection?.nodes ?? []))
+    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
+    cursor = connection?.pageInfo?.endCursor ?? null
+  }
+
+  return nodes
 }
 
 async function upsertRecords(config, items, options = {}) {
   const deleteMissing = options.deleteMissing ?? config.deleteMissing ?? true
   const desiredHandles = new Set()
 
-  for (const item of items) {
+  await mapWithConcurrency(items, 8, async (item) => {
     const handle = await upsertRecord(config, item)
     desiredHandles.add(handle)
-  }
+  })
 
   if (!deleteMissing) return
 
   const existingNodes = await listMetaobjectNodes(config.type)
-  for (const node of existingNodes) {
-    if (!desiredHandles.has(node.handle)) {
-      const result = await shopifyGraphQL(
-        `
-          mutation DeleteMetaobject($id: ID!) {
-            metaobjectDelete(id: $id) {
-              deletedId
-              userErrors {
-                field
-                message
-                code
-              }
+  const nodesToDelete = existingNodes.filter((node) => !desiredHandles.has(node.handle))
+
+  await mapWithConcurrency(nodesToDelete, 8, async (node) => {
+    const result = await shopifyGraphQL(
+      `
+        mutation DeleteMetaobject($id: ID!) {
+          metaobjectDelete(id: $id) {
+            deletedId
+            userErrors {
+              field
+              message
+              code
             }
           }
-        `,
-        { id: node.id },
-      )
+        }
+      `,
+      { id: node.id },
+    )
 
-      const errors = result?.data?.metaobjectDelete?.userErrors ?? []
-      if (errors.length > 0) {
-        throw new Error(
-          `Metaobject delete error for ${config.type}/${node.handle}: ${errors
-            .map((item) => item.message)
-            .join(', ')}`,
-        )
-      }
+    const errors = result?.data?.metaobjectDelete?.userErrors ?? []
+    if (errors.length > 0) {
+      throw new Error(
+        `Metaobject delete error for ${config.type}/${node.handle}: ${errors
+          .map((item) => item.message)
+          .join(', ')}`,
+      )
     }
-  }
+  })
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = []
+  let nextIndex = 0
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length)
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex)
+    }
+  })
+
+  await Promise.all(workers)
+  return results
 }
 
 async function upsertRecord(config, item) {
@@ -828,7 +859,7 @@ async function ensureDefinitionFields(definitionId, config) {
   }
 }
 
-async function shopifyGraphQL(query, variables = {}) {
+async function shopifyGraphQL(query, variables = {}, attempt = 0) {
   const response = await fetch(`https://${shopDomain}/admin/api/${apiVersion}/graphql.json`, {
     method: 'POST',
     headers: {
@@ -840,15 +871,32 @@ async function shopifyGraphQL(query, variables = {}) {
 
   if (!response.ok) {
     const body = await response.text()
+    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 6) {
+      await sleep(250 * 2 ** attempt)
+      return shopifyGraphQL(query, variables, attempt + 1)
+    }
     throw new Error(`Shopify GraphQL request failed: ${response.status} ${body}`)
   }
 
   const payload = await response.json()
   if (payload.errors?.length) {
+    const shouldRetry = payload.errors.some(
+      (item) =>
+        item?.extensions?.code === 'THROTTLED' ||
+        /throttled|temporarily unavailable|try again/i.test(item?.message ?? ''),
+    )
+    if (shouldRetry && attempt < 6) {
+      await sleep(250 * 2 ** attempt)
+      return shopifyGraphQL(query, variables, attempt + 1)
+    }
     throw new Error(payload.errors.map((item) => item.message).join(', '))
   }
 
   return payload
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 async function listCatalogProducts() {
