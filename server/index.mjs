@@ -575,10 +575,20 @@ app.listen(port, () => {
 
 async function ensureDefinitions() {
   if (!definitionPromise) {
-    definitionPromise = Promise.all(
-      Object.values(resourceConfigs).map(async (config) => {
-        const result = await shopifyGraphQL(
-          `
+    definitionPromise = ensureDefinitionsInternal().catch((error) => {
+      definitionPromise = null
+      throw error
+    })
+  }
+
+  return definitionPromise
+}
+
+async function ensureDefinitionsInternal() {
+  for (const config of Object.values(resourceConfigs)) {
+    await runWithShopifyRetry(async () => {
+      const result = await shopifyGraphQL(
+        `
             mutation CreateDefinition($definition: MetaobjectDefinitionCreateInput!) {
               metaobjectDefinitionCreate(definition: $definition) {
                 metaobjectDefinition {
@@ -592,55 +602,51 @@ async function ensureDefinitions() {
                 }
               }
             }
-          `,
-          {
-            definition: {
-              name: config.name,
-              type: config.type,
-              access: {
-                admin: 'MERCHANT_READ_WRITE',
-                storefront: 'NONE',
-              },
-              displayNameKey: 'label',
-              fieldDefinitions: [
-                definitionField('label', 'Label', 'single_line_text_field'),
-                definitionField('payload', 'Payload', 'json'),
-                ...config.fieldDefinitions,
-              ],
+        `,
+        {
+          definition: {
+            name: config.name,
+            type: config.type,
+            access: {
+              admin: 'MERCHANT_READ_WRITE',
+              storefront: 'NONE',
             },
+            displayNameKey: 'label',
+            fieldDefinitions: [
+              definitionField('label', 'Label', 'single_line_text_field'),
+              definitionField('payload', 'Payload', 'json'),
+              ...config.fieldDefinitions,
+            ],
           },
+        },
+      )
+
+      const errors = result?.data?.metaobjectDefinitionCreate?.userErrors ?? []
+      throwIfRetryableShopifyUserErrors(errors, `Definition error for ${config.type}`)
+      const meaningfulErrors = errors.filter((item) => {
+        const message = String(item?.message ?? '').toLowerCase()
+        return !message.includes('already exists') && !message.includes('already been taken')
+      })
+
+      if (meaningfulErrors.length > 0) {
+        throw new Error(
+          `Definition error for ${config.type}: ${meaningfulErrors
+            .map((item) => item.message)
+            .join(', ')}`,
         )
+      }
 
-        const errors = result?.data?.metaobjectDefinitionCreate?.userErrors ?? []
-        const meaningfulErrors = errors.filter(
-          (item) => {
-            const message = String(item?.message ?? '').toLowerCase()
-            return !message.includes('already exists') && !message.includes('already been taken')
-          },
-        )
+      const definitionId =
+        result?.data?.metaobjectDefinitionCreate?.metaobjectDefinition?.id ??
+        (await getDefinitionByType(config.type))?.id
 
-        if (meaningfulErrors.length > 0) {
-          throw new Error(
-            `Definition error for ${config.type}: ${meaningfulErrors
-              .map((item) => item.message)
-              .join(', ')}`,
-          )
-        }
+      if (!definitionId) {
+        throw new Error(`Could not resolve definition id for ${config.type}`)
+      }
 
-        const definitionId =
-          result?.data?.metaobjectDefinitionCreate?.metaobjectDefinition?.id ??
-          (await getDefinitionByType(config.type))?.id
-
-        if (!definitionId) {
-          throw new Error(`Could not resolve definition id for ${config.type}`)
-        }
-
-        await ensureDefinitionFields(definitionId, config)
-      }),
-    )
+      await ensureDefinitionFields(definitionId, config)
+    })
   }
-
-  return definitionPromise
 }
 
 async function listRecords(config) {
@@ -879,11 +885,7 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
 
   const payload = await response.json()
   if (payload.errors?.length) {
-    const shouldRetry = payload.errors.some(
-      (item) =>
-        item?.extensions?.code === 'THROTTLED' ||
-        /throttled|temporarily unavailable|try again/i.test(item?.message ?? ''),
-    )
+    const shouldRetry = payload.errors.some((item) => isRetryableShopifyError(item))
     if (shouldRetry && attempt < 10) {
       await sleep(getShopifyGraphQLRetryDelayMs(payload, attempt))
       return shopifyGraphQL(query, variables, attempt + 1)
@@ -892,6 +894,35 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
   }
 
   return payload
+}
+
+async function runWithShopifyRetry(operation, attempt = 0) {
+  try {
+    return await operation()
+  } catch (error) {
+    if (isRetryableShopifyError(error) && attempt < 10) {
+      await sleep(getRetryDelayMs(attempt))
+      return runWithShopifyRetry(operation, attempt + 1)
+    }
+
+    throw error
+  }
+}
+
+class RetryableShopifyError extends Error {}
+
+function throwIfRetryableShopifyUserErrors(errors, context) {
+  if (!errors.some((item) => isRetryableShopifyError(item))) return
+
+  throw new RetryableShopifyError(
+    `${context}: ${errors.map((item) => item?.message ?? 'Shopify is throttling').join(', ')}`,
+  )
+}
+
+function isRetryableShopifyError(item) {
+  if (item instanceof RetryableShopifyError) return true
+  const code = item?.extensions?.code ?? item?.code
+  return code === 'THROTTLED' || /throttled|temporarily unavailable|try again/i.test(item?.message ?? '')
 }
 
 function getShopifyGraphQLRetryDelayMs(payload, attempt) {
