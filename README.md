@@ -31,6 +31,8 @@ Required environment variables:
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
 - `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
+- `GA4_MEASUREMENT_ID` (optional, enables server-side GA4 ecommerce forwarding from the Trinity analytics collector)
+- `GA4_API_SECRET` (optional, required with `GA4_MEASUREMENT_ID`)
 
 Render:
 
@@ -55,6 +57,7 @@ Railway:
 - Produced-bat repository with model, size, billet linkage, and modifications.
 - Billet cost reference data for RJ's, Great Lakes Veneer, and Champeau.
 - Shopify product catalog sync for matching internal bat records to live store products.
+- Shopify Customer Events collector for anonymous source/session attribution, order attribution metafields, and optional GA4 ecommerce forwarding.
 
 ## Shopify Connection Status
 

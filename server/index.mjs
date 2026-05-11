@@ -29,6 +29,8 @@ const shopDomain = process.env.SHOPIFY_SHOP
 const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
 const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? process.env.SHOPIFY_API_SECRET
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
+const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
+const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -280,6 +282,70 @@ const resourceConfigs = {
       definitionField('notes', 'Notes', 'multi_line_text_field'),
     ],
   },
+  customerSessions: {
+    type: '$app:trinity_customer_session',
+    name: 'Trinity Customer Session',
+    deleteMissing: false,
+    labelFor(item) {
+      return `${item.sessionId || item.id} ${item.lastEventName || ''}`.trim()
+    },
+    fieldsFor(item) {
+      return [
+        fieldValue('session_id', item.sessionId),
+        fieldValue('visitor_id', item.visitorId),
+        fieldValue('first_source', item.firstSource),
+        fieldValue('first_medium', item.firstMedium),
+        fieldValue('first_campaign', item.firstCampaign),
+        fieldValue('first_content', item.firstContent),
+        fieldValue('first_term', item.firstTerm),
+        fieldValue('first_landing_page', item.firstLandingPage),
+        fieldValue('first_referrer', item.firstReferrer),
+        fieldValue('last_source', item.lastSource),
+        fieldValue('last_medium', item.lastMedium),
+        fieldValue('last_campaign', item.lastCampaign),
+        fieldValue('last_content', item.lastContent),
+        fieldValue('last_term', item.lastTerm),
+        fieldValue('last_landing_page', item.lastLandingPage),
+        fieldValue('last_referrer', item.lastReferrer),
+        fieldValue('device', item.device),
+        fieldValue('last_event_name', item.lastEventName),
+        fieldValue('last_event_at', item.lastEventAt),
+        fieldValue('order_id', item.orderId),
+        fieldValue('order_name', item.orderName),
+        fieldValue('customer_email_hash', item.customerEmailHash),
+        fieldValue('events_json', JSON.stringify(item.events ?? [])),
+        fieldValue('created_at', item.createdAt),
+        fieldValue('updated_at', item.updatedAt),
+      ].filter(Boolean)
+    },
+    fieldDefinitions: [
+      definitionField('session_id', 'Session ID', 'single_line_text_field'),
+      definitionField('visitor_id', 'Visitor ID', 'single_line_text_field'),
+      definitionField('first_source', 'First Source', 'single_line_text_field'),
+      definitionField('first_medium', 'First Medium', 'single_line_text_field'),
+      definitionField('first_campaign', 'First Campaign', 'single_line_text_field'),
+      definitionField('first_content', 'First Content', 'single_line_text_field'),
+      definitionField('first_term', 'First Term', 'single_line_text_field'),
+      definitionField('first_landing_page', 'First Landing Page', 'single_line_text_field'),
+      definitionField('first_referrer', 'First Referrer', 'single_line_text_field'),
+      definitionField('last_source', 'Last Source', 'single_line_text_field'),
+      definitionField('last_medium', 'Last Medium', 'single_line_text_field'),
+      definitionField('last_campaign', 'Last Campaign', 'single_line_text_field'),
+      definitionField('last_content', 'Last Content', 'single_line_text_field'),
+      definitionField('last_term', 'Last Term', 'single_line_text_field'),
+      definitionField('last_landing_page', 'Last Landing Page', 'single_line_text_field'),
+      definitionField('last_referrer', 'Last Referrer', 'single_line_text_field'),
+      definitionField('device', 'Device', 'single_line_text_field'),
+      definitionField('last_event_name', 'Last Event Name', 'single_line_text_field'),
+      definitionField('last_event_at', 'Last Event At', 'single_line_text_field'),
+      definitionField('order_id', 'Order ID', 'single_line_text_field'),
+      definitionField('order_name', 'Order Name', 'single_line_text_field'),
+      definitionField('customer_email_hash', 'Customer Email Hash', 'single_line_text_field'),
+      definitionField('events_json', 'Events JSON', 'json'),
+      definitionField('created_at', 'Created At', 'single_line_text_field'),
+      definitionField('updated_at', 'Updated At', 'single_line_text_field'),
+    ],
+  },
 }
 
 let definitionPromise = null
@@ -327,12 +393,89 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
 
 app.use(express.json({ limit: '2mb' }))
 
+app.options('/api/analytics/events', (request, response) => {
+  setAnalyticsCorsHeaders(response)
+  response.status(204).send()
+})
+
 app.get('/api/health', async (_request, response) => {
   response.json({
     ok: Boolean(shopDomain && adminToken),
     shop: shopDomain ?? null,
     apiVersion,
+    analytics: {
+      collector: true,
+      ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
+    },
   })
+})
+
+app.post('/api/analytics/events', async (request, response) => {
+  setAnalyticsCorsHeaders(response)
+
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const incomingEvents = Array.isArray(request.body?.events)
+      ? request.body.events
+      : [request.body].filter(Boolean)
+    const acceptedEvents = incomingEvents
+      .map((event) => normalizeAnalyticsEvent(event, request))
+      .filter(Boolean)
+
+    if (acceptedEvents.length === 0) {
+      response.status(400).json({ ok: false, message: 'No valid analytics events supplied.' })
+      return
+    }
+
+    await ensureDefinitions()
+    const sessions = new Map()
+    const orderAttributionUpdates = []
+    const ga4Results = []
+
+    for (const event of acceptedEvents) {
+      const session = await upsertCustomerSessionFromEvent(event, sessions)
+      sessions.set(session.sessionId, session)
+
+      const orderId = resolveOrderIdFromAnalyticsEvent(event)
+      if (orderId) {
+        orderAttributionUpdates.push(syncOrderAttributionMetafields(orderId, session, event))
+      }
+
+      ga4Results.push(forwardAnalyticsEventToGa4(event, session))
+    }
+
+    const attributionResults = await Promise.allSettled(orderAttributionUpdates)
+    const ga4SettledResults = await Promise.allSettled(ga4Results)
+    const failedAttributionUpdates = attributionResults.filter((item) => item.status === 'rejected')
+    const failedGa4Events = ga4SettledResults.filter((item) => item.status === 'rejected')
+    const forwardedGa4Events = ga4SettledResults.filter(
+      (item) => item.status === 'fulfilled' && item.value?.ok,
+    ).length
+
+    response.json({
+      ok: true,
+      accepted: acceptedEvents.length,
+      sessionsUpdated: sessions.size,
+      orderAttributionUpdated: attributionResults.length - failedAttributionUpdates.length,
+      ga4Forwarded: forwardedGa4Events,
+      ga4Configured: Boolean(ga4MeasurementId && ga4ApiSecret),
+      warnings: failedAttributionUpdates.concat(failedGa4Events).map((item) =>
+        item.reason instanceof Error ? item.reason.message : String(item.reason),
+      ),
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown analytics collector error.',
+    })
+  }
 })
 
 app.get('/api/state', async (_request, response) => {
@@ -1494,6 +1637,611 @@ async function syncOrderJobMetafields(orderJobs) {
       throw new Error(`Order metafield sync error: ${errors.map((item) => item.message).join(', ')}`)
     }
   }
+}
+
+function setAnalyticsCorsHeaders(response) {
+  response.set('Access-Control-Allow-Origin', '*')
+  response.set('Access-Control-Allow-Methods', 'POST, OPTIONS')
+  response.set('Access-Control-Allow-Headers', 'Content-Type')
+  response.set('Access-Control-Max-Age', '86400')
+}
+
+function normalizeAnalyticsEvent(rawEvent, request) {
+  if (!rawEvent || typeof rawEvent !== 'object') return null
+
+  const name = cleanString(rawEvent.name || rawEvent.eventName).slice(0, 96)
+  if (!name) return null
+
+  const attribution = normalizeAttribution(rawEvent.attribution ?? {})
+  const context = normalizeAnalyticsContext(rawEvent.context ?? {}, request)
+  const visitorId = cleanString(rawEvent.visitorId || attribution.visitorId || rawEvent.clientId)
+    .slice(0, 128)
+  const sessionId =
+    cleanString(rawEvent.sessionId || attribution.sessionId || context.sessionId).slice(0, 128) ||
+    createPlainId('session')
+  const eventId =
+    cleanString(rawEvent.id || rawEvent.eventId).slice(0, 128) ||
+    crypto
+      .createHash('sha256')
+      .update(`${sessionId}:${name}:${rawEvent.timestamp || Date.now()}`)
+      .digest('hex')
+      .slice(0, 32)
+  const timestamp = normalizeIsoDate(rawEvent.timestamp) || new Date().toISOString()
+
+  return {
+    id: eventId,
+    name,
+    timestamp,
+    receivedAt: new Date().toISOString(),
+    clientId: cleanString(rawEvent.clientId).slice(0, 128),
+    sessionId,
+    visitorId: visitorId || sessionId,
+    attribution,
+    context,
+    data: rawEvent.data && typeof rawEvent.data === 'object' ? rawEvent.data : {},
+    customerEmailHash: hashEmail(extractEmailFromAnalyticsEvent(rawEvent)),
+  }
+}
+
+function normalizeAttribution(value) {
+  const attribution = value && typeof value === 'object' ? value : {}
+  const first = attribution.first && typeof attribution.first === 'object' ? attribution.first : {}
+  const last = attribution.last && typeof attribution.last === 'object' ? attribution.last : {}
+
+  return {
+    sessionId: cleanString(attribution.sessionId).slice(0, 128),
+    visitorId: cleanString(attribution.visitorId).slice(0, 128),
+    device: cleanString(attribution.device).slice(0, 64),
+    first: normalizeTouchpoint(first),
+    last: normalizeTouchpoint(last),
+    path: Array.isArray(attribution.path)
+      ? attribution.path.map(normalizePathEntry).filter(Boolean).slice(-50)
+      : [],
+  }
+}
+
+function normalizeTouchpoint(value) {
+  return {
+    source: cleanString(value.source).slice(0, 128),
+    medium: cleanString(value.medium).slice(0, 128),
+    campaign: cleanString(value.campaign).slice(0, 128),
+    content: cleanString(value.content).slice(0, 128),
+    term: cleanString(value.term).slice(0, 128),
+    landingPage: cleanString(value.landingPage).slice(0, 512),
+    referrer: cleanString(value.referrer).slice(0, 512),
+    capturedAt: normalizeIsoDate(value.capturedAt) || '',
+  }
+}
+
+function normalizePathEntry(value) {
+  if (!value || typeof value !== 'object') return null
+  const path = cleanString(value.path).slice(0, 512)
+  const url = cleanString(value.url).slice(0, 512)
+  if (!path && !url) return null
+  return {
+    path,
+    url,
+    title: cleanString(value.title).slice(0, 256),
+    at: normalizeIsoDate(value.at) || '',
+  }
+}
+
+function normalizeAnalyticsContext(value, request) {
+  const context = value && typeof value === 'object' ? value : {}
+  const document = context.document && typeof context.document === 'object' ? context.document : {}
+  const navigator = context.navigator && typeof context.navigator === 'object' ? context.navigator : {}
+  const windowContext = context.window && typeof context.window === 'object' ? context.window : {}
+  const url = cleanString(document.location || document.url || context.url).slice(0, 512)
+  const userAgent = cleanString(navigator.userAgent || request.get('user-agent')).slice(0, 512)
+
+  return {
+    sessionId: cleanString(context.sessionId).slice(0, 128),
+    pageTitle: cleanString(document.title || context.pageTitle).slice(0, 256),
+    pageLocation: url,
+    pagePath: pathFromUrl(url),
+    referrer: cleanString(document.referrer || context.referrer).slice(0, 512),
+    userAgent,
+    device: inferDevice(userAgent),
+    viewport: cleanString(windowContext.innerWidth && windowContext.innerHeight
+      ? `${windowContext.innerWidth}x${windowContext.innerHeight}`
+      : context.viewport).slice(0, 64),
+  }
+}
+
+async function upsertCustomerSessionFromEvent(event, cachedSessions) {
+  const existing =
+    cachedSessions.get(event.sessionId) ?? (await getRecordByHandle(resourceConfigs.customerSessions, event.sessionId))
+  const now = new Date().toISOString()
+  const firstTouch = firstPopulatedTouchpoint(existing, event.attribution.first, event.attribution.last, {
+    landingPage: event.context.pageLocation || event.context.pagePath,
+    referrer: event.context.referrer,
+  })
+  const lastTouch = lastPopulatedTouchpoint(event.attribution.last, event.attribution.first, {
+    landingPage: event.context.pageLocation || event.context.pagePath,
+    referrer: event.context.referrer,
+  })
+  const eventSummary = summarizeAnalyticsEvent(event)
+  const existingEvents = Array.isArray(existing?.events) ? existing.events : []
+  const events = existingEvents
+    .filter((item) => item?.id !== eventSummary.id)
+    .concat(eventSummary)
+    .slice(-200)
+  const orderId = resolveOrderIdFromAnalyticsEvent(event) || cleanString(existing?.orderId)
+  const orderName = resolveOrderNameFromAnalyticsEvent(event) || cleanString(existing?.orderName)
+
+  const session = {
+    id: event.sessionId,
+    sessionId: event.sessionId,
+    visitorId: event.visitorId || existing?.visitorId || event.sessionId,
+    firstSource: firstTouch.source,
+    firstMedium: firstTouch.medium,
+    firstCampaign: firstTouch.campaign,
+    firstContent: firstTouch.content,
+    firstTerm: firstTouch.term,
+    firstLandingPage: firstTouch.landingPage,
+    firstReferrer: firstTouch.referrer,
+    lastSource: lastTouch.source,
+    lastMedium: lastTouch.medium,
+    lastCampaign: lastTouch.campaign,
+    lastContent: lastTouch.content,
+    lastTerm: lastTouch.term,
+    lastLandingPage: lastTouch.landingPage,
+    lastReferrer: lastTouch.referrer,
+    device: event.attribution.device || existing?.device || event.context.device,
+    lastEventName: event.name,
+    lastEventAt: event.timestamp,
+    orderId,
+    orderName,
+    customerEmailHash: event.customerEmailHash || existing?.customerEmailHash || '',
+    events,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  }
+
+  await upsertRecord(resourceConfigs.customerSessions, session)
+  return session
+}
+
+async function getRecordByHandle(config, id) {
+  const handle = sanitizeHandle(id)
+  if (!handle) return null
+
+  const result = await shopifyGraphQL(
+    `
+      query MetaobjectByHandle($handle: MetaobjectHandleInput!) {
+        metaobjectByHandle(handle: $handle) {
+          id
+          handle
+          payload: field(key: "payload") {
+            jsonValue
+          }
+        }
+      }
+    `,
+    {
+      handle: {
+        type: config.type,
+        handle,
+      },
+    },
+  )
+
+  return result?.data?.metaobjectByHandle?.payload?.jsonValue ?? null
+}
+
+function firstPopulatedTouchpoint(existing, primary, secondary, fallback) {
+  return {
+    source:
+      cleanString(existing?.firstSource) ||
+      cleanString(primary?.source) ||
+      cleanString(secondary?.source) ||
+      inferSourceFromReferrer(fallback?.referrer),
+    medium:
+      cleanString(existing?.firstMedium) ||
+      cleanString(primary?.medium) ||
+      cleanString(secondary?.medium) ||
+      inferMediumFromReferrer(fallback?.referrer),
+    campaign:
+      cleanString(existing?.firstCampaign) ||
+      cleanString(primary?.campaign) ||
+      cleanString(secondary?.campaign),
+    content:
+      cleanString(existing?.firstContent) ||
+      cleanString(primary?.content) ||
+      cleanString(secondary?.content),
+    term:
+      cleanString(existing?.firstTerm) ||
+      cleanString(primary?.term) ||
+      cleanString(secondary?.term),
+    landingPage:
+      cleanString(existing?.firstLandingPage) ||
+      cleanString(primary?.landingPage) ||
+      cleanString(secondary?.landingPage) ||
+      cleanString(fallback?.landingPage),
+    referrer:
+      cleanString(existing?.firstReferrer) ||
+      cleanString(primary?.referrer) ||
+      cleanString(secondary?.referrer) ||
+      cleanString(fallback?.referrer),
+  }
+}
+
+function lastPopulatedTouchpoint(primary, secondary, fallback) {
+  return {
+    source:
+      cleanString(primary?.source) ||
+      cleanString(secondary?.source) ||
+      inferSourceFromReferrer(fallback?.referrer),
+    medium:
+      cleanString(primary?.medium) ||
+      cleanString(secondary?.medium) ||
+      inferMediumFromReferrer(fallback?.referrer),
+    campaign: cleanString(primary?.campaign) || cleanString(secondary?.campaign),
+    content: cleanString(primary?.content) || cleanString(secondary?.content),
+    term: cleanString(primary?.term) || cleanString(secondary?.term),
+    landingPage:
+      cleanString(primary?.landingPage) ||
+      cleanString(secondary?.landingPage) ||
+      cleanString(fallback?.landingPage),
+    referrer:
+      cleanString(primary?.referrer) ||
+      cleanString(secondary?.referrer) ||
+      cleanString(fallback?.referrer),
+  }
+}
+
+function summarizeAnalyticsEvent(event) {
+  const items = extractAnalyticsItems(event.data)
+  const checkout = event.data?.checkout ?? {}
+  const productVariant = event.data?.productVariant ?? event.data?.product ?? {}
+  const collection = event.data?.collection ?? {}
+  const searchResult = event.data?.searchResult ?? event.data?.search ?? {}
+
+  return {
+    id: event.id,
+    name: event.name,
+    at: event.timestamp,
+    source: event.attribution.last.source || event.attribution.first.source || '',
+    medium: event.attribution.last.medium || event.attribution.first.medium || '',
+    campaign: event.attribution.last.campaign || event.attribution.first.campaign || '',
+    path: event.context.pagePath,
+    url: event.context.pageLocation,
+    referrer: event.context.referrer,
+    title:
+      cleanString(productVariant.product?.title) ||
+      cleanString(productVariant.title) ||
+      cleanString(collection.title) ||
+      cleanString(event.context.pageTitle),
+    searchQuery:
+      cleanString(searchResult.query) ||
+      cleanString(event.data?.searchQuery) ||
+      cleanString(event.data?.query),
+    value: extractAnalyticsValue(event.data),
+    currency: extractAnalyticsCurrency(event.data),
+    orderId: resolveOrderIdFromAnalyticsEvent(event),
+    orderName: resolveOrderNameFromAnalyticsEvent(event),
+    items,
+  }
+}
+
+async function syncOrderAttributionMetafields(orderId, session, event) {
+  const ownerId = toShopifyGid('Order', orderId)
+  if (!ownerId) return
+
+  const attribution = buildOrderAttributionPayload(session, event)
+  const metafields = [
+    {
+      namespace: 'trinity',
+      key: 'attribution',
+      ownerId,
+      type: 'json',
+      value: JSON.stringify(attribution),
+    },
+    orderMetafield(ownerId, 'first_source', attribution.first.source),
+    orderMetafield(ownerId, 'first_medium', attribution.first.medium),
+    orderMetafield(ownerId, 'first_campaign', attribution.first.campaign),
+    orderMetafield(ownerId, 'first_landing_page', attribution.first.landingPage),
+    orderMetafield(ownerId, 'last_source', attribution.last.source),
+    orderMetafield(ownerId, 'last_medium', attribution.last.medium),
+    orderMetafield(ownerId, 'last_campaign', attribution.last.campaign),
+    orderMetafield(ownerId, 'last_landing_page', attribution.last.landingPage),
+    orderMetafield(ownerId, 'customer_session_id', session.sessionId),
+  ].filter((field) => field.value !== undefined && field.value !== null && field.value !== '')
+
+  const result = await shopifyGraphQL(
+    `
+      mutation SetOrderAttributionMetafields($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields {
+            key
+            namespace
+          }
+          userErrors {
+            field
+            message
+            code
+          }
+        }
+      }
+    `,
+    { metafields },
+  )
+
+  const errors = result?.data?.metafieldsSet?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Order attribution sync error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+}
+
+function buildOrderAttributionPayload(session, event) {
+  return {
+    capturedAt: new Date().toISOString(),
+    sessionId: session.sessionId,
+    visitorId: session.visitorId,
+    device: session.device,
+    first: {
+      source: session.firstSource,
+      medium: session.firstMedium,
+      campaign: session.firstCampaign,
+      content: session.firstContent,
+      term: session.firstTerm,
+      landingPage: session.firstLandingPage,
+      referrer: session.firstReferrer,
+    },
+    last: {
+      source: session.lastSource,
+      medium: session.lastMedium,
+      campaign: session.lastCampaign,
+      content: session.lastContent,
+      term: session.lastTerm,
+      landingPage: session.lastLandingPage,
+      referrer: session.lastReferrer,
+    },
+    order: {
+      id: resolveOrderIdFromAnalyticsEvent(event),
+      name: resolveOrderNameFromAnalyticsEvent(event),
+      value: extractAnalyticsValue(event.data),
+      currency: extractAnalyticsCurrency(event.data),
+    },
+    journey: (session.events ?? []).map((item) => ({
+      name: item.name,
+      at: item.at,
+      path: item.path,
+      title: item.title,
+      searchQuery: item.searchQuery,
+      value: item.value,
+      orderName: item.orderName,
+      items: item.items,
+    })),
+    customerEmailHash: session.customerEmailHash,
+  }
+}
+
+async function forwardAnalyticsEventToGa4(event, session) {
+  if (!ga4MeasurementId || !ga4ApiSecret) return { skipped: true }
+
+  const ga4Event = mapAnalyticsEventToGa4(event, session)
+  if (!ga4Event) return { skipped: true }
+
+  const url = new URL('https://www.google-analytics.com/mp/collect')
+  url.searchParams.set('measurement_id', ga4MeasurementId)
+  url.searchParams.set('api_secret', ga4ApiSecret)
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      client_id: normalizeGa4ClientId(event.clientId || session.visitorId || session.sessionId),
+      timestamp_micros: String(new Date(event.timestamp).getTime() * 1000),
+      non_personalized_ads: false,
+      events: [ga4Event],
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`GA4 forwarding failed: ${response.status} ${await response.text()}`)
+  }
+
+  return { ok: true }
+}
+
+function mapAnalyticsEventToGa4(event, session) {
+  const eventNameMap = {
+    page_viewed: 'page_view',
+    collection_viewed: 'view_item_list',
+    product_viewed: 'view_item',
+    product_added_to_cart: 'add_to_cart',
+    cart_viewed: 'view_cart',
+    checkout_started: 'begin_checkout',
+    checkout_address_info_submitted: 'add_shipping_info',
+    checkout_shipping_info_submitted: 'add_shipping_info',
+    payment_info_submitted: 'add_payment_info',
+    checkout_completed: 'purchase',
+    search_submitted: 'search',
+    trinity_customizer_started: 'trinity_customizer_started',
+    trinity_customizer_option_changed: 'trinity_customizer_option_changed',
+  }
+  const name = eventNameMap[event.name] ?? event.name.replace(/[^a-zA-Z0-9_]+/g, '_').slice(0, 40)
+  if (!name) return null
+
+  const params = {
+    page_location: event.context.pageLocation,
+    page_path: event.context.pagePath,
+    page_title: event.context.pageTitle,
+    source: session.lastSource,
+    medium: session.lastMedium,
+    campaign: session.lastCampaign,
+    content: session.lastContent,
+    term: session.lastTerm,
+    trinity_session_id: session.sessionId,
+    trinity_first_source: session.firstSource,
+    trinity_first_medium: session.firstMedium,
+    trinity_first_campaign: session.firstCampaign,
+    trinity_first_landing_page: session.firstLandingPage,
+    search_term: summarizeAnalyticsEvent(event).searchQuery,
+    currency: extractAnalyticsCurrency(event.data),
+    value: extractAnalyticsValue(event.data),
+    transaction_id: resolveOrderNameFromAnalyticsEvent(event) || resolveOrderIdFromAnalyticsEvent(event),
+    items: extractAnalyticsItems(event.data),
+  }
+
+  return {
+    name,
+    params: compactGa4Params(params),
+  }
+}
+
+function compactGa4Params(params) {
+  return Object.fromEntries(
+    Object.entries(params).filter(([, value]) => {
+      if (value === undefined || value === null || value === '') return false
+      if (Array.isArray(value) && value.length === 0) return false
+      return true
+    }),
+  )
+}
+
+function extractAnalyticsItems(data = {}) {
+  const checkoutLines = data.checkout?.lineItems ?? data.checkout?.lineItems?.nodes
+  const cartLines = data.cart?.lines ?? data.cart?.lines?.nodes
+  const singleLine = data.cartLine ? [data.cartLine] : []
+  const productVariant = data.productVariant ? [data.productVariant] : []
+  const sourceLines = Array.isArray(checkoutLines)
+    ? checkoutLines
+    : Array.isArray(cartLines)
+      ? cartLines
+      : singleLine.length > 0
+        ? singleLine
+        : productVariant
+
+  return sourceLines.slice(0, 100).map((line, index) => {
+    const merchandise = line.merchandise ?? line.variant ?? line
+    const product = merchandise.product ?? line.product ?? {}
+    const price = line.cost?.totalAmount ?? line.cost?.amountPerQuantity ?? merchandise.price ?? {}
+    return compactGa4Params({
+      item_id: cleanString(merchandise.sku || merchandise.id || product.id || line.id),
+      item_name: cleanString(product.title || merchandise.product?.title || merchandise.title || line.title),
+      item_variant: cleanString(merchandise.title || line.variantTitle || line.variant?.title),
+      item_category: cleanString(product.type || product.productType || data.collection?.title),
+      price: toFiniteNumber(price.amount ?? line.price ?? merchandise.price),
+      quantity: toFiniteNumber(line.quantity) || 1,
+      index,
+    })
+  })
+}
+
+function extractAnalyticsValue(data = {}) {
+  return (
+    toFiniteNumber(data.checkout?.totalPrice?.amount) ??
+    toFiniteNumber(data.checkout?.subtotalPrice?.amount) ??
+    toFiniteNumber(data.cart?.cost?.totalAmount?.amount) ??
+    toFiniteNumber(data.cartLine?.cost?.totalAmount?.amount) ??
+    null
+  )
+}
+
+function extractAnalyticsCurrency(data = {}) {
+  return (
+    cleanString(data.checkout?.currencyCode) ||
+    cleanString(data.checkout?.totalPrice?.currencyCode) ||
+    cleanString(data.cart?.cost?.totalAmount?.currencyCode) ||
+    cleanString(data.cartLine?.cost?.totalAmount?.currencyCode) ||
+    shopCurrencyCode
+  )
+}
+
+function resolveOrderIdFromAnalyticsEvent(event) {
+  return (
+    cleanString(event.data?.checkout?.order?.id) ||
+    cleanString(event.data?.checkout?.orderId) ||
+    cleanString(event.data?.order?.id)
+  )
+}
+
+function resolveOrderNameFromAnalyticsEvent(event) {
+  return (
+    cleanString(event.data?.checkout?.order?.name) ||
+    cleanString(event.data?.checkout?.order?.orderNumber) ||
+    cleanString(event.data?.order?.name)
+  )
+}
+
+function extractEmailFromAnalyticsEvent(event) {
+  return (
+    cleanString(event.customer?.email) ||
+    cleanString(event.data?.checkout?.email) ||
+    cleanString(event.data?.checkout?.customer?.email) ||
+    ''
+  )
+}
+
+function hashEmail(email) {
+  const normalized = cleanString(email).toLowerCase()
+  if (!normalized) return ''
+  return crypto.createHash('sha256').update(normalized).digest('hex')
+}
+
+function normalizeIsoDate(value) {
+  const date = value ? new Date(value) : null
+  if (!date || Number.isNaN(date.getTime())) return ''
+  return date.toISOString()
+}
+
+function pathFromUrl(value) {
+  try {
+    if (!value) return ''
+    return new URL(value).pathname
+  } catch {
+    return cleanString(value).split('?')[0]
+  }
+}
+
+function inferSourceFromReferrer(referrer) {
+  const host = hostnameFromUrl(referrer)
+  if (!host) return 'direct'
+  if (host.includes('instagram')) return 'instagram'
+  if (host.includes('facebook')) return 'facebook'
+  if (host.includes('google')) return 'google'
+  if (host.includes('bing')) return 'bing'
+  if (host.includes('duckduckgo')) return 'duckduckgo'
+  if (host.includes('yahoo')) return 'yahoo'
+  return host.replace(/^www\./, '')
+}
+
+function inferMediumFromReferrer(referrer) {
+  const host = hostnameFromUrl(referrer)
+  if (!host) return 'direct'
+  if (/(instagram|facebook|tiktok|pinterest|x\.com|twitter)/i.test(host)) return 'social'
+  if (/(google|bing|duckduckgo|yahoo)/i.test(host)) return 'organic'
+  return 'referral'
+}
+
+function hostnameFromUrl(value) {
+  try {
+    if (!value) return ''
+    return new URL(value).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+function inferDevice(userAgent) {
+  if (/ipad|tablet/i.test(userAgent)) return 'tablet'
+  if (/mobile|iphone|android/i.test(userAgent)) return 'mobile'
+  return userAgent ? 'desktop' : ''
+}
+
+function normalizeGa4ClientId(value) {
+  const cleaned = cleanString(value)
+  if (!cleaned) return createPlainId('ga4')
+  return cleaned.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 128) || createPlainId('ga4')
+}
+
+function toFiniteNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
 }
 
 function resolvePayer(payload) {
