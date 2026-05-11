@@ -12,4 +12,24 @@ services:
         sync: false
       - key: SHOPIFY_API_VERSION
         value: 2026-01
-
+  - type: web
+    name: trinity-analytics-collector
+    runtime: docker
+    dockerfilePath: ./Dockerfile.analytics
+    autoDeploy: true
+    healthCheckPath: /api/health
+    envVars:
+      - key: SHOPIFY_SHOP
+        sync: false
+      - key: SHOPIFY_ADMIN_ACCESS_TOKEN
+        sync: false
+      - key: SHOPIFY_API_VERSION
+        value: 2026-01
+      - key: SHOPIFY_CURRENCY_CODE
+        value: USD
+      - key: TRINITY_ANALYTICS_ALLOWED_ORIGINS
+        value: '*'
+      - key: GA4_MEASUREMENT_ID
+        sync: false
+      - key: GA4_API_SECRET
+        sync: false

@@ -31,6 +31,8 @@ const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? process.env.SHOPIFY_
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
+const embeddedAnalyticsCollectorEnabled =
+  process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -401,10 +403,11 @@ app.options('/api/analytics/events', (request, response) => {
 app.get('/api/health', async (_request, response) => {
   response.json({
     ok: Boolean(shopDomain && adminToken),
+    service: 'trinity-billet-inventory',
     shop: shopDomain ?? null,
     apiVersion,
     analytics: {
-      collector: true,
+      embeddedCollector: embeddedAnalyticsCollectorEnabled,
       ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
     },
   })
@@ -414,6 +417,14 @@ app.post('/api/analytics/events', async (request, response) => {
   setAnalyticsCorsHeaders(response)
 
   try {
+    if (!embeddedAnalyticsCollectorEnabled) {
+      response.status(404).json({
+        ok: false,
+        message: 'Analytics collection is handled by the separate Trinity analytics service.',
+      })
+      return
+    }
+
     if (!shopDomain || !adminToken) {
       response.status(503).json({
         ok: false,

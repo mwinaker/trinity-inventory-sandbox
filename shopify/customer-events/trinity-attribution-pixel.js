@@ -1,9 +1,9 @@
 // Trinity Bat Co. Customer Events custom pixel
 // Paste this in Shopify Admin > Settings > Customer events > Add custom pixel.
-// It forwards Shopify's customer event stream to the Trinity inventory backend.
+// It forwards Shopify's customer event stream to the Trinity analytics collector.
 
 const TRINITY_COLLECTOR_URL =
-  'https://trinity-billet-inventory.onrender.com/api/analytics/events';
+  'https://trinity-analytics-collector.onrender.com/api/analytics/events';
 const TRINITY_ATTRIBUTION_KEY = 'trinity_attribution_v1';
 const TRINITY_SESSION_KEY = 'trinity_session_v1';
 const TRINITY_VISITOR_KEY = 'trinity_visitor_v1';

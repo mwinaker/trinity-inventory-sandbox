@@ -22,7 +22,9 @@ npm run build
 
 ## Stable Hosting
 
-This repo is prepared for stable hosting on a Docker-friendly platform such as Render or Railway. The app serves the React build and Express Shopify API from one container, which avoids the flaky temporary tunnel issue inside Shopify admin.
+This repo is prepared for stable hosting on a Docker-friendly platform such as Render or Railway. The inventory app serves the React build and Express Shopify API from one container, which avoids the flaky temporary tunnel issue inside Shopify admin.
+
+The customer behavior collector is intentionally isolated as a second Render service from the same repo. It uses `Dockerfile.analytics`, runs `server/analytics-collector.mjs`, and receives Shopify Customer Events separately from the inventory UI/API.
 
 Required environment variables:
 
@@ -31,16 +33,18 @@ Required environment variables:
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
 - `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
-- `GA4_MEASUREMENT_ID` (optional, enables server-side GA4 ecommerce forwarding from the Trinity analytics collector)
-- `GA4_API_SECRET` (optional, required with `GA4_MEASUREMENT_ID`)
+- `GA4_MEASUREMENT_ID` (analytics collector only; optional, enables server-side GA4 ecommerce forwarding)
+- `GA4_API_SECRET` (analytics collector only; optional, required with `GA4_MEASUREMENT_ID`)
+- `TRINITY_ANALYTICS_ALLOWED_ORIGINS` (analytics collector only; optional, defaults to `*` so Shopify's pixel sandbox can deliver events reliably)
 
 Render:
 
 1. Create a new web service from this GitHub repo.
-2. Let Render use the included `render.yaml` and `Dockerfile`.
-3. Add the Shopify environment variables in the service dashboard.
-4. Deploy and copy the public `onrender.com` URL.
-5. Update the Shopify app URLs in Dev Dashboard to the new stable host.
+2. Let Render use the included `render.yaml`.
+3. Add the Shopify environment variables to `trinity-billet-inventory`.
+4. Add the Shopify and optional GA4 environment variables to `trinity-analytics-collector`.
+5. Deploy and copy the public `onrender.com` URLs.
+6. Update the Shopify app URLs in Dev Dashboard to the inventory host.
 
 Railway:
 
@@ -57,7 +61,7 @@ Railway:
 - Produced-bat repository with model, size, billet linkage, and modifications.
 - Billet cost reference data for RJ's, Great Lakes Veneer, and Champeau.
 - Shopify product catalog sync for matching internal bat records to live store products.
-- Shopify Customer Events collector for anonymous source/session attribution, order attribution metafields, and optional GA4 ecommerce forwarding.
+- Separate Shopify Customer Events collector for anonymous source/session attribution, order attribution metafields, and optional GA4 ecommerce forwarding.
 
 ## Shopify Connection Status
 

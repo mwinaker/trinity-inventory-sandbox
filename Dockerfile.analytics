@@ -1,0 +1,13 @@
+FROM node:24-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY server/analytics-collector.mjs ./server/analytics-collector.mjs
+
+EXPOSE 4178
+
+CMD ["node", "server/analytics-collector.mjs"]
