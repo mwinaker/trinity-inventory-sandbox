@@ -182,6 +182,7 @@ type OrderJob = {
   shopifyOrderName: string
   shopifyDraftOrderId: string
   shopifyDraftOrderName: string
+  shopifyDraftInvoiceUrl: string
   lineItemId: string
   orderSubmittedAt: string
   customerName: string
@@ -266,6 +267,7 @@ type SalesOrderDraft = {
   billingRelationship: string
   salesRep: string
   notes: string
+  createDraftOrder: boolean
   sendInvoice: boolean
   lines: SalesOrderLineDraft[]
 }
@@ -650,7 +652,8 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   billingRelationship: '',
   salesRep: '',
   notes: '',
-  sendInvoice: true,
+  createDraftOrder: true,
+  sendInvoice: false,
   lines: [emptySalesLine()],
 })
 
@@ -803,6 +806,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     shopifyOrderName: record.shopifyOrderName ?? '',
     shopifyDraftOrderId: record.shopifyDraftOrderId ?? '',
     shopifyDraftOrderName: record.shopifyDraftOrderName ?? '',
+    shopifyDraftInvoiceUrl: record.shopifyDraftInvoiceUrl ?? '',
     lineItemId: record.lineItemId ?? '',
     orderSubmittedAt: record.orderSubmittedAt ?? record.createdAt ?? new Date().toISOString(),
     customerName: record.customerName ?? '',
@@ -1927,7 +1931,11 @@ function App() {
 
     try {
       setIsCreatingDraftOrder(true)
-      setOrderActionMessage('Creating Shopify order...')
+      setOrderActionMessage(
+        salesOrderDraft.createDraftOrder
+          ? 'Creating Shopify draft invoice...'
+          : 'Creating Shopify order...',
+      )
       const response = await fetch('/api/sales-orders', {
         method: 'POST',
         headers: {
@@ -1940,8 +1948,9 @@ function App() {
         message?: string
         invoiceSent?: boolean
         emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
+        draftInvoiceReadyForReview?: boolean
         orderJobs?: OrderJob[]
-        draftOrder?: { name?: string }
+        draftOrder?: { name?: string; invoiceUrl?: string }
         order?: { name?: string }
         internalNotificationRecipients?: string[]
       }
@@ -1957,8 +1966,12 @@ function App() {
           ? ' and documentation email sent'
           : ' and invoice sent'
         : ''
+      const draftReviewMessage =
+        salesOrderDraft.createDraftOrder && payload.draftInvoiceReadyForReview
+          ? ' and the draft invoice is ready for review'
+          : ''
       setOrderActionMessage(
-        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${notificationNames}.`,
+        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${notificationNames}.`,
       )
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
@@ -3744,14 +3757,40 @@ function App() {
                 <label className="checkbox-row invoice-toggle">
                   <input
                     type="checkbox"
-                    checked={salesOrderDraft.sendInvoice}
-                    onChange={(event) => updateSalesDraftField('sendInvoice', event.target.checked)}
+                    checked={salesOrderDraft.createDraftOrder}
+                    onChange={(event) => {
+                      const createDraftOrder = event.target.checked
+                      setSalesOrderDraft((current) => ({
+                        ...current,
+                        createDraftOrder,
+                        sendInvoice: createDraftOrder ? false : current.sendInvoice,
+                      }))
+                    }}
                   />
-                  <span>Send Shopify invoice/documentation after order creation</span>
+                  <span>Create Shopify draft invoice for manual review</span>
                 </label>
 
+                {!salesOrderDraft.createDraftOrder ? (
+                  <label className="checkbox-row invoice-toggle">
+                    <input
+                      type="checkbox"
+                      checked={salesOrderDraft.sendInvoice}
+                      onChange={(event) =>
+                        updateSalesDraftField('sendInvoice', event.target.checked)
+                      }
+                    />
+                    <span>Send Shopify invoice/documentation after order creation</span>
+                  </label>
+                ) : null}
+
                 <button type="submit" disabled={isCreatingDraftOrder}>
-                  {isCreatingDraftOrder ? 'Creating order...' : 'Create Shopify order'}
+                  {isCreatingDraftOrder
+                    ? salesOrderDraft.createDraftOrder
+                      ? 'Creating draft...'
+                      : 'Creating order...'
+                    : salesOrderDraft.createDraftOrder
+                      ? 'Create Shopify draft invoice'
+                      : 'Create Shopify order'}
                 </button>
               </form>
             </section>
@@ -3954,13 +3993,25 @@ function App() {
                             </label>
 
                             {job.shopifyDraftOrderId && job.invoiceStatus === 'draft' ? (
-                              <button
-                                type="button"
-                                className="secondary-button"
-                                onClick={() => sendInvoiceForJob(job)}
-                              >
-                                Send Shopify invoice
-                              </button>
+                              <>
+                                {job.shopifyDraftInvoiceUrl ? (
+                                  <a
+                                    className="secondary-button"
+                                    href={job.shopifyDraftInvoiceUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    Review draft invoice
+                                  </a>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={() => sendInvoiceForJob(job)}
+                                >
+                                  Send Shopify invoice
+                                </button>
+                              </>
                             ) : null}
                           </div>
                         </div>

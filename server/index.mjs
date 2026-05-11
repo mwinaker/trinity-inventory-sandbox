@@ -165,6 +165,7 @@ const resourceConfigs = {
         fieldValue('shopify_order_name', item.shopifyOrderName),
         fieldValue('shopify_draft_order_id', item.shopifyDraftOrderId),
         fieldValue('shopify_draft_order_name', item.shopifyDraftOrderName),
+        fieldValue('shopify_draft_invoice_url', item.shopifyDraftInvoiceUrl),
         fieldValue('line_item_id', item.lineItemId),
         fieldValue('order_submitted_at', item.orderSubmittedAt),
         fieldValue('customer_name', item.customerName),
@@ -200,6 +201,11 @@ const resourceConfigs = {
       definitionField('shopify_order_name', 'Shopify Order Name', 'single_line_text_field'),
       definitionField('shopify_draft_order_id', 'Shopify Draft Order ID', 'single_line_text_field'),
       definitionField('shopify_draft_order_name', 'Shopify Draft Order Name', 'single_line_text_field'),
+      definitionField(
+        'shopify_draft_invoice_url',
+        'Shopify Draft Invoice URL',
+        'single_line_text_field',
+      ),
       definitionField('line_item_id', 'Line Item ID', 'single_line_text_field'),
       definitionField('order_submitted_at', 'Order Submitted At', 'single_line_text_field'),
       definitionField('customer_name', 'Customer Name', 'single_line_text_field'),
@@ -439,11 +445,32 @@ app.post('/api/sales-orders', async (request, response) => {
     const payload = request.body ?? {}
     const intakeId = createPlainId('sales')
     const orderSubmittedAt = new Date().toISOString()
+    const shouldCreateDraftOrder = payload.createDraftOrder !== false
     const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
-    const shouldSendInvoice = payload.sendInvoice !== false || isZeroDollarOrder
-    const orderInput = buildOrderCreateInput(payload, intakeId, orderSubmittedAt)
 
     await ensureDefinitions()
+    if (shouldCreateDraftOrder) {
+      const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
+      const draftOrder = await createDraftOrder(draftInput)
+      const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt)
+      await Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+      await syncOrderJobMetafields(jobs)
+
+      response.json({
+        ok: true,
+        draftOrder,
+        invoiceSent: false,
+        emailNotificationMethod: 'none',
+        draftInvoiceReadyForReview: Boolean(draftOrder?.invoiceUrl),
+        internalNotificationRecipients: [],
+        staffNotificationFlow: 'shopify_draft_order_review',
+        orderJobs: jobs,
+      })
+      return
+    }
+
+    const shouldSendInvoice = payload.sendInvoice !== false || isZeroDollarOrder
+    const orderInput = buildOrderCreateInput(payload, intakeId, orderSubmittedAt)
     const order = await createPendingOrder(orderInput, {
       sendReceipt: shouldSendInvoice && isZeroDollarOrder,
     })
@@ -1946,6 +1973,7 @@ function mapDraftOrderToJobs(
       shopifyOrderName: '',
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
+      shopifyDraftInvoiceUrl: draftOrder.invoiceUrl ?? '',
       lineItemId: draftLine.id ?? '',
       orderSubmittedAt,
       customerName: payer.name || playerName,
@@ -2008,6 +2036,7 @@ function mapCompletedDraftOrderToJobs(
       intakeId,
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
+      shopifyDraftInvoiceUrl: draftOrder.invoiceUrl ?? '',
       orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       specs: mergeSpecs(job.specs, fallbackSpecs),
