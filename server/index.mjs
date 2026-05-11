@@ -1896,6 +1896,8 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
           variantId,
           quantity: Number(line.quantity || 1),
           ...(unitPrice ? { priceOverride: unitPrice } : {}),
+          requiresShipping,
+          taxable: false,
           customAttributes,
         }
       }
@@ -1908,6 +1910,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         },
         quantity: Number(line.quantity || 1),
         requiresShipping,
+        taxable: false,
         customAttributes,
       }
     }),
