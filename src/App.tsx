@@ -258,6 +258,7 @@ type SalesOrderDraft = {
   billingZip: string
   billingCountryCode: string
   billingDifferent: boolean
+  requiresShipping: boolean
   billingName: string
   billingEmail: string
   billingPhone: string
@@ -541,6 +542,15 @@ const seedBillingContacts: BillingContact[] = [
     relationship: 'Minor league clubhouse manager',
     notes: 'Primary saved payer contact for Mets minor league player bat orders.',
   },
+  {
+    id: 'billing-contact-brandon-oliver-futures-training-center',
+    name: 'Brandon Oliver',
+    email: 'brandon@futurestrainingcenter.com',
+    phone: '(951) 454-1640',
+    company: 'Futures Training Center',
+    relationship: 'Training center recipient / local delivery contact',
+    notes: 'Primary contact for Futures Training Center training bat orders.',
+  },
 ]
 
 const emptyBillet: Omit<Billet, 'id'> = {
@@ -632,6 +642,7 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   billingZip: '',
   billingCountryCode: 'US',
   billingDifferent: false,
+  requiresShipping: true,
   billingName: '',
   billingEmail: '',
   billingPhone: '',
@@ -1876,20 +1887,22 @@ function App() {
       ? salesOrderDraft.billingEmail
       : salesOrderDraft.playerEmail
     const isDirectBillOrder = !salesOrderDraft.billingDifferent
+    const requiresShipping = salesOrderDraft.requiresShipping
     const hasMissingDirectContact =
       isDirectBillOrder &&
       (!salesOrderDraft.playerPhone.trim() ||
-        !salesOrderDraft.shippingAddress1.trim() ||
-        !salesOrderDraft.shippingCity.trim() ||
-        !salesOrderDraft.shippingProvinceCode.trim() ||
-        !salesOrderDraft.shippingZip.trim() ||
-        !salesOrderDraft.shippingCountryCode.trim() ||
-        (salesOrderDraft.billingAddressDifferent &&
-          (!salesOrderDraft.billingAddress1.trim() ||
-            !salesOrderDraft.billingCity.trim() ||
-            !salesOrderDraft.billingProvinceCode.trim() ||
-            !salesOrderDraft.billingZip.trim() ||
-            !salesOrderDraft.billingCountryCode.trim())))
+        (requiresShipping &&
+          (!salesOrderDraft.shippingAddress1.trim() ||
+            !salesOrderDraft.shippingCity.trim() ||
+            !salesOrderDraft.shippingProvinceCode.trim() ||
+            !salesOrderDraft.shippingZip.trim() ||
+            !salesOrderDraft.shippingCountryCode.trim() ||
+            (salesOrderDraft.billingAddressDifferent &&
+              (!salesOrderDraft.billingAddress1.trim() ||
+                !salesOrderDraft.billingCity.trim() ||
+                !salesOrderDraft.billingProvinceCode.trim() ||
+                !salesOrderDraft.billingZip.trim() ||
+                !salesOrderDraft.billingCountryCode.trim())))))
     const hasInvalidLine = salesOrderDraft.lines.some(
       (line) =>
         !line.title.trim() ||
@@ -3134,6 +3147,40 @@ function App() {
                     }}
                   />
                   <span>Bill a team, agent, or other payer</span>
+                </label>
+
+                <label className="checkbox-row billing-toggle">
+                  <input
+                    type="checkbox"
+                    checked={!salesOrderDraft.requiresShipping}
+                    onChange={(event) => {
+                      const requiresShipping = !event.target.checked
+                      setSalesOrderDraft((current) => ({
+                        ...current,
+                        requiresShipping,
+                        shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
+                        shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
+                        shippingCity: requiresShipping ? current.shippingCity : '',
+                        shippingProvinceCode: requiresShipping
+                          ? current.shippingProvinceCode
+                          : '',
+                        shippingZip: requiresShipping ? current.shippingZip : '',
+                        shippingCountryCode: requiresShipping ? current.shippingCountryCode : 'US',
+                        billingAddressDifferent: requiresShipping
+                          ? current.billingAddressDifferent
+                          : false,
+                        billingAddress1: requiresShipping ? current.billingAddress1 : '',
+                        billingAddress2: requiresShipping ? current.billingAddress2 : '',
+                        billingCity: requiresShipping ? current.billingCity : '',
+                        billingProvinceCode: requiresShipping
+                          ? current.billingProvinceCode
+                          : '',
+                        billingZip: requiresShipping ? current.billingZip : '',
+                        billingCountryCode: requiresShipping ? current.billingCountryCode : 'US',
+                      }))
+                    }}
+                  />
+                  <span>Local delivery / no shipping required</span>
                 </label>
 
                 {salesOrderDraft.billingDifferent ? (

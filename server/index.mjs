@@ -1646,19 +1646,25 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const billingDifferent = isTruthy(payload.billingDifferent)
+  const requiresShipping = requiresShippingForOrder(payload)
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const proOrderNotificationLabel = hasProOrder
     ? buildProOrderNotificationLabel(payload, payer)
     : ''
-  const { shippingAddress, billingAddress, billingAddressDifferent } =
-    buildDirectOrderAddresses(payload)
+  const directAddresses = buildDirectOrderAddresses(payload)
+  const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
+  const billingAddress = directAddresses.billingAddress
+  const billingAddressDifferent = requiresShipping
+    ? directAddresses.billingAddressDifferent
+    : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
   const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
+    requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
@@ -1705,6 +1711,8 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
       trinity_notification_label: proOrderNotificationLabel,
       trinity_zero_dollar_sample: isZeroDollarOrder ? 'true' : '',
+      trinity_requires_shipping: requiresShipping ? 'true' : 'false',
+      trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
       trinity_player_name: playerName,
@@ -1741,13 +1749,14 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         trinity_cupped: line.cupped,
         trinity_notes: line.notes,
         trinity_product_title: line.title,
+        trinity_requires_shipping: requiresShipping ? 'true' : 'false',
       })
 
       return {
         ...(variantId ? { variantId } : {}),
         title,
         quantity: Number(line.quantity || 1),
-        requiresShipping: true,
+        requiresShipping,
         taxable: false,
         ...(unitPrice ? { priceSet: unitPrice } : {}),
         properties,
@@ -1762,16 +1771,22 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const billingDifferent = isTruthy(payload.billingDifferent)
+  const requiresShipping = requiresShippingForOrder(payload)
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
-  const { shippingAddress, billingAddress, billingAddressDifferent } =
-    buildDirectOrderAddresses(payload)
+  const directAddresses = buildDirectOrderAddresses(payload)
+  const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
+  const billingAddress = directAddresses.billingAddress
+  const billingAddressDifferent = requiresShipping
+    ? directAddresses.billingAddressDifferent
+    : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
   const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
+    requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
@@ -1808,6 +1823,8 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
       trinity_zero_dollar_sample: isZeroDollarOrder ? 'true' : '',
+      trinity_requires_shipping: requiresShipping ? 'true' : 'false',
+      trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
       trinity_player_name: playerName,
@@ -1844,6 +1861,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         trinity_cupped: line.cupped,
         trinity_notes: line.notes,
         trinity_product_title: line.title,
+        trinity_requires_shipping: requiresShipping ? 'true' : 'false',
       })
 
       if (variantId) {
@@ -1862,6 +1880,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
           currencyCode: shopCurrencyCode,
         },
         quantity: Number(line.quantity || 1),
+        requiresShipping,
         customAttributes,
       }
     }),
@@ -2340,6 +2359,13 @@ function normalizeAttributeKey(key) {
 
 function isTruthy(value) {
   return ['true', 'yes', '1', 'on'].includes(cleanString(value).toLowerCase())
+}
+
+function requiresShippingForOrder(payload = {}) {
+  const value = payload.requiresShipping
+  if (typeof value === 'boolean') return value
+  if (value === null || value === undefined || cleanString(value) === '') return true
+  return !['false', 'no', '0', 'off'].includes(cleanString(value).toLowerCase())
 }
 
 function isBatProductLike(product) {
