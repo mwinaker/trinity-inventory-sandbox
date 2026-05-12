@@ -586,6 +586,67 @@ button:hover {
   font-size: 0.9rem;
 }
 
+.public-order-shell {
+  width: min(1120px, calc(100% - 40px));
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 30px 0 48px;
+}
+
+.public-order-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 24px;
+  align-items: end;
+  margin-bottom: 18px;
+  padding: 26px 0 4px;
+}
+
+.public-order-heading h1 {
+  max-width: none;
+  font-size: clamp(2.1rem, 5vw, 4.4rem);
+  letter-spacing: 0;
+}
+
+.public-order-heading p {
+  max-width: 720px;
+  margin: 0;
+  color: #513f31;
+}
+
+.public-order-heading .eyebrow {
+  grid-column: 1 / -1;
+}
+
+.public-order-heading > span {
+  justify-self: end;
+  border-radius: 999px;
+  padding: 9px 13px;
+  background: rgba(47, 76, 50, 0.12);
+  color: #2f4c32;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.public-order-message {
+  margin-bottom: 18px;
+  border: 1px solid rgba(47, 76, 50, 0.18);
+  border-radius: 18px;
+  padding: 14px 16px;
+  background: rgba(255, 252, 244, 0.9);
+  color: #2d412f;
+  font-weight: 800;
+}
+
+.public-order-panel {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.public-order-form {
+  gap: 18px;
+}
+
 .players-sidebar,
 .player-detail,
 .profile-entry-panel,
@@ -973,6 +1034,7 @@ td select {
   }
 
   .hero-panel,
+  .public-order-heading,
   .workspace-grid,
   .intake-panel-primary,
   .players-layout,
@@ -986,6 +1048,10 @@ td select {
   .inventory-toolbar,
   .metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .public-order-heading > span {
+    justify-self: start;
   }
 
   .hero-panel > div:first-child {
@@ -1015,6 +1081,11 @@ td select {
 @media (max-width: 520px) {
   .app-shell {
     padding: 12px;
+  }
+
+  .public-order-shell {
+    width: min(100% - 24px, 1120px);
+    padding: 14px 0 30px;
   }
 
   .hero-panel > div:first-child,
