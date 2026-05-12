@@ -1275,7 +1275,12 @@ type PublicDraftInvoiceReview = {
   invoiceSent: boolean
 }
 
-const publicOrderFormPaths = new Set(['/order-submission', '/sales-order'])
+const publicOrderFormPaths = new Set([
+  '/order-submission',
+  '/sales-order',
+  '/trinity-order-form',
+  '/trinity-order-from',
+])
 
 function getCurrentAppPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/'
