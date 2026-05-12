@@ -23,14 +23,21 @@ for (const key of requiredEnv) {
 }
 
 const app = express()
+app.set('trust proxy', 1)
 const port = Number(process.env.PORT ?? 4177)
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
 const shopDomain = process.env.SHOPIFY_SHOP
 const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
-const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? process.env.SHOPIFY_API_SECRET
+const shopifyApiKey = process.env.SHOPIFY_API_KEY ?? ''
+const shopifyApiSecret = process.env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_WEBHOOK_SECRET ?? ''
+const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? shopifyApiSecret
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
+const internalSessionCookieName = 'trinity_internal_session'
+const internalSessionMaxAgeMs = 12 * 60 * 60 * 1000
+const internalSessionSecret =
+  process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
 const defaultInternalOrderNotificationEmails = [
@@ -394,6 +401,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
 })
 
 app.use(express.json({ limit: '2mb' }))
+app.use(establishInternalSession)
 
 app.options('/api/analytics/events', (request, response) => {
   setAnalyticsCorsHeaders(response)
@@ -489,7 +497,12 @@ app.post('/api/analytics/events', async (request, response) => {
   }
 })
 
-app.get('/api/state', async (_request, response) => {
+app.get('/api/internal-session', requireInternalAccess, (_request, response) => {
+  response.set('Cache-Control', 'no-store')
+  response.json({ ok: true })
+})
+
+app.get('/api/state', requireInternalAccess, async (_request, response) => {
   try {
     response.set('Cache-Control', 'no-store')
 
@@ -546,7 +559,7 @@ app.get('/api/catalog', async (_request, response) => {
   }
 })
 
-app.put('/api/state', async (request, response) => {
+app.put('/api/state', requireInternalAccess, async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -597,6 +610,15 @@ app.post('/api/sales-orders', async (request, response) => {
     }
 
     const payload = request.body ?? {}
+    const validationMessage = validateSalesOrderPayload(payload)
+    if (validationMessage) {
+      response.status(400).json({
+        ok: false,
+        message: validationMessage,
+      })
+      return
+    }
+
     const intakeId = createPlainId('sales')
     const orderSubmittedAt = new Date().toISOString()
     const shouldCreateDraftOrder = payload.createDraftOrder !== false
@@ -661,7 +683,7 @@ app.post('/api/sales-orders', async (request, response) => {
   }
 })
 
-app.post('/api/draft-orders/send-invoice', async (request, response) => {
+app.post('/api/draft-orders/send-invoice', requireInternalAccess, async (request, response) => {
   try {
     const draftOrderId = request.body?.draftOrderId
     if (!draftOrderId) {
@@ -679,7 +701,7 @@ app.post('/api/draft-orders/send-invoice', async (request, response) => {
   }
 })
 
-app.post('/api/orders/import', async (request, response) => {
+app.post('/api/orders/import', requireInternalAccess, async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -711,7 +733,7 @@ app.post('/api/orders/import', async (request, response) => {
   }
 })
 
-app.post('/api/webhooks/register', async (request, response) => {
+app.post('/api/webhooks/register', requireInternalAccess, async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -765,6 +787,189 @@ app.get('/{*path}', (_request, response) => {
 app.listen(port, () => {
   console.log(`Trinity billet server listening on http://127.0.0.1:${port}`)
 })
+
+function establishInternalSession(request, response, next) {
+  if (
+    request.method === 'GET' &&
+    request.accepts('html') &&
+    hasValidShopifyLaunch(request)
+  ) {
+    const token = createInternalSessionToken()
+    if (token) {
+      response.cookie(internalSessionCookieName, token, {
+        httpOnly: true,
+        secure: isSecureRequest(request),
+        sameSite: isSecureRequest(request) ? 'none' : 'lax',
+        maxAge: internalSessionMaxAgeMs,
+        path: '/',
+      })
+    }
+  }
+
+  next()
+}
+
+function requireInternalAccess(request, response, next) {
+  if (isLocalRequest(request) || hasValidInternalSession(request) || hasValidBearerSession(request)) {
+    next()
+    return
+  }
+
+  response.status(401).json({
+    ok: false,
+    message: 'Internal inventory access requires a verified Shopify session.',
+  })
+}
+
+function hasValidShopifyLaunch(request) {
+  return hasValidShopifyHmac(request) || hasValidShopifySessionToken(getQueryParam(request, 'id_token'))
+}
+
+function hasValidShopifyHmac(request) {
+  if (!shopifyApiSecret) return false
+
+  const hmac = getQueryParam(request, 'hmac')
+  if (!hmac) return false
+
+  const url = new URL(request.originalUrl, 'https://trinity.local')
+  const messageParts = []
+  for (const [key, value] of url.searchParams.entries()) {
+    if (key === 'hmac' || key === 'signature') continue
+    messageParts.push(`${key}=${value}`)
+  }
+  messageParts.sort()
+
+  const digest = crypto
+    .createHmac('sha256', shopifyApiSecret)
+    .update(messageParts.join('&'))
+    .digest('hex')
+
+  if (!safeEqual(digest, hmac, 'hex')) return false
+
+  const requestShop = getQueryParam(request, 'shop')
+  return !shopDomain || !requestShop || requestShop === shopDomain
+}
+
+function hasValidBearerSession(request) {
+  const authorization = request.get('authorization') ?? ''
+  const match = authorization.match(/^Bearer\s+(.+)$/i)
+  return Boolean(match?.[1] && hasValidShopifySessionToken(match[1]))
+}
+
+function hasValidShopifySessionToken(token) {
+  if (!shopifyApiSecret || !token) return false
+
+  const parts = token.split('.')
+  if (parts.length !== 3) return false
+
+  try {
+    const [encodedHeader, encodedPayload, signature] = parts
+    const header = JSON.parse(decodeBase64Url(encodedHeader))
+    const payload = JSON.parse(decodeBase64Url(encodedPayload))
+
+    if (header.alg !== 'HS256') return false
+
+    const expectedSignature = crypto
+      .createHmac('sha256', shopifyApiSecret)
+      .update(`${encodedHeader}.${encodedPayload}`)
+      .digest('base64url')
+
+    if (!safeEqual(expectedSignature, signature, 'utf8')) return false
+
+    const nowInSeconds = Math.floor(Date.now() / 1000)
+    if (typeof payload.exp !== 'number' || payload.exp < nowInSeconds) return false
+    if (typeof payload.nbf === 'number' && payload.nbf > nowInSeconds) return false
+    if (shopifyApiKey && payload.aud !== shopifyApiKey) return false
+
+    if (shopDomain) {
+      const dest = String(payload.dest ?? '')
+      const issuer = String(payload.iss ?? '')
+      if (!dest.includes(shopDomain) && !issuer.includes(shopDomain)) return false
+    }
+
+    return true
+  } catch {
+    return false
+  }
+}
+
+function createInternalSessionToken() {
+  if (!internalSessionSecret) return ''
+
+  const payload = Buffer.from(
+    JSON.stringify({
+      shop: shopDomain ?? '',
+      exp: Date.now() + internalSessionMaxAgeMs,
+    }),
+  ).toString('base64url')
+  const signature = crypto
+    .createHmac('sha256', internalSessionSecret)
+    .update(payload)
+    .digest('base64url')
+
+  return `${payload}.${signature}`
+}
+
+function hasValidInternalSession(request) {
+  if (!internalSessionSecret) return false
+
+  const token = getCookie(request, internalSessionCookieName)
+  if (!token) return false
+
+  const [payload, signature] = token.split('.')
+  if (!payload || !signature) return false
+
+  const expectedSignature = crypto
+    .createHmac('sha256', internalSessionSecret)
+    .update(payload)
+    .digest('base64url')
+  if (!safeEqual(expectedSignature, signature, 'utf8')) return false
+
+  try {
+    const session = JSON.parse(decodeBase64Url(payload))
+    if (typeof session.exp !== 'number' || session.exp < Date.now()) return false
+    return !shopDomain || !session.shop || session.shop === shopDomain
+  } catch {
+    return false
+  }
+}
+
+function getQueryParam(request, name) {
+  const value = request.query?.[name]
+  if (Array.isArray(value)) return String(value[0] ?? '')
+  return typeof value === 'string' ? value : ''
+}
+
+function getCookie(request, name) {
+  const cookies = String(request.get('cookie') ?? '').split(';')
+  for (const cookie of cookies) {
+    const [rawName, ...rawValueParts] = cookie.trim().split('=')
+    if (rawName === name) return decodeURIComponent(rawValueParts.join('='))
+  }
+  return ''
+}
+
+function decodeBase64Url(value) {
+  return Buffer.from(value, 'base64url').toString('utf8')
+}
+
+function safeEqual(left, right, encoding) {
+  try {
+    const leftBuffer = Buffer.from(left, encoding)
+    const rightBuffer = Buffer.from(right, encoding)
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer)
+  } catch {
+    return false
+  }
+}
+
+function isSecureRequest(request) {
+  return request.secure || request.get('x-forwarded-proto') === 'https'
+}
+
+function isLocalRequest(request) {
+  return ['localhost', '127.0.0.1', '::1'].includes(request.hostname)
+}
 
 async function ensureDefinitions() {
   if (!definitionPromise) {
@@ -2360,6 +2565,64 @@ function formatMailingAddress(address) {
   ]
     .filter(Boolean)
     .join(' | ')
+}
+
+function validateSalesOrderPayload(payload) {
+  const playerName = cleanString(payload?.playerName || payload?.customerName)
+  const billingDifferent = isTruthy(payload?.billingDifferent)
+  const payer = resolvePayer(payload ?? {})
+  const requiresShipping = requiresShippingForOrder(payload ?? {})
+  const lines = Array.isArray(payload?.lines) ? payload.lines : []
+
+  if (!playerName) return 'Player name is required.'
+  if (!payer.email) return 'Payer email is required.'
+  if (!isPlausibleEmail(payer.email)) return 'Payer email must be a valid email address.'
+
+  if (!billingDifferent) {
+    if (!payer.phone) return 'Player phone is required for direct-bill orders.'
+
+    if (requiresShipping) {
+      const missingShippingAddress =
+        !cleanString(payload?.shippingAddress1) ||
+        !cleanString(payload?.shippingCity) ||
+        !cleanString(payload?.shippingProvinceCode) ||
+        !cleanString(payload?.shippingZip) ||
+        !cleanString(payload?.shippingCountryCode)
+      if (missingShippingAddress) return 'Shipping address is required for direct-bill orders.'
+
+      if (isTruthy(payload?.billingAddressDifferent)) {
+        const missingBillingAddress =
+          !cleanString(payload?.billingAddress1) ||
+          !cleanString(payload?.billingCity) ||
+          !cleanString(payload?.billingProvinceCode) ||
+          !cleanString(payload?.billingZip) ||
+          !cleanString(payload?.billingCountryCode)
+        if (missingBillingAddress) return 'Billing address is required when it differs from shipping.'
+      }
+    }
+  }
+
+  if (lines.length === 0) return 'At least one order line is required.'
+
+  for (const [index, line] of lines.entries()) {
+    const title = cleanString(line?.title || line?.model)
+    const unitPrice = Number(cleanString(line?.unitPrice))
+    const quantity = Number(line?.quantity)
+
+    if (!title) return `Line ${index + 1} needs a bat model.`
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      return `Line ${index + 1} needs a valid unit price.`
+    }
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return `Line ${index + 1} needs a quantity of at least 1.`
+    }
+  }
+
+  return ''
+}
+
+function isPlausibleEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanString(value))
 }
 
 function isZeroDollarSalesOrder(payload) {

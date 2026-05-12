@@ -1276,7 +1276,7 @@ function isPublicOrderFormRoute() {
   return publicOrderFormPaths.has(getCurrentAppPath())
 }
 
-function canShowInternalTool() {
+function hasInternalLaunchHint() {
   const params = new URLSearchParams(window.location.search)
   return (
     import.meta.env.DEV ||
@@ -5604,12 +5604,56 @@ function InternalApp() {
   )
 }
 
+function InternalAppGate() {
+  const [accessState, setAccessState] = useState<'checking' | 'allowed' | 'denied'>(
+    import.meta.env.DEV ? 'allowed' : 'checking',
+  )
+
+  useEffect(() => {
+    if (import.meta.env.DEV) return
+
+    let cancelled = false
+
+    async function verifyInternalSession() {
+      try {
+        const response = await fetch('/api/internal-session', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        })
+        if (!cancelled) setAccessState(response.ok ? 'allowed' : 'denied')
+      } catch {
+        if (!cancelled) setAccessState('denied')
+      }
+    }
+
+    void verifyInternalSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (accessState === 'allowed') return <InternalApp />
+  if (accessState === 'denied') return <PublicSalesOrderForm />
+
+  return (
+    <main className="public-order-shell">
+      <section className="public-order-heading">
+        <p className="eyebrow">Trinity Bat Company</p>
+        <h1>Opening internal tool</h1>
+        <p>Verifying the Shopify admin session before loading inventory controls.</p>
+        <span>Checking access...</span>
+      </section>
+    </main>
+  )
+}
+
 function App() {
-  if (isPublicOrderFormRoute() || !canShowInternalTool()) {
+  if (isPublicOrderFormRoute() || !hasInternalLaunchHint()) {
     return <PublicSalesOrderForm />
   }
 
-  return <InternalApp />
+  return <InternalAppGate />
 }
 
 export default App
