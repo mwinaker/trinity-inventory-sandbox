@@ -14,6 +14,12 @@ npm run serve
 
 Then open `http://127.0.0.1:4177`.
 
+Export captured Shopify customer behavior sessions:
+
+```sh
+npm run analytics:report
+```
+
 ## Build Check
 
 ```sh
@@ -62,6 +68,7 @@ Railway:
 - Billet cost reference data for RJ's, Great Lakes Veneer, and Champeau.
 - Shopify product catalog sync for matching internal bat records to live store products.
 - Separate Shopify Customer Events collector for anonymous source/session attribution, order attribution metafields, and optional GA4 ecommerce forwarding.
+- Customer session export tooling for source, campaign, landing page, device, product behavior, checkout, and purchase journey reporting.
 
 ## Shopify Connection Status
 

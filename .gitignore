@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 order-drafts/
+reports/
+tmp/
 *.local
 .env*
 !.env.example

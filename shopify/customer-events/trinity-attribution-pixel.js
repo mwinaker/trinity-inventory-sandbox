@@ -133,7 +133,7 @@ async function readJson(key, fallback) {
 
 function buildTouchpoint(href, referrer, capturedAt) {
   const params = paramsFromUrl(href);
-  const source = params.utm_source || sourceFromReferrer(referrer) || 'direct';
+  const source = normalizeSource(params.utm_source || sourceFromReferrer(referrer) || 'direct');
   const medium = params.utm_medium || mediumFromReferrer(referrer) || 'direct';
   return {
     source,
@@ -145,6 +145,15 @@ function buildTouchpoint(href, referrer, capturedAt) {
     referrer,
     capturedAt,
   };
+}
+
+function normalizeSource(value) {
+  const source = asString(value).trim().toLowerCase();
+  if (!source) return '';
+  if (['ig', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram';
+  if (['fb', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook';
+  if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x';
+  return source;
 }
 
 function hasTouchpoint(touchpoint) {

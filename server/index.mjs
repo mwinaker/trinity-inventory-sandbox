@@ -1713,7 +1713,7 @@ function normalizeAttribution(value) {
 
 function normalizeTouchpoint(value) {
   return {
-    source: cleanString(value.source).slice(0, 128),
+    source: normalizeTrafficSource(value.source).slice(0, 128),
     medium: cleanString(value.medium).slice(0, 128),
     campaign: cleanString(value.campaign).slice(0, 128),
     content: cleanString(value.content).slice(0, 128),
@@ -1843,9 +1843,9 @@ async function getRecordByHandle(config, id) {
 function firstPopulatedTouchpoint(existing, primary, secondary, fallback) {
   return {
     source:
-      cleanString(existing?.firstSource) ||
-      cleanString(primary?.source) ||
-      cleanString(secondary?.source) ||
+      normalizeTrafficSource(existing?.firstSource) ||
+      normalizeTrafficSource(primary?.source) ||
+      normalizeTrafficSource(secondary?.source) ||
       inferSourceFromReferrer(fallback?.referrer),
     medium:
       cleanString(existing?.firstMedium) ||
@@ -1880,8 +1880,8 @@ function firstPopulatedTouchpoint(existing, primary, secondary, fallback) {
 function lastPopulatedTouchpoint(primary, secondary, fallback) {
   return {
     source:
-      cleanString(primary?.source) ||
-      cleanString(secondary?.source) ||
+      normalizeTrafficSource(primary?.source) ||
+      normalizeTrafficSource(secondary?.source) ||
       inferSourceFromReferrer(fallback?.referrer),
     medium:
       cleanString(primary?.medium) ||
@@ -1903,7 +1903,6 @@ function lastPopulatedTouchpoint(primary, secondary, fallback) {
 
 function summarizeAnalyticsEvent(event) {
   const items = extractAnalyticsItems(event.data)
-  const checkout = event.data?.checkout ?? {}
   const productVariant = event.data?.productVariant ?? event.data?.product ?? {}
   const collection = event.data?.collection ?? {}
   const searchResult = event.data?.searchResult ?? event.data?.search ?? {}
@@ -2073,6 +2072,9 @@ function mapAnalyticsEventToGa4(event, session) {
     search_submitted: 'search',
     trinity_customizer_started: 'trinity_customizer_started',
     trinity_customizer_option_changed: 'trinity_customizer_option_changed',
+    trinity_product_cta_clicked: 'trinity_product_cta_clicked',
+    trinity_product_form_submitted: 'trinity_product_form_submitted',
+    trinity_product_option_changed: 'trinity_product_option_changed',
   }
   const name = eventNameMap[event.name] ?? event.name.replace(/[^a-zA-Z0-9_]+/g, '_').slice(0, 40)
   if (!name) return null
@@ -2219,6 +2221,15 @@ function inferSourceFromReferrer(referrer) {
   if (host.includes('duckduckgo')) return 'duckduckgo'
   if (host.includes('yahoo')) return 'yahoo'
   return host.replace(/^www\./, '')
+}
+
+function normalizeTrafficSource(value) {
+  const source = cleanString(value).toLowerCase()
+  if (!source) return ''
+  if (['ig', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
+  if (['fb', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
+  if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x'
+  return source
 }
 
 function inferMediumFromReferrer(referrer) {

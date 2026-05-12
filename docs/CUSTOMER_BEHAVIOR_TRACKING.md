@@ -69,10 +69,15 @@ shopify/theme/trinity-custom-behavior-events.js
 
 It publishes:
 
+- `trinity_product_cta_clicked`
+- `trinity_product_form_submitted`
+- `trinity_product_option_changed`
 - `trinity_customizer_started`
 - `trinity_customizer_option_changed`
 
 Those custom events are then picked up by the Customer Events pixel and forwarded to the analytics collector and GA4.
+
+The publisher avoids sending obvious contact fields and reports typed custom text as a length marker instead of the raw value.
 
 ## Shopify Order Metafields
 
@@ -129,6 +134,35 @@ The backend maps Shopify events to GA4 ecommerce events:
 | `search_submitted` | `search` |
 | `trinity_customizer_started` | `trinity_customizer_started` |
 | `trinity_customizer_option_changed` | `trinity_customizer_option_changed` |
+| `trinity_product_cta_clicked` | `trinity_product_cta_clicked` |
+| `trinity_product_form_submitted` | `trinity_product_form_submitted` |
+| `trinity_product_option_changed` | `trinity_product_option_changed` |
+
+## Session Report Export
+
+Run this from the repo to export captured session journeys from Shopify metaobjects:
+
+```sh
+npm run analytics:report
+```
+
+Outputs are written to:
+
+```text
+reports/analytics/
+```
+
+The export includes JSON, CSV, and Markdown files with source, campaign, landing page, device, event counts, product views, customizer activity, checkout starts, purchases, and a compact journey string per session.
+
+## UTM Link Discipline
+
+Use this playbook for campaign links:
+
+```text
+docs/TRINITY_UTM_PLAYBOOK.md
+```
+
+Every social bio, story, post, email, QR code, partner link, and paid placement should use consistent `utm_source`, `utm_medium`, `utm_campaign`, and `utm_content` values so a visitor's journey can be tied back to the exact placement that drove the click.
 
 ## What still requires admin access
 
