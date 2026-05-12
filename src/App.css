@@ -647,6 +647,107 @@ button:hover {
   gap: 18px;
 }
 
+.public-invoice-review {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 18px;
+  border-color: rgba(47, 76, 50, 0.24);
+  background: #fffdf7;
+}
+
+.invoice-review-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.invoice-review-summary > div {
+  border: 1px solid rgba(72, 50, 31, 0.12);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(47, 76, 50, 0.06);
+}
+
+.invoice-review-summary span,
+.invoice-review-line span {
+  display: block;
+  color: #9b5c2f;
+  font-size: 0.74rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invoice-review-summary strong {
+  display: block;
+  margin-top: 4px;
+  color: #2c1b11;
+  font-size: 1.05rem;
+}
+
+.invoice-review-summary p,
+.invoice-review-line p {
+  margin: 4px 0 0;
+  color: #5d4b3c;
+}
+
+.invoice-review-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.invoice-review-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 0.5fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid rgba(72, 50, 31, 0.12);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fffaf0;
+}
+
+.invoice-review-line strong {
+  display: block;
+  margin-top: 4px;
+  color: #2c1b11;
+  font-size: 1.16rem;
+}
+
+.invoice-review-line dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.invoice-review-line dl > div {
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.invoice-review-line dt {
+  color: #735f4d;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.invoice-review-line dd {
+  margin: 4px 0 0;
+  color: #2c1b11;
+  font-weight: 900;
+}
+
+.invoice-review-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .players-sidebar,
 .player-detail,
 .profile-entry-panel,
@@ -1044,6 +1145,8 @@ td select {
   .order-job-grid,
   .order-actions,
   .cost-results,
+  .invoice-review-summary,
+  .invoice-review-line,
   .profile-toolbar,
   .inventory-toolbar,
   .metrics-grid {
@@ -1069,7 +1172,8 @@ td select {
 
   .quick-actions,
   .input-action-row,
-  .bat-card {
+  .bat-card,
+  .invoice-review-line dl {
     grid-template-columns: 1fr;
   }
 

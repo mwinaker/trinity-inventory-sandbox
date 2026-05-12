@@ -1258,12 +1258,21 @@ type SalesOrderApiResponse = {
   ok?: boolean
   message?: string
   invoiceSent?: boolean
+  invoiceSendToken?: string
+  invoiceSendTokenExpiresAt?: string
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
   orderJobs?: OrderJob[]
-  draftOrder?: { name?: string; invoiceUrl?: string }
+  draftOrder?: { id?: string; name?: string; invoiceUrl?: string }
   order?: { name?: string }
   internalNotificationRecipients?: string[]
+}
+
+type PublicDraftInvoiceReview = {
+  draft: SalesOrderDraft
+  draftOrder: NonNullable<SalesOrderApiResponse['draftOrder']>
+  invoiceSendToken: string
+  invoiceSent: boolean
 }
 
 const publicOrderFormPaths = new Set(['/order-submission', '/sales-order'])
@@ -1337,6 +1346,42 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   return !draft.playerName.trim() || !payerEmail.trim() || hasMissingDirectContact || hasInvalidLine
 }
 
+function cloneSalesOrderDraft(draft: SalesOrderDraft): SalesOrderDraft {
+  return {
+    ...draft,
+    lines: draft.lines.map((line) => ({ ...line })),
+  }
+}
+
+function getPublicDraftPayerName(draft: SalesOrderDraft) {
+  if (!draft.billingDifferent) return draft.playerName
+  return draft.billingName || draft.billingCompany || draft.playerName
+}
+
+function getPublicDraftPayerEmail(draft: SalesOrderDraft) {
+  return draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+}
+
+function formatSalesOrderMoney(value: number | string) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount)) return '$0.00'
+
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(amount)
+}
+
+function getSalesLineTotal(line: SalesOrderLineDraft) {
+  const quantity = Number.isFinite(line.quantity) ? line.quantity : 0
+  const unitPrice = Number(line.unitPrice)
+  return (Number.isFinite(unitPrice) ? unitPrice : 0) * quantity
+}
+
+function getSalesOrderTotal(draft: SalesOrderDraft) {
+  return draft.lines.reduce((total, line) => total + getSalesLineTotal(line), 0)
+}
+
 function PublicSalesOrderForm() {
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
@@ -1344,6 +1389,10 @@ function PublicSalesOrderForm() {
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSendingInvoice, setIsSendingInvoice] = useState(false)
+  const [pendingDraftReview, setPendingDraftReview] = useState<PublicDraftInvoiceReview | null>(
+    null,
+  )
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -1419,6 +1468,7 @@ function PublicSalesOrderForm() {
           ? 'Creating Shopify draft invoice...'
           : 'Creating Shopify order...',
       )
+      const submittedDraft = cloneSalesOrderDraft(salesOrderDraft)
       const response = await fetch('/api/sales-orders', {
         method: 'POST',
         headers: {
@@ -1429,13 +1479,56 @@ function PublicSalesOrderForm() {
       const payload = (await response.json()) as SalesOrderApiResponse
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
 
-      setMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
+      if (
+        submittedDraft.createDraftOrder &&
+        payload.draftInvoiceReadyForReview &&
+        payload.draftOrder?.id &&
+        payload.invoiceSendToken
+      ) {
+        setPendingDraftReview({
+          draft: submittedDraft,
+          draftOrder: payload.draftOrder,
+          invoiceSendToken: payload.invoiceSendToken,
+          invoiceSent: false,
+        })
+        setMessage(`${payload.draftOrder.name ?? 'Shopify draft invoice'} is ready for review.`)
+      } else {
+        setPendingDraftReview(null)
+        setMessage(getSalesOrderSuccessMessage(submittedDraft, payload))
+      }
       setSalesOrderDraft(emptySalesOrderDraft())
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not submit the order.')
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  async function sendReviewedDraftInvoice() {
+    if (!pendingDraftReview || pendingDraftReview.invoiceSent) return
+
+    try {
+      setIsSendingInvoice(true)
+      setMessage(`Sending ${pendingDraftReview.draftOrder.name ?? 'draft invoice'}...`)
+      const response = await fetch('/api/sales-orders/send-draft-invoice', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          invoiceSendToken: pendingDraftReview.invoiceSendToken,
+        }),
+      })
+      const payload = (await response.json()) as SalesOrderApiResponse
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Invoice send failed')
+
+      setPendingDraftReview((current) => (current ? { ...current, invoiceSent: true } : current))
+      setMessage(`${pendingDraftReview.draftOrder.name ?? 'Shopify draft invoice'} sent.`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not send the invoice.')
+    } finally {
+      setIsSendingInvoice(false)
     }
   }
 
@@ -1452,6 +1545,96 @@ function PublicSalesOrderForm() {
       </section>
 
       {message ? <div className="public-order-message">{message}</div> : null}
+
+      {pendingDraftReview ? (
+        <section className="panel public-order-panel public-invoice-review">
+          <div className="section-heading">
+            <p className="eyebrow">Invoice review</p>
+            <h2>{pendingDraftReview.draftOrder.name ?? 'Shopify draft invoice'}</h2>
+          </div>
+
+          <div className="invoice-review-summary">
+            <div>
+              <span>Payer</span>
+              <strong>{getPublicDraftPayerName(pendingDraftReview.draft)}</strong>
+              <p>{getPublicDraftPayerEmail(pendingDraftReview.draft)}</p>
+            </div>
+            <div>
+              <span>Player</span>
+              <strong>{pendingDraftReview.draft.playerName}</strong>
+              <p>{pendingDraftReview.draft.salesRep || 'Sales rep not recorded'}</p>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{formatSalesOrderMoney(getSalesOrderTotal(pendingDraftReview.draft))}</strong>
+              <p>
+                {pendingDraftReview.draft.lines.length}{' '}
+                {pendingDraftReview.draft.lines.length === 1 ? 'line' : 'lines'}
+              </p>
+            </div>
+          </div>
+
+          <div className="invoice-review-lines">
+            {pendingDraftReview.draft.lines.map((line, index) => {
+              const specs = [
+                line.length ? `${line.length} in` : '',
+                line.targetWeight ? `${line.targetWeight} oz` : '',
+                line.wood,
+                line.cupped === 'Yes' ? 'Cupped' : 'No cup',
+              ].filter(Boolean)
+
+              return (
+                <article className="invoice-review-line" key={line.id}>
+                  <div>
+                    <span>Line {index + 1}</span>
+                    <strong>{line.title || 'Custom Trinity bat'}</strong>
+                    <p>{line.isProOrder ? 'Pro order' : 'Shopify product order'}</p>
+                    {specs.length > 0 ? <p>{specs.join(' / ')}</p> : null}
+                  </div>
+                  <dl>
+                    <div>
+                      <dt>Qty</dt>
+                      <dd>{line.quantity}</dd>
+                    </div>
+                    <div>
+                      <dt>Unit</dt>
+                      <dd>{formatSalesOrderMoney(line.unitPrice)}</dd>
+                    </div>
+                    <div>
+                      <dt>Line total</dt>
+                      <dd>{formatSalesOrderMoney(getSalesLineTotal(line))}</dd>
+                    </div>
+                  </dl>
+                </article>
+              )
+            })}
+          </div>
+
+          <div className="invoice-review-actions">
+            {pendingDraftReview.draftOrder.invoiceUrl ? (
+              <a
+                className="secondary-button"
+                href={pendingDraftReview.draftOrder.invoiceUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open invoice preview
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={sendReviewedDraftInvoice}
+              disabled={isSendingInvoice || pendingDraftReview.invoiceSent}
+            >
+              {pendingDraftReview.invoiceSent
+                ? 'Invoice sent'
+                : isSendingInvoice
+                  ? 'Sending invoice...'
+                  : 'Send invoice now'}
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel public-order-panel">
         <form className="bat-form order-intake-form public-order-form" onSubmit={submitSalesOrder}>

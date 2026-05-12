@@ -36,6 +36,7 @@ const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const internalSessionCookieName = 'trinity_internal_session'
 const internalSessionMaxAgeMs = 12 * 60 * 60 * 1000
+const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
 const internalSessionSecret =
   process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
 const embeddedAnalyticsCollectorEnabled =
@@ -635,6 +636,8 @@ app.post('/api/sales-orders', async (request, response) => {
       response.json({
         ok: true,
         draftOrder,
+        invoiceSendToken: createDraftInvoiceSendToken(draftOrder, intakeId),
+        invoiceSendTokenExpiresAt: new Date(Date.now() + invoiceSendTokenMaxAgeMs).toISOString(),
         invoiceSent: false,
         emailNotificationMethod: 'none',
         draftInvoiceReadyForReview: Boolean(draftOrder?.invoiceUrl),
@@ -683,6 +686,53 @@ app.post('/api/sales-orders', async (request, response) => {
   }
 })
 
+app.post('/api/sales-orders/send-draft-invoice', async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const token = cleanString(request.body?.invoiceSendToken)
+    const tokenPayload = verifyDraftInvoiceSendToken(token)
+    if (!tokenPayload?.draftOrderId || !tokenPayload?.intakeId) {
+      response.status(401).json({
+        ok: false,
+        message: 'This invoice send link is invalid or expired.',
+      })
+      return
+    }
+
+    await ensureDefinitions()
+    const matchingJobs = await markDraftInvoiceSent({
+      draftOrderId: tokenPayload.draftOrderId,
+      intakeId: tokenPayload.intakeId,
+      sendInvoice: true,
+    })
+
+    response.json({
+      ok: true,
+      invoiceSent: true,
+      emailNotificationMethod: 'order_invoice',
+      draftOrder: {
+        id: tokenPayload.draftOrderId,
+        name: matchingJobs[0]?.shopifyDraftOrderName ?? '',
+        invoiceUrl: matchingJobs[0]?.shopifyDraftInvoiceUrl ?? '',
+      },
+      orderJobs: matchingJobs,
+    })
+  } catch (error) {
+    const status = isMissingDraftInvoiceError(error) ? 404 : 500
+    response.status(status).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown invoice send error.',
+    })
+  }
+})
+
 app.post('/api/draft-orders/send-invoice', requireInternalAccess, async (request, response) => {
   try {
     const draftOrderId = request.body?.draftOrderId
@@ -691,10 +741,11 @@ app.post('/api/draft-orders/send-invoice', requireInternalAccess, async (request
       return
     }
 
-    await sendDraftOrderInvoice(draftOrderId)
-    response.json({ ok: true })
+    const orderJobs = await markDraftInvoiceSent({ draftOrderId, sendInvoice: true })
+    response.json({ ok: true, orderJobs })
   } catch (error) {
-    response.status(500).json({
+    const status = isMissingDraftInvoiceError(error) ? 404 : 500
+    response.status(status).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown invoice send error.',
     })
@@ -969,6 +1020,95 @@ function isSecureRequest(request) {
 
 function isLocalRequest(request) {
   return ['localhost', '127.0.0.1', '::1'].includes(request.hostname)
+}
+
+function createDraftInvoiceSendToken(draftOrder, intakeId) {
+  if (!internalSessionSecret || !draftOrder?.id || !intakeId) return ''
+
+  return createSignedPayload({
+    purpose: 'draft_invoice_send',
+    draftOrderId: draftOrder.id,
+    intakeId,
+    exp: Date.now() + invoiceSendTokenMaxAgeMs,
+  })
+}
+
+function verifyDraftInvoiceSendToken(token) {
+  const payload = verifySignedPayload(token)
+  if (payload?.purpose !== 'draft_invoice_send') return null
+  if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
+  return payload
+}
+
+function createSignedPayload(payload) {
+  if (!internalSessionSecret) return ''
+
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const signature = crypto
+    .createHmac('sha256', internalSessionSecret)
+    .update(encodedPayload)
+    .digest('base64url')
+
+  return `${encodedPayload}.${signature}`
+}
+
+function verifySignedPayload(token) {
+  if (!internalSessionSecret || !token) return null
+
+  const [encodedPayload, signature] = token.split('.')
+  if (!encodedPayload || !signature) return null
+
+  const expectedSignature = crypto
+    .createHmac('sha256', internalSessionSecret)
+    .update(encodedPayload)
+    .digest('base64url')
+  if (!safeEqual(expectedSignature, signature, 'utf8')) return null
+
+  try {
+    return JSON.parse(decodeBase64Url(encodedPayload))
+  } catch {
+    return null
+  }
+}
+
+async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice = false }) {
+  const normalizedDraftOrderId = cleanString(draftOrderId)
+  if (!normalizedDraftOrderId) throw new Error('draftOrderId is required.')
+
+  const existingJobs = await listRecords(resourceConfigs.orderJobs)
+  const matchingJobs = existingJobs.filter(
+    (job) =>
+      cleanString(job.shopifyDraftOrderId) === normalizedDraftOrderId &&
+      (!intakeId || cleanString(job.intakeId) === intakeId),
+  )
+
+  if (matchingJobs.length === 0) {
+    throw new Error('Could not find the submitted draft invoice in the production queue.')
+  }
+
+  const alreadySent = matchingJobs.every((job) => cleanString(job.invoiceStatus) === 'sent')
+  if (sendInvoice && !alreadySent) {
+    await sendDraftOrderInvoice(normalizedDraftOrderId)
+  }
+
+  const now = new Date().toISOString()
+  const updatedJobs = matchingJobs.map((job) => ({
+    ...job,
+    invoiceStatus: 'sent',
+    updatedAt: now,
+  }))
+
+  await Promise.all(updatedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+  await syncOrderJobMetafields(updatedJobs)
+
+  return updatedJobs
+}
+
+function isMissingDraftInvoiceError(error) {
+  return (
+    error instanceof Error &&
+    error.message === 'Could not find the submitted draft invoice in the production queue.'
+  )
 }
 
 async function ensureDefinitions() {
