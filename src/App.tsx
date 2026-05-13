@@ -1320,12 +1320,18 @@ const publicOrderFormPaths = new Set([
   '/trinity-order-from',
 ])
 
+const internalToolPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
+
 function getCurrentAppPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/'
 }
 
 function isPublicOrderFormRoute() {
   return publicOrderFormPaths.has(getCurrentAppPath())
+}
+
+function isInternalToolRoute() {
+  return internalToolPaths.has(getCurrentAppPath())
 }
 
 function getSalesOrderSuccessMessage(
@@ -5982,56 +5988,16 @@ function InternalApp() {
   )
 }
 
-function InternalAppGate() {
-  const [accessState, setAccessState] = useState<'checking' | 'allowed' | 'denied'>(
-    import.meta.env.DEV ? 'allowed' : 'checking',
-  )
-
-  useEffect(() => {
-    if (import.meta.env.DEV) return
-
-    let cancelled = false
-
-    async function verifyInternalSession() {
-      try {
-        const response = await fetch('/api/internal-session', {
-          cache: 'no-store',
-          credentials: 'same-origin',
-        })
-        if (!cancelled) setAccessState(response.ok ? 'allowed' : 'denied')
-      } catch {
-        if (!cancelled) setAccessState('denied')
-      }
-    }
-
-    void verifyInternalSession()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (accessState === 'allowed') return <InternalApp />
-  if (accessState === 'denied') return <PublicSalesOrderForm />
-
-  return (
-    <main className="public-order-shell">
-      <section className="public-order-heading">
-        <p className="eyebrow">Trinity Bat Company</p>
-        <h1>Opening internal tool</h1>
-        <p>Verifying the Shopify admin session before loading inventory controls.</p>
-        <span>Checking access...</span>
-      </section>
-    </main>
-  )
-}
-
 function App() {
   if (isPublicOrderFormRoute()) {
     return <PublicSalesOrderForm />
   }
 
-  return <InternalAppGate />
+  if (isInternalToolRoute()) {
+    return <InternalApp />
+  }
+
+  return <InternalApp />
 }
 
 export default App
