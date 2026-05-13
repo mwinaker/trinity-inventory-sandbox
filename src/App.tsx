@@ -5989,6 +5989,9 @@ function InternalApp() {
 }
 
 function App() {
+  // Keep the public order form on explicit public paths only. Every other
+  // route should open the internal inventory tool so the two experiences
+  // never silently fall back into each other.
   if (isPublicOrderFormRoute()) {
     return <PublicSalesOrderForm />
   }
