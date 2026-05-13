@@ -241,6 +241,9 @@ type SalesOrderLineDraft = {
   notes: string
 }
 
+type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast'
+type ProductionTimelineOption = 'normal' | 'rush'
+
 type SalesOrderDraft = {
   playerName: string
   playerEmail: string
@@ -260,6 +263,8 @@ type SalesOrderDraft = {
   billingCountryCode: string
   billingDifferent: boolean
   requiresShipping: boolean
+  shippingSpeed: ShippingSpeedOption
+  productionTimeline: ProductionTimelineOption
   billingName: string
   billingEmail: string
   billingPhone: string
@@ -332,6 +337,19 @@ const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-P
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Cahan', 'Champeau']
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
+const rushProductionSurchargeUnitAmount = 50
+const shippingSpeedOptions: Array<{ value: ShippingSpeedOption; label: string }> = [
+  { value: 'standard', label: 'Standard' },
+  { value: 'fast', label: 'Fast' },
+  { value: 'really_fast', label: 'Really fast' },
+]
+const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label: string }> = [
+  { value: 'normal', label: 'Normal' },
+  {
+    value: 'rush',
+    label: `Rush production (+${formatSalesOrderMoney(rushProductionSurchargeUnitAmount)}/bat)`,
+  },
+]
 const customizerColorOptions = [
   'Black',
   'Dark Gray',
@@ -645,6 +663,8 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   billingCountryCode: 'US',
   billingDifferent: false,
   requiresShipping: true,
+  shippingSpeed: 'standard',
+  productionTimeline: 'normal',
   billingName: '',
   billingEmail: '',
   billingPhone: '',
@@ -1272,6 +1292,15 @@ type SalesOrderApiResponse = {
       title?: string
       originalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
     }
+    lineItems?: {
+      nodes?: Array<{
+        id?: string
+        name?: string
+        quantity?: number
+        originalUnitPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
+        customAttributes?: Array<{ key?: string; value?: string }>
+      }>
+    }
   }
   order?: { name?: string }
   internalNotificationRecipients?: string[]
@@ -1411,6 +1440,44 @@ function getDraftOrderShippingLine(review: PublicDraftInvoiceReview) {
   }
 }
 
+function getDraftOrderRushSurcharge(review: PublicDraftInvoiceReview) {
+  const surchargeLines =
+    review.draftOrder.lineItems?.nodes?.filter((line) =>
+      line.customAttributes?.some(
+        (attribute) =>
+          attribute.key === 'trinity_surcharge_type' &&
+          String(attribute.value ?? '').toLowerCase() === 'rush_production',
+      ),
+    ) ?? []
+  const surchargeAmount = surchargeLines.reduce((total, line) => {
+    const unitAmount = Number(line.originalUnitPriceSet?.shopMoney?.amount)
+    const quantity = Number(line.quantity || 1)
+    return total + (Number.isFinite(unitAmount) && Number.isFinite(quantity) ? unitAmount * quantity : 0)
+  }, 0)
+
+  if (surchargeAmount > 0) {
+    return {
+      title: surchargeLines[0]?.name || 'Rush production surcharge',
+      amount: surchargeAmount,
+    }
+  }
+
+  if (review.draft.productionTimeline !== 'rush') return null
+
+  const fallbackQuantity = review.draft.lines.reduce(
+    (total, line) => total + (Number.isFinite(line.quantity) ? line.quantity : 0),
+    0,
+  )
+  const fallbackAmount = fallbackQuantity * rushProductionSurchargeUnitAmount
+
+  return fallbackAmount > 0
+    ? {
+        title: 'Rush production surcharge',
+        amount: fallbackAmount,
+      }
+    : null
+}
+
 function PublicSalesOrderForm() {
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
@@ -1425,6 +1492,9 @@ function PublicSalesOrderForm() {
   const [message, setMessage] = useState('')
   const draftReviewShipping = pendingDraftReview
     ? getDraftOrderShippingLine(pendingDraftReview)
+    : null
+  const draftReviewRushSurcharge = pendingDraftReview
+    ? getDraftOrderRushSurcharge(pendingDraftReview)
     : null
   const draftReviewTotal = pendingDraftReview ? getDraftOrderTotal(pendingDraftReview) : 0
 
@@ -1604,6 +1674,7 @@ function PublicSalesOrderForm() {
                 {pendingDraftReview.draft.lines.length}{' '}
                 {pendingDraftReview.draft.lines.length === 1 ? 'line' : 'lines'}
                 {draftReviewShipping ? ' + shipping' : ''}
+                {draftReviewRushSurcharge ? ' + rush production' : ''}
               </p>
             </div>
             {draftReviewShipping ? (
@@ -1613,6 +1684,17 @@ function PublicSalesOrderForm() {
                 <p>{draftReviewShipping.title}</p>
               </div>
             ) : null}
+            <div>
+              <span>Production</span>
+              <strong>
+                {pendingDraftReview.draft.productionTimeline === 'rush' ? 'Rush' : 'Normal'}
+              </strong>
+              <p>
+                {draftReviewRushSurcharge
+                  ? `${formatSalesOrderMoney(draftReviewRushSurcharge.amount)} surcharge`
+                  : 'No rush surcharge'}
+              </p>
+            </div>
           </div>
 
           <div className="invoice-review-lines">
@@ -1753,6 +1835,7 @@ function PublicSalesOrderForm() {
                 setSalesOrderDraft((current) => ({
                   ...current,
                   requiresShipping,
+                  shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
                   shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
                   shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
                   shippingCity: requiresShipping ? current.shippingCity : '',
@@ -1773,6 +1856,46 @@ function PublicSalesOrderForm() {
             />
             <span>Local delivery / no shipping required</span>
           </label>
+
+          <div className="form-row fulfillment-options-row">
+            <label>
+              Shipping speed
+              <select
+                value={salesOrderDraft.shippingSpeed}
+                disabled={!salesOrderDraft.requiresShipping}
+                onChange={(event) =>
+                  updateSalesDraftField(
+                    'shippingSpeed',
+                    event.target.value as ShippingSpeedOption,
+                  )
+                }
+              >
+                {shippingSpeedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Production timeline
+              <select
+                value={salesOrderDraft.productionTimeline}
+                onChange={(event) =>
+                  updateSalesDraftField(
+                    'productionTimeline',
+                    event.target.value as ProductionTimelineOption,
+                  )
+                }
+              >
+                {productionTimelineOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           {salesOrderDraft.billingDifferent ? (
             <div className="billing-panel">
@@ -4262,6 +4385,7 @@ function InternalApp() {
                       setSalesOrderDraft((current) => ({
                         ...current,
                         requiresShipping,
+                        shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
                         shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
                         shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
                         shippingCity: requiresShipping ? current.shippingCity : '',
@@ -4286,6 +4410,46 @@ function InternalApp() {
                   />
                   <span>Local delivery / no shipping required</span>
                 </label>
+
+                <div className="form-row fulfillment-options-row">
+                  <label>
+                    Shipping speed
+                    <select
+                      value={salesOrderDraft.shippingSpeed}
+                      disabled={!salesOrderDraft.requiresShipping}
+                      onChange={(event) =>
+                        updateSalesDraftField(
+                          'shippingSpeed',
+                          event.target.value as ShippingSpeedOption,
+                        )
+                      }
+                    >
+                      {shippingSpeedOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Production timeline
+                    <select
+                      value={salesOrderDraft.productionTimeline}
+                      onChange={(event) =>
+                        updateSalesDraftField(
+                          'productionTimeline',
+                          event.target.value as ProductionTimelineOption,
+                        )
+                      }
+                    >
+                      {productionTimelineOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
 
                 {salesOrderDraft.billingDifferent ? (
                   <div className="billing-panel">

@@ -32,10 +32,45 @@ const shopifyApiKey = process.env.SHOPIFY_API_KEY ?? ''
 const shopifyApiSecret = process.env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_WEBHOOK_SECRET ?? ''
 const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? shopifyApiSecret
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
-const draftOrderShippingTitle =
-  cleanString(process.env.TRINITY_DRAFT_SHIPPING_TITLE) || 'Standard Shipping'
-const draftOrderShippingAmount = normalizePositiveMoneyAmount(
-  process.env.TRINITY_DRAFT_SHIPPING_AMOUNT ?? '15.00',
+const defaultShippingSpeed = 'standard'
+const draftOrderShippingOptions = {
+  standard: {
+    key: 'standard',
+    label: 'Standard',
+    title:
+      cleanString(
+        process.env.TRINITY_DRAFT_SHIPPING_STANDARD_TITLE ??
+          process.env.TRINITY_DRAFT_SHIPPING_TITLE,
+      ) || 'Standard Shipping',
+    amount: normalizePositiveMoneyAmount(
+      process.env.TRINITY_DRAFT_SHIPPING_STANDARD_AMOUNT ??
+        process.env.TRINITY_DRAFT_SHIPPING_AMOUNT ??
+        '15.00',
+    ),
+  },
+  fast: {
+    key: 'fast',
+    label: 'Fast',
+    title: cleanString(process.env.TRINITY_DRAFT_SHIPPING_FAST_TITLE) || 'Fast Shipping',
+    amount: normalizePositiveMoneyAmount(
+      process.env.TRINITY_DRAFT_SHIPPING_FAST_AMOUNT ?? '50.00',
+    ),
+  },
+  really_fast: {
+    key: 'really_fast',
+    label: 'Really fast',
+    title:
+      cleanString(process.env.TRINITY_DRAFT_SHIPPING_REALLY_FAST_TITLE) ||
+      'Really Fast Shipping',
+    amount: normalizePositiveMoneyAmount(
+      process.env.TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT ?? '75.00',
+    ),
+  },
+}
+const rushProductionSurchargeTitle =
+  cleanString(process.env.TRINITY_RUSH_PRODUCTION_TITLE) || 'Rush Production Surcharge'
+const rushProductionSurchargeAmount = normalizePositiveMoneyAmount(
+  process.env.TRINITY_RUSH_PRODUCTION_AMOUNT ?? '50.00',
 )
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
@@ -1605,6 +1640,12 @@ async function createDraftOrder(input) {
                 id
                 name
                 quantity
+                originalUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
                 product {
                   id
                   title
@@ -2861,6 +2902,10 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const playerEmail = cleanString(payload.playerEmail)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
+  const shippingOption = resolveShippingOption(payload, requiresShipping)
+  const shippingLine = buildOrderCreateShippingLine(shippingOption)
+  const productionTimeline = normalizeProductionTimeline(payload.productionTimeline)
+  const rushSurchargeLine = buildOrderRushProductionSurchargeLine(payload)
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
@@ -2879,6 +2924,10 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
     requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
+    shippingOption ? `Shipping speed: ${shippingOption.label} (${shippingOption.title})` : '',
+    productionTimeline === 'rush'
+      ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
+      : 'Production timeline: Normal',
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
@@ -2912,6 +2961,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       : {}),
     ...(shippingAddress ? { shippingAddress } : {}),
     ...(billingAddress ? { billingAddress } : {}),
+    ...(shippingLine ? { shippingLines: [shippingLine] } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
       salesRep ? [`Sales Rep: ${salesRep}`] : [],
@@ -2926,7 +2976,14 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_notification_label: proOrderNotificationLabel,
       trinity_zero_dollar_sample: isZeroDollarOrder ? 'true' : '',
       trinity_requires_shipping: requiresShipping ? 'true' : 'false',
+      trinity_shipping_speed: shippingOption?.key ?? '',
+      trinity_shipping_title: shippingOption?.title ?? '',
+      trinity_shipping_amount: shippingOption?.amount ?? '',
       trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
+      trinity_production_timeline: productionTimeline,
+      trinity_rush_production_surcharge: rushSurchargeLine
+        ? `${rushProductionSurchargeAmount} ${shopCurrencyCode} per bat`
+        : '',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
       trinity_player_name: playerName,
@@ -2943,39 +3000,41 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_billing_relationship: payer.relationship,
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
-    lineItems: lines.map((line) => {
-      const unitPrice = toMoneyBagInput(line.unitPrice)
-      const isProOrder = isTruthy(line.isProOrder)
-      const variantId = isProOrder ? '' : cleanString(line.variantId)
-      const title = formatSalesLineShopifyTitle(line, isProOrder)
-      const properties = compactLineItemProperties({
-        'Order type': isProOrder ? 'Pro Order' : '',
-        trinity_player_name: playerName,
-        trinity_pro_order: isProOrder ? 'true' : '',
-        trinity_model: cleanString(line.title || line.model),
-        trinity_length: line.length,
-        trinity_weight: line.targetWeight,
-        trinity_wood: line.wood,
-        trinity_handle_color: line.handleColor,
-        trinity_barrel_color: line.barrelColor,
-        trinity_logo_color: line.logoColor,
-        trinity_engraving: line.engraving,
-        trinity_cupped: line.cupped,
-        trinity_notes: line.notes,
-        trinity_product_title: line.title,
-        trinity_requires_shipping: requiresShipping ? 'true' : 'false',
-      })
+    lineItems: lines
+      .map((line) => {
+        const unitPrice = toMoneyBagInput(line.unitPrice)
+        const isProOrder = isTruthy(line.isProOrder)
+        const variantId = isProOrder ? '' : cleanString(line.variantId)
+        const title = formatSalesLineShopifyTitle(line, isProOrder)
+        const properties = compactLineItemProperties({
+          'Order type': isProOrder ? 'Pro Order' : '',
+          trinity_player_name: playerName,
+          trinity_pro_order: isProOrder ? 'true' : '',
+          trinity_model: cleanString(line.title || line.model),
+          trinity_length: line.length,
+          trinity_weight: line.targetWeight,
+          trinity_wood: line.wood,
+          trinity_handle_color: line.handleColor,
+          trinity_barrel_color: line.barrelColor,
+          trinity_logo_color: line.logoColor,
+          trinity_engraving: line.engraving,
+          trinity_cupped: line.cupped,
+          trinity_notes: line.notes,
+          trinity_product_title: line.title,
+          trinity_requires_shipping: requiresShipping ? 'true' : 'false',
+        })
 
-      return {
-        ...(variantId ? { variantId } : {}),
-        title,
-        quantity: Number(line.quantity || 1),
-        requiresShipping,
-        taxable: false,
-        ...(unitPrice ? { priceSet: unitPrice } : {}),
-        properties,
-      }
-    }),
+        return {
+          ...(variantId ? { variantId } : {}),
+          title,
+          quantity: Number(line.quantity || 1),
+          requiresShipping,
+          taxable: false,
+          ...(unitPrice ? { priceSet: unitPrice } : {}),
+          properties,
+        }
+      })
+      .concat(rushSurchargeLine ? [rushSurchargeLine] : []),
   }
 }
 
@@ -2986,6 +3045,10 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const playerEmail = cleanString(payload.playerEmail)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
+  const shippingOption = resolveShippingOption(payload, requiresShipping)
+  const shippingLine = buildDraftOrderShippingLine(shippingOption)
+  const productionTimeline = normalizeProductionTimeline(payload.productionTimeline)
+  const rushSurchargeLine = buildDraftRushProductionSurchargeLine(payload)
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
@@ -2997,11 +3060,14 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
   const formattedBillingAddress = formatMailingAddress(billingAddress)
-  const shippingLine = buildDraftOrderShippingLine(requiresShipping)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
     requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
+    shippingOption ? `Shipping speed: ${shippingOption.label} (${shippingOption.title})` : '',
+    productionTimeline === 'rush'
+      ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
+      : 'Production timeline: Normal',
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
@@ -3043,7 +3109,14 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_shipping_charge: shippingLine
         ? `${shippingLine.title} ${shippingLine.priceWithCurrency.amount} ${shippingLine.priceWithCurrency.currencyCode}`
         : '',
+      trinity_shipping_speed: shippingOption?.key ?? '',
+      trinity_shipping_title: shippingOption?.title ?? '',
+      trinity_shipping_amount: shippingOption?.amount ?? '',
       trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
+      trinity_production_timeline: productionTimeline,
+      trinity_rush_production_surcharge: rushSurchargeLine
+        ? `${rushProductionSurchargeAmount} ${shopCurrencyCode} per bat`
+        : '',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
       trinity_player_name: playerName,
@@ -3060,65 +3133,163 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_billing_relationship: payer.relationship,
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
-    lineItems: lines.map((line) => {
-      const unitPrice = toMoneyInput(line.unitPrice)
-      const isProOrder = isTruthy(line.isProOrder)
-      const variantId = isProOrder ? '' : cleanString(line.variantId)
-      const title = formatSalesLineShopifyTitle(line, isProOrder)
-      const customAttributes = compactAttributes({
-        order_type: isProOrder ? 'Pro Order' : '',
-        trinity_player_name: playerName,
-        trinity_pro_order: isProOrder ? 'true' : '',
-        trinity_model: cleanString(line.title || line.model),
-        trinity_length: line.length,
-        trinity_weight: line.targetWeight,
-        trinity_wood: line.wood,
-        trinity_handle_color: line.handleColor,
-        trinity_barrel_color: line.barrelColor,
-        trinity_logo_color: line.logoColor,
-        trinity_engraving: line.engraving,
-        trinity_cupped: line.cupped,
-        trinity_notes: line.notes,
-        trinity_product_title: line.title,
-        trinity_requires_shipping: requiresShipping ? 'true' : 'false',
-      })
+    lineItems: lines
+      .map((line) => {
+        const unitPrice = toMoneyInput(line.unitPrice)
+        const isProOrder = isTruthy(line.isProOrder)
+        const variantId = isProOrder ? '' : cleanString(line.variantId)
+        const title = formatSalesLineShopifyTitle(line, isProOrder)
+        const customAttributes = compactAttributes({
+          order_type: isProOrder ? 'Pro Order' : '',
+          trinity_player_name: playerName,
+          trinity_pro_order: isProOrder ? 'true' : '',
+          trinity_model: cleanString(line.title || line.model),
+          trinity_length: line.length,
+          trinity_weight: line.targetWeight,
+          trinity_wood: line.wood,
+          trinity_handle_color: line.handleColor,
+          trinity_barrel_color: line.barrelColor,
+          trinity_logo_color: line.logoColor,
+          trinity_engraving: line.engraving,
+          trinity_cupped: line.cupped,
+          trinity_notes: line.notes,
+          trinity_product_title: line.title,
+          trinity_requires_shipping: requiresShipping ? 'true' : 'false',
+        })
 
-      if (variantId) {
+        if (variantId) {
+          return {
+            variantId,
+            quantity: Number(line.quantity || 1),
+            ...(unitPrice ? { priceOverride: unitPrice } : {}),
+            requiresShipping,
+            taxable: false,
+            customAttributes,
+          }
+        }
+
         return {
-          variantId,
+          title,
+          originalUnitPriceWithCurrency: unitPrice ?? {
+            amount: '0',
+            currencyCode: shopCurrencyCode,
+          },
           quantity: Number(line.quantity || 1),
-          ...(unitPrice ? { priceOverride: unitPrice } : {}),
           requiresShipping,
           taxable: false,
           customAttributes,
         }
-      }
+      })
+      .concat(rushSurchargeLine ? [rushSurchargeLine] : []),
+  }
+}
 
-      return {
-        title,
-        originalUnitPriceWithCurrency: unitPrice ?? {
-          amount: '0',
-          currencyCode: shopCurrencyCode,
-        },
-        quantity: Number(line.quantity || 1),
-        requiresShipping,
-        taxable: false,
-        customAttributes,
-      }
+function buildDraftOrderShippingLine(shippingOption) {
+  if (!shippingOption?.amount) return null
+
+  return {
+    title: shippingOption.title,
+    priceWithCurrency: {
+      amount: shippingOption.amount,
+      currencyCode: shopCurrencyCode,
+    },
+  }
+}
+
+function buildOrderCreateShippingLine(shippingOption) {
+  if (!shippingOption?.amount) return null
+
+  const priceSet = toMoneyBagInput(shippingOption.amount)
+  if (!priceSet) return null
+
+  return {
+    title: shippingOption.title,
+    code: shippingOption.key,
+    source: 'trinity_order_form',
+    priceSet,
+  }
+}
+
+function resolveShippingOption(payload = {}, requiresShipping = true) {
+  if (!requiresShipping) return null
+
+  const shippingSpeed = normalizeShippingSpeed(payload.shippingSpeed)
+  const option =
+    draftOrderShippingOptions[shippingSpeed] ?? draftOrderShippingOptions[defaultShippingSpeed]
+
+  return option?.amount ? option : null
+}
+
+function normalizeShippingSpeed(value) {
+  const key = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
+  return Object.prototype.hasOwnProperty.call(draftOrderShippingOptions, key)
+    ? key
+    : defaultShippingSpeed
+}
+
+function normalizeProductionTimeline(value) {
+  return cleanString(value).toLowerCase() === 'rush' ? 'rush' : 'normal'
+}
+
+function buildDraftRushProductionSurchargeLine(payload = {}) {
+  const quantity = getSalesOrderQuantity(payload)
+  if (
+    normalizeProductionTimeline(payload.productionTimeline) !== 'rush' ||
+    !rushProductionSurchargeAmount ||
+    quantity < 1
+  ) {
+    return null
+  }
+
+  return {
+    title: rushProductionSurchargeTitle,
+    originalUnitPriceWithCurrency: {
+      amount: rushProductionSurchargeAmount,
+      currencyCode: shopCurrencyCode,
+    },
+    quantity,
+    requiresShipping: false,
+    taxable: false,
+    customAttributes: compactAttributes({
+      trinity_surcharge_type: 'rush_production',
+      trinity_production_timeline: 'rush',
+      trinity_surcharge_unit_amount: rushProductionSurchargeAmount,
     }),
   }
 }
 
-function buildDraftOrderShippingLine(requiresShipping) {
-  if (!requiresShipping || !draftOrderShippingAmount) return null
+function buildOrderRushProductionSurchargeLine(payload = {}) {
+  const quantity = getSalesOrderQuantity(payload)
+  const priceSet = toMoneyBagInput(rushProductionSurchargeAmount)
+  if (
+    normalizeProductionTimeline(payload.productionTimeline) !== 'rush' ||
+    !priceSet ||
+    quantity < 1
+  ) {
+    return null
+  }
 
   return {
-    title: draftOrderShippingTitle,
-    priceWithCurrency: {
-      amount: draftOrderShippingAmount,
-      currencyCode: shopCurrencyCode,
-    },
+    title: rushProductionSurchargeTitle,
+    quantity,
+    requiresShipping: false,
+    taxable: false,
+    priceSet,
+    properties: compactLineItemProperties({
+      trinity_surcharge_type: 'rush_production',
+      trinity_production_timeline: 'rush',
+      trinity_surcharge_unit_amount: rushProductionSurchargeAmount,
+    }),
   }
+}
+
+function getSalesOrderQuantity(payload = {}) {
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+
+  return lines.reduce((total, line) => {
+    const quantity = Number(line?.quantity || 1)
+    return total + (Number.isFinite(quantity) && quantity > 0 ? quantity : 0)
+  }, 0)
 }
 
 function specsFromSalesLine(line = {}) {
@@ -3160,7 +3331,9 @@ function mapDraftOrderToJobs(
 ) {
   const now = new Date().toISOString()
   const lines = Array.isArray(payload.lines) ? payload.lines : []
-  const draftLines = draftOrder?.lineItems?.nodes ?? []
+  const draftLines = (draftOrder?.lineItems?.nodes ?? []).filter(
+    (line) => !isGraphQLSurchargeLine(line),
+  )
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const billingDifferent = isTruthy(payload.billingDifferent)
@@ -3286,7 +3459,7 @@ function mapGraphQLOrderToJobs(order) {
   const rawLines = order.lineItems?.nodes ?? []
   const lines =
     origin === 'internal_sales'
-      ? rawLines
+      ? rawLines.filter((line) => !isGraphQLSurchargeLine(line))
       : rawLines.filter((line) => isBatProductLike(line.variant?.product ?? { title: line.title }))
   const money = order.currentTotalPriceSet?.shopMoney ?? {}
 
@@ -3363,7 +3536,7 @@ function mapOrderWebhookToJobs(order, topic) {
   const rawLines = order.line_items ?? []
   const lines =
     origin === 'internal_sales'
-      ? rawLines
+      ? rawLines.filter((line) => !isWebhookSurchargeLine(line))
       : rawLines.filter((line) =>
           isBatProductLike({
             title: line.title ?? line.name,
@@ -3645,6 +3818,27 @@ function isBatProductLike(product) {
     title.includes('scvbb') ||
     tags.some((tag) => ['ash', 'birch', 'maple', 'stock', 'custom', 'semi custom'].includes(tag))
   )
+}
+
+function isGraphQLSurchargeLine(line) {
+  return isRushProductionSurchargeAttributes(attributesToRecord(line?.customAttributes))
+}
+
+function isWebhookSurchargeLine(line) {
+  return isRushProductionSurchargeAttributes(attributesToRecord(line?.properties))
+}
+
+function isRushProductionSurchargeAttributes(attributes = {}) {
+  for (const [key, value] of Object.entries(attributes)) {
+    if (
+      normalizeAttributeKey(key) === 'trinity_surcharge_type' &&
+      cleanString(value).toLowerCase() === 'rush_production'
+    ) {
+      return true
+    }
+  }
+
+  return false
 }
 
 function attributesToRecord(attributes) {
