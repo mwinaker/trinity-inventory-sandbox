@@ -32,6 +32,11 @@ const shopifyApiKey = process.env.SHOPIFY_API_KEY ?? ''
 const shopifyApiSecret = process.env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_WEBHOOK_SECRET ?? ''
 const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? shopifyApiSecret
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
+const draftOrderShippingTitle =
+  cleanString(process.env.TRINITY_DRAFT_SHIPPING_TITLE) || 'Standard Shipping'
+const draftOrderShippingAmount = normalizePositiveMoneyAmount(
+  process.env.TRINITY_DRAFT_SHIPPING_AMOUNT ?? '15.00',
+)
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const internalSessionCookieName = 'trinity_internal_session'
@@ -1581,6 +1586,15 @@ async function createDraftOrder(input) {
                 currencyCode
               }
             }
+            shippingLine {
+              title
+              originalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+            }
             customer {
               id
               displayName
@@ -2983,6 +2997,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
   const formattedBillingAddress = formatMailingAddress(billingAddress)
+  const shippingLine = buildDraftOrderShippingLine(requiresShipping)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
@@ -3011,6 +3026,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     phone: payer.phone || undefined,
     ...(shippingAddress ? { shippingAddress } : {}),
     ...(billingAddress ? { billingAddress } : {}),
+    ...(shippingLine ? { shippingLine } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
       salesRep ? [`Sales Rep: ${salesRep}`] : [],
@@ -3024,6 +3040,9 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
       trinity_zero_dollar_sample: isZeroDollarOrder ? 'true' : '',
       trinity_requires_shipping: requiresShipping ? 'true' : 'false',
+      trinity_shipping_charge: shippingLine
+        ? `${shippingLine.title} ${shippingLine.priceWithCurrency.amount} ${shippingLine.priceWithCurrency.currencyCode}`
+        : '',
       trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
@@ -3087,6 +3106,18 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         customAttributes,
       }
     }),
+  }
+}
+
+function buildDraftOrderShippingLine(requiresShipping) {
+  if (!requiresShipping || !draftOrderShippingAmount) return null
+
+  return {
+    title: draftOrderShippingTitle,
+    priceWithCurrency: {
+      amount: draftOrderShippingAmount,
+      currencyCode: shopCurrencyCode,
+    },
   }
 }
 
@@ -3571,6 +3602,12 @@ function requiresShippingForOrder(payload = {}) {
   if (typeof value === 'boolean') return value
   if (value === null || value === undefined || cleanString(value) === '') return true
   return !['false', 'no', '0', 'off'].includes(cleanString(value).toLowerCase())
+}
+
+function normalizePositiveMoneyAmount(value) {
+  const amount = Number(cleanString(value))
+  if (!Number.isFinite(amount) || amount <= 0) return ''
+  return amount.toFixed(2)
 }
 
 function isBatProductLike(product) {

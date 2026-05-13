@@ -39,6 +39,8 @@ Required environment variables:
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
 - `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
+- `TRINITY_DRAFT_SHIPPING_TITLE` (optional, defaults to `Standard Shipping` for draft invoices)
+- `TRINITY_DRAFT_SHIPPING_AMOUNT` (optional, defaults to `15.00`; set to `0` to let Shopify checkout rates handle shipping instead)
 - `GA4_MEASUREMENT_ID` (analytics collector only; optional, enables server-side GA4 ecommerce forwarding)
 - `GA4_API_SECRET` (analytics collector only; optional, required with `GA4_MEASUREMENT_ID`)
 - `TRINITY_ANALYTICS_ALLOWED_ORIGINS` (analytics collector only; optional, defaults to `*` so Shopify's pixel sandbox can deliver events reliably)

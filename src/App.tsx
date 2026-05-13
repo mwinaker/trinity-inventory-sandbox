@@ -1263,7 +1263,16 @@ type SalesOrderApiResponse = {
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
   orderJobs?: OrderJob[]
-  draftOrder?: { id?: string; name?: string; invoiceUrl?: string }
+  draftOrder?: {
+    id?: string
+    name?: string
+    invoiceUrl?: string
+    totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
+    shippingLine?: {
+      title?: string
+      originalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
+    }
+  }
   order?: { name?: string }
   internalNotificationRecipients?: string[]
 }
@@ -1387,6 +1396,21 @@ function getSalesOrderTotal(draft: SalesOrderDraft) {
   return draft.lines.reduce((total, line) => total + getSalesLineTotal(line), 0)
 }
 
+function getDraftOrderTotal(review: PublicDraftInvoiceReview) {
+  const amount = Number(review.draftOrder.totalPriceSet?.shopMoney?.amount)
+  return Number.isFinite(amount) ? amount : getSalesOrderTotal(review.draft)
+}
+
+function getDraftOrderShippingLine(review: PublicDraftInvoiceReview) {
+  const amount = Number(review.draftOrder.shippingLine?.originalPriceSet?.shopMoney?.amount)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  return {
+    title: review.draftOrder.shippingLine?.title || 'Shipping',
+    amount,
+  }
+}
+
 function PublicSalesOrderForm() {
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
@@ -1399,6 +1423,10 @@ function PublicSalesOrderForm() {
     null,
   )
   const [message, setMessage] = useState('')
+  const draftReviewShipping = pendingDraftReview
+    ? getDraftOrderShippingLine(pendingDraftReview)
+    : null
+  const draftReviewTotal = pendingDraftReview ? getDraftOrderTotal(pendingDraftReview) : 0
 
   useEffect(() => {
     let cancelled = false
@@ -1571,12 +1599,20 @@ function PublicSalesOrderForm() {
             </div>
             <div>
               <span>Total</span>
-              <strong>{formatSalesOrderMoney(getSalesOrderTotal(pendingDraftReview.draft))}</strong>
+              <strong>{formatSalesOrderMoney(draftReviewTotal)}</strong>
               <p>
                 {pendingDraftReview.draft.lines.length}{' '}
                 {pendingDraftReview.draft.lines.length === 1 ? 'line' : 'lines'}
+                {draftReviewShipping ? ' + shipping' : ''}
               </p>
             </div>
+            {draftReviewShipping ? (
+              <div>
+                <span>Shipping</span>
+                <strong>{formatSalesOrderMoney(draftReviewShipping.amount)}</strong>
+                <p>{draftReviewShipping.title}</p>
+              </div>
+            ) : null}
           </div>
 
           <div className="invoice-review-lines">
