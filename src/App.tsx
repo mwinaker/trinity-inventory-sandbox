@@ -1328,16 +1328,6 @@ function isPublicOrderFormRoute() {
   return publicOrderFormPaths.has(getCurrentAppPath())
 }
 
-function hasInternalLaunchHint() {
-  const params = new URLSearchParams(window.location.search)
-  return (
-    import.meta.env.DEV ||
-    params.get('embedded') === '1' ||
-    params.has('id_token') ||
-    (params.has('shop') && params.has('hmac'))
-  )
-}
-
 function getSalesOrderSuccessMessage(
   draft: SalesOrderDraft,
   payload: SalesOrderApiResponse,
@@ -6037,7 +6027,7 @@ function InternalAppGate() {
 }
 
 function App() {
-  if (isPublicOrderFormRoute() || !hasInternalLaunchHint()) {
+  if (isPublicOrderFormRoute()) {
     return <PublicSalesOrderForm />
   }
 
