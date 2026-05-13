@@ -79,6 +79,7 @@ const internalSessionMaxAgeMs = 12 * 60 * 60 * 1000
 const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
 const internalSessionSecret =
   process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
+const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
 const defaultInternalOrderNotificationEmails = [
@@ -880,10 +881,11 @@ app.listen(port, () => {
 })
 
 function establishInternalSession(request, response, next) {
+  const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
   if (
     request.method === 'GET' &&
     request.accepts('html') &&
-    hasValidShopifyLaunch(request)
+    (hasValidShopifyLaunch(request) || hasStandaloneAccess)
   ) {
     const token = createInternalSessionToken()
     if (token) {
@@ -894,6 +896,16 @@ function establishInternalSession(request, response, next) {
         maxAge: internalSessionMaxAgeMs,
         path: '/',
       })
+    }
+  }
+
+  if (hasStandaloneAccess) {
+    const redirectUrl = new URL(request.originalUrl, getRequestOrigin(request))
+    redirectUrl.searchParams.delete(standaloneInternalAccessQueryParam)
+    const sanitizedPath = `${redirectUrl.pathname}${redirectUrl.search}`
+    if (sanitizedPath !== request.originalUrl) {
+      response.redirect(302, sanitizedPath)
+      return
     }
   }
 
@@ -914,6 +926,16 @@ function requireInternalAccess(request, response, next) {
 
 function hasValidShopifyLaunch(request) {
   return hasValidShopifyHmac(request) || hasValidShopifySessionToken(getQueryParam(request, 'id_token'))
+}
+
+function hasValidStandaloneInternalAccess(request) {
+  const providedToken = cleanString(getQueryParam(request, standaloneInternalAccessQueryParam))
+  if (!providedToken) return false
+
+  const expectedToken = createStandaloneInternalAccessToken()
+  if (!expectedToken) return false
+
+  return safeEqual(expectedToken, providedToken, 'utf8')
 }
 
 function hasValidShopifyHmac(request) {
@@ -1001,6 +1023,15 @@ function createInternalSessionToken() {
   return `${payload}.${signature}`
 }
 
+function createStandaloneInternalAccessToken() {
+  if (!internalSessionSecret) return ''
+
+  return crypto
+    .createHmac('sha256', internalSessionSecret)
+    .update(`standalone-internal-access:${shopDomain ?? 'trinity'}`)
+    .digest('base64url')
+}
+
 function hasValidInternalSession(request) {
   if (!internalSessionSecret) return false
 
@@ -1029,6 +1060,12 @@ function getQueryParam(request, name) {
   const value = request.query?.[name]
   if (Array.isArray(value)) return String(value[0] ?? '')
   return typeof value === 'string' ? value : ''
+}
+
+function getRequestOrigin(request) {
+  const protocol = cleanString(request.get('x-forwarded-proto')) || request.protocol || 'https'
+  const host = cleanString(request.get('x-forwarded-host')) || cleanString(request.get('host'))
+  return `${protocol}://${host || 'trinity.local'}`
 }
 
 function getCookie(request, name) {

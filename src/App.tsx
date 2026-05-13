@@ -2535,7 +2535,9 @@ function InternalApp() {
   const [costSourceFilter, setCostSourceFilter] = useState<'all' | Source>('all')
   const [costSpeciesFilter, setCostSpeciesFilter] = useState<'all' | Species>('all')
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
-  const [backendStatus, setBackendStatus] = useState<'connecting' | 'connected' | 'offline'>(
+  const [backendStatus, setBackendStatus] = useState<
+    'connecting' | 'connected' | 'offline' | 'unauthorized'
+  >(
     'connecting',
   )
   const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(true)
@@ -2571,6 +2573,13 @@ function InternalApp() {
   const loadRemoteState = useEffectEvent(async () => {
     try {
       const response = await fetch('/api/state', { cache: 'no-store' })
+      if (response.status === 401) {
+        setBackendStatus('unauthorized')
+        setSyncMessage('Use the secure internal access link or launch from Shopify admin.')
+        hasLoadedRemoteState.current = true
+        setIsLoadingRemoteState(false)
+        return false
+      }
       if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
       const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
 
@@ -2643,7 +2652,9 @@ function InternalApp() {
       return true
     } catch {
       setBackendStatus('offline')
-      setSyncMessage('Shopify sync is offline. Device changes are safe here and retrying automatically.')
+      setSyncMessage(
+        'Shopify sync is offline. Device changes are safe here and retrying automatically.',
+      )
       hasLoadedRemoteState.current = true
       setIsLoadingRemoteState(false)
       return false
@@ -3594,7 +3605,11 @@ function InternalApp() {
         <div className="hero-card" aria-label="Connection status">
           <span className="status-dot"></span>
           <strong>
-            {backendStatus === 'connected' ? 'Shopify-backed internal tool' : 'Internal offline mode'}
+            {backendStatus === 'connected'
+              ? 'Shopify-backed internal tool'
+              : backendStatus === 'unauthorized'
+                ? 'Secure internal access required'
+                : 'Internal offline mode'}
           </strong>
           <p>{syncMessage}</p>
         </div>
@@ -3607,6 +3622,17 @@ function InternalApp() {
             <h2>Loading shared inventory</h2>
           </div>
           <p className="empty-state">Checking Shopify before showing device-saved records.</p>
+        </section>
+      ) : backendStatus === 'unauthorized' ? (
+        <section className="panel inventory-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Secure internal access</p>
+            <h2>Use the internal access link</h2>
+          </div>
+          <p className="empty-state">
+            This page is live, but the shared Shopify inventory requires an internal session. Open
+            the secure internal link we issued for Trinity or launch the tool from Shopify admin.
+          </p>
         </section>
       ) : activeSection === 'inventory' ? (
         <>
