@@ -889,7 +889,6 @@ function establishInternalSession(request, response, next) {
   if (
     isHtmlRequest &&
     hasTrustedEmbeddedContext &&
-    !hasCryptographicallyVerifiedLaunch &&
     !hasStandaloneAccess &&
     !hasValidInternalSession(request)
   ) {
