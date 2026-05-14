@@ -884,10 +884,10 @@ function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
   const hasTrustedEmbeddedContext = hasTrustedEmbeddedShopifyContext(request)
   const hasCryptographicallyVerifiedLaunch = hasValidShopifyLaunch(request)
-  const isHtmlRequest = request.method === 'GET' && request.accepts('html')
+  const isNavigationRequest = isHtmlNavigationRequest(request)
 
   if (
-    isHtmlRequest &&
+    isNavigationRequest &&
     hasTrustedEmbeddedContext &&
     !hasStandaloneAccess &&
     !hasValidInternalSession(request)
@@ -902,7 +902,7 @@ function establishInternalSession(request, response, next) {
   }
 
   if (
-    isHtmlRequest &&
+    isNavigationRequest &&
     (hasCryptographicallyVerifiedLaunch || hasTrustedEmbeddedContext || hasStandaloneAccess)
   ) {
     const token = createInternalSessionToken()
@@ -928,6 +928,19 @@ function establishInternalSession(request, response, next) {
   }
 
   next()
+}
+
+function isHtmlNavigationRequest(request) {
+  if (request.method !== 'GET') return false
+
+  const destination = cleanString(request.get('sec-fetch-dest')).toLowerCase()
+  if (destination === 'document' || destination === 'iframe') return true
+
+  const mode = cleanString(request.get('sec-fetch-mode')).toLowerCase()
+  if (mode === 'navigate') return true
+
+  const accept = cleanString(request.get('accept')).toLowerCase()
+  return accept.includes('text/html')
 }
 
 function requireInternalAccess(request, response, next) {
