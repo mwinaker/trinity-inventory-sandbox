@@ -1334,6 +1334,21 @@ function isInternalToolRoute() {
   return internalToolPaths.has(getCurrentAppPath())
 }
 
+function getEmbeddedAuthSearch() {
+  const params = new URLSearchParams(window.location.search)
+  const forwarded = new URLSearchParams()
+  for (const key of ['embedded', 'hmac', 'host', 'id_token', 'locale', 'session', 'shop', 'timestamp']) {
+    const value = params.get(key)
+    if (value) forwarded.set(key, value)
+  }
+  const query = forwarded.toString()
+  return query ? `?${query}` : ''
+}
+
+function getApiPath(path: string) {
+  return `${path}${getEmbeddedAuthSearch()}`
+}
+
 function getSalesOrderSuccessMessage(
   draft: SalesOrderDraft,
   payload: SalesOrderApiResponse,
@@ -1499,7 +1514,7 @@ function PublicSalesOrderForm() {
 
     async function loadCatalog() {
       try {
-        const response = await fetch('/api/catalog', { cache: 'no-store' })
+        const response = await fetch(getApiPath('/api/catalog'), { cache: 'no-store' })
         if (!response.ok) throw new Error('Catalog unavailable')
         const payload = (await response.json()) as { products?: ShopifyCatalogProduct[] }
         if (!cancelled) {
@@ -1568,7 +1583,7 @@ function PublicSalesOrderForm() {
           : 'Creating Shopify order...',
       )
       const submittedDraft = cloneSalesOrderDraft(salesOrderDraft)
-      const response = await fetch('/api/sales-orders', {
+      const response = await fetch(getApiPath('/api/sales-orders'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1610,7 +1625,7 @@ function PublicSalesOrderForm() {
     try {
       setIsSendingInvoice(true)
       setMessage(`Sending ${pendingDraftReview.draftOrder.name ?? 'draft invoice'}...`)
-      const response = await fetch('/api/sales-orders/send-draft-invoice', {
+      const response = await fetch(getApiPath('/api/sales-orders/send-draft-invoice'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2572,7 +2587,7 @@ function InternalApp() {
 
   const loadRemoteState = useEffectEvent(async () => {
     try {
-      const response = await fetch('/api/state', { cache: 'no-store' })
+      const response = await fetch(getApiPath('/api/state'), { cache: 'no-store' })
       if (response.status === 401) {
         setBackendStatus('unauthorized')
         setSyncMessage('Use the secure internal access link or launch from Shopify admin.')
@@ -2684,7 +2699,7 @@ function InternalApp() {
 
     async function loadCatalog() {
       try {
-        const response = await fetch('/api/catalog')
+        const response = await fetch(getApiPath('/api/catalog'))
         if (!response.ok) throw new Error('Catalog unavailable')
         const payload = (await response.json()) as {
           products?: ShopifyCatalogProduct[]
@@ -2710,7 +2725,7 @@ function InternalApp() {
     const timeout = window.setTimeout(async () => {
       try {
         setSyncMessage('Syncing to Shopify...')
-        const response = await fetch('/api/state', {
+        const response = await fetch(getApiPath('/api/state'), {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -3157,7 +3172,7 @@ function InternalApp() {
           ? 'Creating Shopify draft invoice...'
           : 'Creating Shopify order...',
       )
-      const response = await fetch('/api/sales-orders', {
+      const response = await fetch(getApiPath('/api/sales-orders'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3205,7 +3220,7 @@ function InternalApp() {
     try {
       setIsImportingOrders(true)
       setOrderActionMessage('Importing recent Shopify orders...')
-      const response = await fetch('/api/orders/import', {
+      const response = await fetch(getApiPath('/api/orders/import'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3237,7 +3252,7 @@ function InternalApp() {
     try {
       setIsRegisteringWebhooks(true)
       setOrderActionMessage('Registering Shopify order webhooks...')
-      const response = await fetch('/api/webhooks/register', {
+      const response = await fetch(getApiPath('/api/webhooks/register'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3266,7 +3281,7 @@ function InternalApp() {
 
     try {
       setOrderActionMessage(`Sending invoice for ${job.shopifyDraftOrderName || 'draft order'}...`)
-      const response = await fetch('/api/draft-orders/send-invoice', {
+      const response = await fetch(getApiPath('/api/draft-orders/send-invoice'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

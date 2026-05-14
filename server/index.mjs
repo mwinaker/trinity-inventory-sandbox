@@ -913,7 +913,12 @@ function establishInternalSession(request, response, next) {
 }
 
 function requireInternalAccess(request, response, next) {
-  if (isLocalRequest(request) || hasValidInternalSession(request) || hasValidBearerSession(request)) {
+  if (
+    isLocalRequest(request) ||
+    hasValidInternalSession(request) ||
+    hasValidBearerSession(request) ||
+    hasValidShopifyLaunch(request)
+  ) {
     next()
     return
   }
