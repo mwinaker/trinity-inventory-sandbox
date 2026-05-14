@@ -883,10 +883,28 @@ app.listen(port, () => {
 function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
   const hasTrustedEmbeddedContext = hasTrustedEmbeddedShopifyContext(request)
+  const hasCryptographicallyVerifiedLaunch = hasValidShopifyLaunch(request)
+  const isHtmlRequest = request.method === 'GET' && request.accepts('html')
+
   if (
-    request.method === 'GET' &&
-    request.accepts('html') &&
-    (hasValidShopifyLaunch(request) || hasTrustedEmbeddedContext || hasStandaloneAccess)
+    isHtmlRequest &&
+    hasTrustedEmbeddedContext &&
+    !hasCryptographicallyVerifiedLaunch &&
+    !hasStandaloneAccess &&
+    !hasValidInternalSession(request)
+  ) {
+    const fallbackToken = createStandaloneInternalAccessToken()
+    if (fallbackToken) {
+      const redirectUrl = new URL(request.originalUrl, getRequestOrigin(request))
+      redirectUrl.searchParams.set(standaloneInternalAccessQueryParam, fallbackToken)
+      response.redirect(302, `${redirectUrl.pathname}${redirectUrl.search}`)
+      return
+    }
+  }
+
+  if (
+    isHtmlRequest &&
+    (hasCryptographicallyVerifiedLaunch || hasTrustedEmbeddedContext || hasStandaloneAccess)
   ) {
     const token = createInternalSessionToken()
     if (token) {
@@ -900,7 +918,7 @@ function establishInternalSession(request, response, next) {
     }
   }
 
-  if (hasStandaloneAccess) {
+  if (hasStandaloneAccess && !hasTrustedEmbeddedContext) {
     const redirectUrl = new URL(request.originalUrl, getRequestOrigin(request))
     redirectUrl.searchParams.delete(standaloneInternalAccessQueryParam)
     const sanitizedPath = `${redirectUrl.pathname}${redirectUrl.search}`

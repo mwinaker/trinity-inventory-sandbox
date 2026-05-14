@@ -1337,7 +1337,17 @@ function isInternalToolRoute() {
 function getEmbeddedAuthSearch() {
   const params = new URLSearchParams(window.location.search)
   const forwarded = new URLSearchParams()
-  for (const key of ['embedded', 'hmac', 'host', 'id_token', 'locale', 'session', 'shop', 'timestamp']) {
+  for (const key of [
+    'access',
+    'embedded',
+    'hmac',
+    'host',
+    'id_token',
+    'locale',
+    'session',
+    'shop',
+    'timestamp',
+  ]) {
     const value = params.get(key)
     if (value) forwarded.set(key, value)
   }
