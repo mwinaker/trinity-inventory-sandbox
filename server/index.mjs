@@ -917,7 +917,8 @@ function requireInternalAccess(request, response, next) {
     isLocalRequest(request) ||
     hasValidInternalSession(request) ||
     hasValidBearerSession(request) ||
-    hasValidShopifyLaunch(request)
+    hasValidShopifyLaunch(request) ||
+    hasValidEmbeddedAdminReferer(request)
   ) {
     next()
     return
@@ -941,6 +942,26 @@ function hasValidStandaloneInternalAccess(request) {
   if (!expectedToken) return false
 
   return safeEqual(expectedToken, providedToken, 'utf8')
+}
+
+function hasValidEmbeddedAdminReferer(request) {
+  const referer = cleanString(request.get('referer'))
+  if (!referer) return false
+
+  try {
+    const url = new URL(referer)
+    if (url.hostname !== 'admin.shopify.com') return false
+
+    const requestShop = cleanString(getQueryParam(request, 'shop'))
+    if (shopDomain && requestShop && requestShop !== shopDomain) return false
+    if (shopDomain && !requestShop && !referer.includes(`/store/${shopDomain.replace('.myshopify.com', '')}/`)) {
+      return false
+    }
+
+    return url.pathname.includes('/apps/trinity-billet-inventory')
+  } catch {
+    return false
+  }
 }
 
 function hasValidShopifyHmac(request) {
