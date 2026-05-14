@@ -882,10 +882,11 @@ app.listen(port, () => {
 
 function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
+  const hasTrustedEmbeddedContext = hasTrustedEmbeddedShopifyContext(request)
   if (
     request.method === 'GET' &&
     request.accepts('html') &&
-    (hasValidShopifyLaunch(request) || hasStandaloneAccess)
+    (hasValidShopifyLaunch(request) || hasTrustedEmbeddedContext || hasStandaloneAccess)
   ) {
     const token = createInternalSessionToken()
     if (token) {
@@ -918,6 +919,7 @@ function requireInternalAccess(request, response, next) {
     hasValidInternalSession(request) ||
     hasValidBearerSession(request) ||
     hasValidShopifyLaunch(request) ||
+    hasTrustedEmbeddedShopifyContext(request) ||
     hasValidEmbeddedAdminReferer(request)
   ) {
     next()
@@ -942,6 +944,22 @@ function hasValidStandaloneInternalAccess(request) {
   if (!expectedToken) return false
 
   return safeEqual(expectedToken, providedToken, 'utf8')
+}
+
+function hasTrustedEmbeddedShopifyContext(request) {
+  const requestShop = cleanString(getQueryParam(request, 'shop'))
+  if (shopDomain && requestShop !== shopDomain) return false
+
+  const embedded = cleanString(getQueryParam(request, 'embedded'))
+  const host = cleanString(getQueryParam(request, 'host'))
+  if (!requestShop || (embedded !== '1' && !host)) return false
+
+  const shopSlug = shopDomain?.replace('.myshopify.com', '') ?? ''
+  const trustedHostPath = shopSlug ? `admin.shopify.com/store/${shopSlug}` : ''
+  const decodedHost = host ? decodeBase64Url(host) : ''
+  if (trustedHostPath && decodedHost.includes(trustedHostPath)) return true
+
+  return hasValidEmbeddedAdminReferer(request)
 }
 
 function hasValidEmbeddedAdminReferer(request) {
