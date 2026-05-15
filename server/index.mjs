@@ -82,7 +82,7 @@ const internalSessionSecret =
 const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
-const metaobjectsPageSize = 100
+const metaobjectsPageSize = 25
 const stateCacheTtlMs = 15_000
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
@@ -1621,6 +1621,7 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
     throw new Error(payload.errors.map((item) => item.message).join(', '))
   }
 
+  await maybePauseForShopifyThrottleBudget(payload)
   return payload
 }
 
@@ -1671,6 +1672,30 @@ function getShopifyGraphQLRetryDelayMs(payload, attempt) {
   }
 
   return getRetryDelayMs(attempt)
+}
+
+async function maybePauseForShopifyThrottleBudget(payload) {
+  const cost = payload?.extensions?.cost
+  const throttleStatus = cost?.throttleStatus
+  const requestedCost = Number(cost?.requestedQueryCost)
+  const available = Number(throttleStatus?.currentlyAvailable)
+  const restoreRate = Number(throttleStatus?.restoreRate)
+
+  if (
+    !Number.isFinite(requestedCost) ||
+    !Number.isFinite(available) ||
+    !Number.isFinite(restoreRate) ||
+    restoreRate <= 0
+  ) {
+    return
+  }
+
+  const targetAvailable = Math.max(requestedCost * 2, 150)
+  if (available >= targetAvailable) return
+
+  const deficit = targetAvailable - available
+  const waitMs = Math.ceil((deficit / restoreRate) * 1000) + 250
+  await sleep(Math.max(waitMs, 250))
 }
 
 function getRetryDelayMs(attempt) {
