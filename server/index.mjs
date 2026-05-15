@@ -83,7 +83,7 @@ const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
 const metaobjectsPageSize = 25
-const stateCacheTtlMs = 15_000
+const stateCacheTtlMs = 60 * 60 * 1000
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -563,6 +563,12 @@ app.get('/api/state', requireInternalAccess, async (_request, response) => {
 
     response.json(await getSharedState())
   } catch (error) {
+    if (stateCacheValue) {
+      response.set('X-Trinity-State-Cache', 'stale-fallback')
+      response.json(stateCacheValue)
+      return
+    }
+
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify sync error.',
@@ -617,6 +623,15 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
     ])
 
     await syncOrderJobMetafields(payload.orderJobs ?? [])
+    primeStateCache({
+      ok: true,
+      billets: payload.billets ?? [],
+      players: payload.players ?? [],
+      producedBats: payload.producedBats ?? [],
+      customBatModels: payload.customBatModels ?? [],
+      orderJobs: payload.orderJobs ?? [],
+      billingContacts: payload.billingContacts ?? [],
+    })
 
     response.json({
       ok: true,
@@ -1268,6 +1283,12 @@ function invalidateStateCache() {
   stateCachePromise = null
 }
 
+function primeStateCache(value) {
+  stateCacheValue = value
+  stateCacheExpiresAt = Date.now() + stateCacheTtlMs
+  stateCachePromise = null
+}
+
 async function getSharedState() {
   const now = Date.now()
   if (stateCacheValue && stateCacheExpiresAt > now) {
@@ -1277,8 +1298,7 @@ async function getSharedState() {
   if (!stateCachePromise) {
     stateCachePromise = loadSharedState()
       .then((value) => {
-        stateCacheValue = value
-        stateCacheExpiresAt = Date.now() + stateCacheTtlMs
+        primeStateCache(value)
         return value
       })
       .finally(() => {
