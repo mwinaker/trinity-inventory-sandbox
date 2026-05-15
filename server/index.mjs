@@ -3065,7 +3065,7 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const playerName = cleanString(payload.playerName || payload.customerName)
   const billingCompany = cleanString(payload.billingCompany)
   const customMessage = [
-    'A Trinity Bat Company invoice has been created from an internal sales order.',
+    'A Trinity Sports Group invoice has been created from an internal sales order.',
     hasProOrder ? 'Order type: Pro Order' : '',
     isZeroDollarOrder ? '$0 sample order: no payment is due; invoice sent for documentation.' : '',
     playerName ? `Player: ${playerName}` : '',
@@ -3078,8 +3078,8 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const emailInput = {
     to: payer.email,
     subject: isZeroDollarOrder
-      ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Bat Company`
-      : `${order?.name ?? 'Shopify order'} invoice from Trinity Bat Company`,
+      ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Sports Group`
+      : `${order?.name ?? 'Shopify order'} invoice from Trinity Sports Group`,
     customMessage,
   }
 
