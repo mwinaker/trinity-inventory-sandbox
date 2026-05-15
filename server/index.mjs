@@ -82,6 +82,8 @@ const internalSessionSecret =
 const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
+const metaobjectsPageSize = 100
+const stateCacheTtlMs = 15_000
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -400,6 +402,9 @@ const resourceConfigs = {
 }
 
 let definitionPromise = null
+let stateCacheValue = null
+let stateCacheExpiresAt = 0
+let stateCachePromise = null
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
   try {
@@ -556,23 +561,7 @@ app.get('/api/state', requireInternalAccess, async (_request, response) => {
       return
     }
 
-    await ensureDefinitions()
-    const billets = await listRecords(resourceConfigs.billets)
-    const players = await listRecords(resourceConfigs.players)
-    const producedBats = await listRecords(resourceConfigs.producedBats)
-    const customBatModels = await listRecords(resourceConfigs.customBatModels)
-    const orderJobs = await listRecords(resourceConfigs.orderJobs)
-    const billingContacts = await listRecords(resourceConfigs.billingContacts)
-
-    response.json({
-      ok: true,
-      billets,
-      players,
-      producedBats,
-      customBatModels,
-      orderJobs,
-      billingContacts,
-    })
+    response.json(await getSharedState())
   } catch (error) {
     response.status(500).json({
       ok: false,
@@ -1273,6 +1262,53 @@ async function ensureDefinitions() {
   return definitionPromise
 }
 
+function invalidateStateCache() {
+  stateCacheValue = null
+  stateCacheExpiresAt = 0
+  stateCachePromise = null
+}
+
+async function getSharedState() {
+  const now = Date.now()
+  if (stateCacheValue && stateCacheExpiresAt > now) {
+    return stateCacheValue
+  }
+
+  if (!stateCachePromise) {
+    stateCachePromise = loadSharedState()
+      .then((value) => {
+        stateCacheValue = value
+        stateCacheExpiresAt = Date.now() + stateCacheTtlMs
+        return value
+      })
+      .finally(() => {
+        stateCachePromise = null
+      })
+  }
+
+  return stateCachePromise
+}
+
+async function loadSharedState() {
+  await ensureDefinitions()
+  const billets = await listRecords(resourceConfigs.billets)
+  const players = await listRecords(resourceConfigs.players)
+  const producedBats = await listRecords(resourceConfigs.producedBats)
+  const customBatModels = await listRecords(resourceConfigs.customBatModels)
+  const orderJobs = await listRecords(resourceConfigs.orderJobs)
+  const billingContacts = await listRecords(resourceConfigs.billingContacts)
+
+  return {
+    ok: true,
+    billets,
+    players,
+    producedBats,
+    customBatModels,
+    orderJobs,
+    billingContacts,
+  }
+}
+
 async function ensureDefinitionsInternal() {
   for (const config of Object.values(resourceConfigs)) {
     await runWithShopifyRetry(async () => {
@@ -1354,7 +1390,7 @@ async function listMetaobjectNodes(type) {
     const result = await shopifyGraphQL(
       `
         query ListMetaobjects($type: String!, $after: String) {
-          metaobjects(type: $type, first: 250, after: $after, sortKey: "updated_at", reverse: true) {
+          metaobjects(type: $type, first: ${metaobjectsPageSize}, after: $after, sortKey: "updated_at", reverse: true) {
             nodes {
               id
               handle
@@ -1421,6 +1457,8 @@ async function upsertRecords(config, items, options = {}) {
           .join(', ')}`,
       )
     }
+
+    invalidateStateCache()
   })
 }
 
@@ -1487,6 +1525,7 @@ async function upsertRecord(config, item) {
     )
   }
 
+  invalidateStateCache()
   return handle
 }
 
