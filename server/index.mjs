@@ -84,6 +84,7 @@ const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
 const metaobjectsPageSize = 25
 const stateCacheTtlMs = 60 * 60 * 1000
+const catalogCacheTtlMs = 10 * 60 * 1000
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -405,6 +406,9 @@ let definitionPromise = null
 let stateCacheValue = null
 let stateCacheExpiresAt = 0
 let stateCachePromise = null
+let catalogCacheValue = null
+let catalogCacheExpiresAt = 0
+let catalogCachePromise = null
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
   try {
@@ -586,7 +590,9 @@ app.get('/api/catalog', async (_request, response) => {
       return
     }
 
-    const products = await listCatalogProducts()
+    const { products, cacheStatus } = await getCatalogProducts()
+    response.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
+    response.set('X-Trinity-Catalog-Cache', cacheStatus)
     response.json({ ok: true, products })
   } catch (error) {
     response.status(500).json({
@@ -1307,6 +1313,40 @@ async function getSharedState() {
   }
 
   return stateCachePromise
+}
+
+function primeCatalogCache(products) {
+  catalogCacheValue = products
+  catalogCacheExpiresAt = Date.now() + catalogCacheTtlMs
+  catalogCachePromise = null
+}
+
+async function getCatalogProducts() {
+  const now = Date.now()
+  if (catalogCacheValue && catalogCacheExpiresAt > now) {
+    return { products: catalogCacheValue, cacheStatus: 'hit' }
+  }
+
+  if (!catalogCachePromise) {
+    catalogCachePromise = listCatalogProducts()
+      .then((products) => {
+        primeCatalogCache(products)
+        return { products, cacheStatus: 'refreshed' }
+      })
+      .finally(() => {
+        catalogCachePromise = null
+      })
+  }
+
+  try {
+    return await catalogCachePromise
+  } catch (error) {
+    if (catalogCacheValue) {
+      return { products: catalogCacheValue, cacheStatus: 'stale-fallback' }
+    }
+
+    throw error
+  }
 }
 
 async function loadSharedState() {
