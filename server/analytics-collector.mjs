@@ -19,7 +19,17 @@ const app = express()
 const port = Number(process.env.PORT ?? 4178)
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
 const shopDomain = process.env.SHOPIFY_SHOP
-const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
+const analyticsAdminToken =
+  process.env.TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN ??
+  process.env.SHOPIFY_ANALYTICS_ADMIN_ACCESS_TOKEN ??
+  ''
+const sharedAdminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? ''
+const adminToken = analyticsAdminToken || sharedAdminToken
+const adminTokenSource = analyticsAdminToken
+  ? 'dedicated_analytics_token'
+  : sharedAdminToken
+    ? 'shared_fallback_token'
+    : 'missing'
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
@@ -28,7 +38,13 @@ const allowedOrigins = parseOriginList(
 )
 
 if (!shopDomain || !adminToken) {
-  console.warn('Missing SHOPIFY_SHOP or SHOPIFY_ADMIN_ACCESS_TOKEN. Analytics collection is unavailable.')
+  console.warn(
+    'Missing SHOPIFY_SHOP or analytics Shopify token. Analytics collection is unavailable.',
+  )
+} else if (adminTokenSource === 'shared_fallback_token') {
+  console.warn(
+    'Analytics collector is using SHOPIFY_ADMIN_ACCESS_TOKEN fallback. Set TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN to isolate analytics API throttling from the inventory app.',
+  )
 }
 
 const customerSessionConfig = {
@@ -114,6 +130,7 @@ app.get('/api/health', (_request, response) => {
       collector: true,
       ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
       allowedOrigins,
+      shopifyTokenSource: adminTokenSource,
     },
   })
 })

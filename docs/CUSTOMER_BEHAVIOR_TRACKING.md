@@ -171,6 +171,7 @@ These cannot be fully activated from the existing private app token:
 - Creating/enabling the Shopify custom pixel.
 - Adding the customizer publisher script to the live theme.
 - Creating the separate `trinity-analytics-collector` Render service if the Render blueprint does not create it automatically.
+- Adding `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN` from a separate Shopify custom app or app installation. Do not reuse the inventory app's `SHOPIFY_ADMIN_ACCESS_TOKEN`, because both services would keep sharing the same Shopify Admin API throttle bucket.
 - Adding GA4 Measurement Protocol credentials to the analytics collector Render service.
 
 The current app token has order/product/metaobject access but does not have theme write or report scopes.

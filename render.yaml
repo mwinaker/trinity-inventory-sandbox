@@ -37,7 +37,7 @@ services:
     envVars:
       - key: SHOPIFY_SHOP
         sync: false
-      - key: SHOPIFY_ADMIN_ACCESS_TOKEN
+      - key: TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN
         sync: false
       - key: SHOPIFY_API_VERSION
         value: 2026-01

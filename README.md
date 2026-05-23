@@ -35,7 +35,8 @@ The customer behavior collector is intentionally isolated as a second Render ser
 Required environment variables:
 
 - `SHOPIFY_SHOP`
-- `SHOPIFY_ADMIN_ACCESS_TOKEN`
+- `SHOPIFY_ADMIN_ACCESS_TOKEN` (inventory app only)
+- `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN` (analytics collector only; use a token from a separate Shopify custom app so analytics writes do not drain the inventory app's Admin API throttle bucket)
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
 - `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
@@ -52,9 +53,11 @@ Render:
 1. Create a new web service from this GitHub repo.
 2. Let Render use the included `render.yaml`.
 3. Add the Shopify environment variables to `trinity-billet-inventory`.
-4. Add the Shopify and optional GA4 environment variables to `trinity-analytics-collector`.
+4. Add `SHOPIFY_SHOP`, `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN`, and optional GA4 environment variables to `trinity-analytics-collector`.
 5. Deploy and copy the public `onrender.com` URLs.
 6. Update the Shopify app URLs in Dev Dashboard to the inventory host.
+
+For the analytics token, create a second Shopify custom app or app installation with only the Admin API access the collector needs. Do not paste the inventory app's `SHOPIFY_ADMIN_ACCESS_TOKEN` into `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN`; that would keep both services on the same Shopify throttle bucket.
 
 Railway:
 
