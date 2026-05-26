@@ -18,6 +18,7 @@ if (fs.existsSync(envPath)) {
 const app = express()
 const port = Number(process.env.PORT ?? 4178)
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
+const analyticsCollectorVersion = '2026-05-26-meta-shopify-signals'
 const shopDomain = process.env.SHOPIFY_SHOP
 const analyticsAdminToken =
   process.env.TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN ??
@@ -77,6 +78,20 @@ const customerSessionConfig = {
       fieldValue('order_id', item.orderId),
       fieldValue('order_name', item.orderName),
       fieldValue('customer_email_hash', item.customerEmailHash),
+      fieldValue('meta_dataset_id', item.metaDatasetId),
+      fieldValue('meta_business_id', item.metaBusinessId),
+      fieldValue('facebook_page_id', item.facebookPageId),
+      fieldValue('instagram_handle', item.instagramHandle),
+      fieldValue('data_sharing_preference', item.dataSharingPreference),
+      fieldValue('last_shopify_client_id', item.lastShopifyClientId),
+      fieldValue('first_meta_click_id', item.firstMetaClickId),
+      fieldValue('last_meta_click_id', item.lastMetaClickId),
+      fieldValue('last_meta_browser_id', item.lastMetaBrowserId),
+      fieldValue('last_meta_click_cookie', item.lastMetaClickCookie),
+      fieldValue('tracking_ids_json', JSON.stringify(item.trackingIds ?? {})),
+      fieldValue('integration_json', JSON.stringify(item.integration ?? {})),
+      fieldValue('consent_json', JSON.stringify(item.consent ?? {})),
+      fieldValue('browser_cookies_json', JSON.stringify(item.browserCookies ?? {})),
       fieldValue('events_json', JSON.stringify(item.events ?? [])),
       fieldValue('created_at', item.createdAt),
       fieldValue('updated_at', item.updatedAt),
@@ -105,6 +120,20 @@ const customerSessionConfig = {
     definitionField('order_id', 'Order ID', 'single_line_text_field'),
     definitionField('order_name', 'Shopify Order Name', 'single_line_text_field'),
     definitionField('customer_email_hash', 'Customer Email Hash', 'single_line_text_field'),
+    definitionField('meta_dataset_id', 'Meta Dataset ID', 'single_line_text_field'),
+    definitionField('meta_business_id', 'Meta Business ID', 'single_line_text_field'),
+    definitionField('facebook_page_id', 'Facebook Page ID', 'single_line_text_field'),
+    definitionField('instagram_handle', 'Instagram Handle', 'single_line_text_field'),
+    definitionField('data_sharing_preference', 'Meta Data Sharing Preference', 'single_line_text_field'),
+    definitionField('last_shopify_client_id', 'Last Shopify Client ID', 'single_line_text_field'),
+    definitionField('first_meta_click_id', 'First Meta Click ID', 'single_line_text_field'),
+    definitionField('last_meta_click_id', 'Last Meta Click ID', 'single_line_text_field'),
+    definitionField('last_meta_browser_id', 'Last Meta Browser ID', 'single_line_text_field'),
+    definitionField('last_meta_click_cookie', 'Last Meta Click Cookie', 'single_line_text_field'),
+    definitionField('tracking_ids_json', 'Tracking IDs JSON', 'json'),
+    definitionField('integration_json', 'Integration JSON', 'json'),
+    definitionField('consent_json', 'Consent JSON', 'json'),
+    definitionField('browser_cookies_json', 'Browser Cookies JSON', 'json'),
     definitionField('events_json', 'Events JSON', 'json'),
     definitionField('created_at', 'Created At', 'single_line_text_field'),
     definitionField('updated_at', 'Updated At', 'single_line_text_field'),
@@ -124,6 +153,7 @@ app.get('/api/health', (_request, response) => {
   response.json({
     ok: Boolean(shopDomain && adminToken),
     service: 'trinity-analytics-collector',
+    version: analyticsCollectorVersion,
     shop: shopDomain ?? null,
     apiVersion,
     analytics: {
@@ -131,6 +161,7 @@ app.get('/api/health', (_request, response) => {
       ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
       allowedOrigins,
       shopifyTokenSource: adminTokenSource,
+      capturesMetaShopifySignals: true,
     },
   })
 })
@@ -574,6 +605,11 @@ function normalizeAnalyticsEvent(rawEvent, request) {
     clientId: cleanString(rawEvent.clientId).slice(0, 128),
     sessionId,
     visitorId: visitorId || sessionId,
+    sourcePixel: normalizeSourcePixel(rawEvent.sourcePixel),
+    integration: normalizeIntegration(
+      rawEvent.integration ?? rawEvent.browserSignals?.integration ?? rawEvent.attribution?.metaIntegration,
+    ),
+    browserSignals: normalizeBrowserSignals(rawEvent.browserSignals),
     attribution,
     context,
     data: rawEvent.data && typeof rawEvent.data === 'object' ? rawEvent.data : {},
@@ -605,10 +641,122 @@ function normalizeTouchpoint(value) {
     campaign: cleanString(value.campaign).slice(0, 128),
     content: cleanString(value.content).slice(0, 128),
     term: cleanString(value.term).slice(0, 128),
+    campaignId: cleanString(value.campaignId).slice(0, 128),
+    fbclid: cleanString(value.fbclid).slice(0, 256),
+    gclid: cleanString(value.gclid).slice(0, 256),
+    msclkid: cleanString(value.msclkid).slice(0, 256),
+    ttclid: cleanString(value.ttclid).slice(0, 256),
+    igshid: cleanString(value.igshid).slice(0, 256),
     landingPage: cleanString(value.landingPage).slice(0, 512),
     referrer: cleanString(value.referrer).slice(0, 512),
     capturedAt: normalizeIsoDate(value.capturedAt) || '',
   }
+}
+
+function normalizeSourcePixel(value) {
+  const sourcePixel = value && typeof value === 'object' ? value : {}
+  return {
+    id: cleanString(sourcePixel.id).slice(0, 128),
+    name: cleanString(sourcePixel.name).slice(0, 128),
+    version: cleanString(sourcePixel.version).slice(0, 64),
+  }
+}
+
+function normalizeIntegration(value) {
+  const integration = value && typeof value === 'object' ? value : {}
+  return compactObject({
+    shopifyPixelName: cleanString(integration.shopifyPixelName).slice(0, 128),
+    shopifyPixelId: cleanString(integration.shopifyPixelId).slice(0, 128),
+    shopifyPixelVersion: cleanString(integration.shopifyPixelVersion).slice(0, 64),
+    collector: cleanString(integration.collector).slice(0, 128),
+    collectorHost: cleanString(integration.collectorHost).slice(0, 128),
+    officialMetaChannel: cleanString(integration.officialMetaChannel).slice(0, 128),
+    dataSharingPreference: cleanString(integration.dataSharingPreference).slice(0, 64),
+    dataSharingIncludes: Array.isArray(integration.dataSharingIncludes)
+      ? integration.dataSharingIncludes.map((item) => cleanString(item).slice(0, 64)).filter(Boolean)
+      : [],
+    metaDatasetId: cleanString(integration.metaDatasetId).slice(0, 128),
+    metaDatasetName: cleanString(integration.metaDatasetName).slice(0, 128),
+    metaBusinessId: cleanString(integration.metaBusinessId).slice(0, 128),
+    facebookPageId: cleanString(integration.facebookPageId).slice(0, 128),
+    facebookPageName: cleanString(integration.facebookPageName).slice(0, 128),
+    instagramHandle: cleanString(integration.instagramHandle).replace(/^@/, '').slice(0, 128),
+    fallbackPixelId: cleanString(integration.fallbackPixelId).slice(0, 128),
+    fallbackPixelName: cleanString(integration.fallbackPixelName).slice(0, 128),
+    fallbackPixelStatus: cleanString(integration.fallbackPixelStatus).slice(0, 128),
+  })
+}
+
+function normalizeBrowserSignals(value) {
+  const signals = value && typeof value === 'object' ? value : {}
+  return {
+    integration: normalizeIntegration(signals.integration),
+    trackingParams: normalizeStringMap(signals.trackingParams, 256),
+    persistedTrackingIds: normalizeTrackingIdMap(signals.persistedTrackingIds ?? signals.trackingIds),
+    cookies: normalizeStringMap(signals.cookies, 512),
+    consent: normalizeConsent(signals.consent),
+    init: normalizeInitSnapshot(signals.init),
+  }
+}
+
+function normalizeTrackingIdMap(value) {
+  const ids = value && typeof value === 'object' ? value : {}
+  const normalized = {}
+
+  for (const [key, raw] of Object.entries(ids).slice(0, 50)) {
+    if (!raw || typeof raw !== 'object') continue
+    const normalizedKey = cleanString(key).slice(0, 64)
+    if (!normalizedKey) continue
+    normalized[normalizedKey] = compactObject({
+      first: cleanString(raw.first).slice(0, 256),
+      firstCapturedAt: normalizeIsoDate(raw.firstCapturedAt) || '',
+      last: cleanString(raw.last).slice(0, 256),
+      lastCapturedAt: normalizeIsoDate(raw.lastCapturedAt) || '',
+    })
+  }
+
+  return normalized
+}
+
+function normalizeStringMap(value, maxLength) {
+  const source = value && typeof value === 'object' ? value : {}
+  const normalized = {}
+
+  for (const [key, raw] of Object.entries(source).slice(0, 100)) {
+    const normalizedKey = cleanString(key).slice(0, 64)
+    const normalizedValue = cleanString(raw).slice(0, maxLength)
+    if (normalizedKey && normalizedValue) normalized[normalizedKey] = normalizedValue
+  }
+
+  return normalized
+}
+
+function normalizeConsent(value) {
+  const consent = value && typeof value === 'object' ? value : {}
+  return compactObject({
+    analyticsProcessingAllowed: toNullableBoolean(consent.analyticsProcessingAllowed),
+    marketingAllowed: toNullableBoolean(consent.marketingAllowed),
+    preferencesProcessingAllowed: toNullableBoolean(consent.preferencesProcessingAllowed),
+    saleOfDataAllowed: toNullableBoolean(consent.saleOfDataAllowed),
+  })
+}
+
+function normalizeInitSnapshot(value) {
+  const init = value && typeof value === 'object' ? value : {}
+  const shop = init.shop && typeof init.shop === 'object' ? init.shop : {}
+  return compactObject({
+    shop: compactObject({
+      name: cleanString(shop.name).slice(0, 128),
+      myshopifyDomain: cleanString(shop.myshopifyDomain).slice(0, 128),
+      storefrontUrl: cleanString(shop.storefrontUrl).slice(0, 256),
+      countryCode: cleanString(shop.countryCode).slice(0, 16),
+      currencyCode: cleanString(shop.currencyCode).slice(0, 16),
+    }),
+    hasCustomer: toNullableBoolean(init.hasCustomer),
+    hasCart: toNullableBoolean(init.hasCart),
+    hasCheckout: toNullableBoolean(init.hasCheckout),
+    productVariantCount: toFiniteNumber(init.productVariantCount),
+  })
 }
 
 function normalizePathEntry(value) {
@@ -668,6 +816,35 @@ async function upsertCustomerSessionFromEvent(event, cachedSessions) {
     .slice(-200)
   const orderId = resolveOrderIdFromAnalyticsEvent(event) || cleanString(existing?.orderId)
   const orderName = resolveOrderNameFromAnalyticsEvent(event) || cleanString(existing?.orderName)
+  const integration = mergeIntegrationSnapshots(
+    existing?.integration,
+    event.integration,
+    event.browserSignals.integration,
+  )
+  const trackingIds = mergeTrackingIdMaps(
+    existing?.trackingIds,
+    event.browserSignals.persistedTrackingIds,
+    trackingIdsFromParams(event.browserSignals.trackingParams, event.timestamp),
+  )
+  const browserCookies = {
+    ...(existing?.browserCookies && typeof existing.browserCookies === 'object'
+      ? existing.browserCookies
+      : {}),
+    ...event.browserSignals.cookies,
+  }
+  const consent = Object.keys(event.browserSignals.consent).length
+    ? event.browserSignals.consent
+    : existing?.consent ?? {}
+  const firstMetaClickId =
+    cleanString(existing?.firstMetaClickId) ||
+    firstTrackingId(trackingIds, 'fbclid') ||
+    cleanString(firstTouch.fbclid)
+  const lastMetaClickId =
+    lastTrackingId(trackingIds, 'fbclid') ||
+    cleanString(lastTouch.fbclid) ||
+    cleanString(existing?.lastMetaClickId)
+  const lastMetaBrowserId = cleanString(browserCookies._fbp || existing?.lastMetaBrowserId)
+  const lastMetaClickCookie = cleanString(browserCookies._fbc || existing?.lastMetaClickCookie)
 
   const session = {
     id: event.sessionId,
@@ -693,6 +870,21 @@ async function upsertCustomerSessionFromEvent(event, cachedSessions) {
     orderId,
     orderName,
     customerEmailHash: event.customerEmailHash || existing?.customerEmailHash || '',
+    integration,
+    metaDatasetId: integration.metaDatasetId || cleanString(existing?.metaDatasetId),
+    metaBusinessId: integration.metaBusinessId || cleanString(existing?.metaBusinessId),
+    facebookPageId: integration.facebookPageId || cleanString(existing?.facebookPageId),
+    instagramHandle: integration.instagramHandle || cleanString(existing?.instagramHandle),
+    dataSharingPreference:
+      integration.dataSharingPreference || cleanString(existing?.dataSharingPreference),
+    lastShopifyClientId: event.clientId || cleanString(existing?.lastShopifyClientId),
+    firstMetaClickId,
+    lastMetaClickId,
+    lastMetaBrowserId,
+    lastMetaClickCookie,
+    trackingIds,
+    browserCookies,
+    consent,
     events,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
@@ -726,6 +918,14 @@ function firstPopulatedTouchpoint(existing, primary, secondary, fallback) {
       cleanString(existing?.firstTerm) ||
       cleanString(primary?.term) ||
       cleanString(secondary?.term),
+    campaignId:
+      cleanString(existing?.firstCampaignId) ||
+      cleanString(primary?.campaignId) ||
+      cleanString(secondary?.campaignId),
+    fbclid:
+      cleanString(existing?.firstFbclid) ||
+      cleanString(primary?.fbclid) ||
+      cleanString(secondary?.fbclid),
     landingPage:
       cleanString(existing?.firstLandingPage) ||
       cleanString(primary?.landingPage) ||
@@ -752,6 +952,8 @@ function lastPopulatedTouchpoint(primary, secondary, fallback) {
     campaign: cleanString(primary?.campaign) || cleanString(secondary?.campaign),
     content: cleanString(primary?.content) || cleanString(secondary?.content),
     term: cleanString(primary?.term) || cleanString(secondary?.term),
+    campaignId: cleanString(primary?.campaignId) || cleanString(secondary?.campaignId),
+    fbclid: cleanString(primary?.fbclid) || cleanString(secondary?.fbclid),
     landingPage:
       cleanString(primary?.landingPage) ||
       cleanString(secondary?.landingPage) ||
@@ -788,6 +990,21 @@ function summarizeAnalyticsEvent(event) {
       cleanString(searchResult.query) ||
       cleanString(event.data?.searchQuery) ||
       cleanString(event.data?.query),
+    sourcePixel: event.sourcePixel,
+    integration: event.integration,
+    trackingParams: event.browserSignals.trackingParams,
+    trackingIds: event.browserSignals.persistedTrackingIds,
+    cookies: event.browserSignals.cookies,
+    consent: event.browserSignals.consent,
+    shopifyClientId: event.clientId,
+    metaDatasetId: event.integration.metaDatasetId,
+    metaBusinessId: event.integration.metaBusinessId,
+    facebookPageId: event.integration.facebookPageId,
+    instagramHandle: event.integration.instagramHandle,
+    dataSharingPreference: event.integration.dataSharingPreference,
+    metaClickId: lastTrackingId(event.browserSignals.persistedTrackingIds, 'fbclid'),
+    metaBrowserId: event.browserSignals.cookies._fbp || '',
+    metaClickCookie: event.browserSignals.cookies._fbc || '',
     value: extractAnalyticsValue(event.data),
     currency: extractAnalyticsCurrency(event.data),
     orderId: resolveOrderIdFromAnalyticsEvent(event),
@@ -875,6 +1092,17 @@ function buildOrderAttributionPayload(session, event) {
       value: extractAnalyticsValue(event.data),
       currency: extractAnalyticsCurrency(event.data),
     },
+    metaIntegration: session.integration ?? {},
+    tracking: {
+      firstMetaClickId: session.firstMetaClickId,
+      lastMetaClickId: session.lastMetaClickId,
+      lastMetaBrowserId: session.lastMetaBrowserId,
+      lastMetaClickCookie: session.lastMetaClickCookie,
+      lastShopifyClientId: session.lastShopifyClientId,
+      trackingIds: session.trackingIds ?? {},
+      browserCookies: session.browserCookies ?? {},
+      consent: session.consent ?? {},
+    },
     journey: (session.events ?? []).map((item) => ({
       name: item.name,
       at: item.at,
@@ -884,6 +1112,9 @@ function buildOrderAttributionPayload(session, event) {
       value: item.value,
       orderName: item.orderName,
       items: item.items,
+      metaClickId: item.metaClickId,
+      metaBrowserId: item.metaBrowserId,
+      shopifyClientId: item.shopifyClientId,
     })),
     customerEmailHash: session.customerEmailHash,
   }
@@ -955,6 +1186,11 @@ function mapAnalyticsEventToGa4(event, session) {
     trinity_first_medium: session.firstMedium,
     trinity_first_campaign: session.firstCampaign,
     trinity_first_landing_page: session.firstLandingPage,
+    trinity_source_pixel: session.integration?.shopifyPixelName,
+    trinity_meta_dataset_id: session.metaDatasetId,
+    trinity_facebook_page_id: session.facebookPageId,
+    trinity_instagram_handle: session.instagramHandle,
+    trinity_meta_data_sharing: session.dataSharingPreference,
     search_term: summarizeAnalyticsEvent(event).searchQuery,
     currency: extractAnalyticsCurrency(event.data),
     value: extractAnalyticsValue(event.data),
@@ -1088,10 +1324,84 @@ function inferSourceFromReferrer(referrer) {
 function normalizeTrafficSource(value) {
   const source = cleanString(value).toLowerCase()
   if (!source) return ''
-  if (['ig', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
-  if (['fb', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
+  if (['ig', 'instagram', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
+  if (['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
+  if (['meta', 'facebook-instagram', 'fbig'].includes(source)) return 'meta'
   if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x'
   return source
+}
+
+function mergeIntegrationSnapshots(...snapshots) {
+  const merged = {}
+
+  for (const snapshot of snapshots) {
+    if (!snapshot || typeof snapshot !== 'object') continue
+    for (const [key, value] of Object.entries(snapshot)) {
+      if (value === undefined || value === null || value === '') continue
+      if (Array.isArray(value) && value.length === 0) continue
+      if (
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        Object.keys(value).length === 0
+      ) {
+        continue
+      }
+      merged[key] = value
+    }
+  }
+
+  return compactObject(merged)
+}
+
+function mergeTrackingIdMaps(...maps) {
+  const merged = {}
+
+  for (const map of maps) {
+    if (!map || typeof map !== 'object') continue
+
+    for (const [key, raw] of Object.entries(map)) {
+      if (!raw || typeof raw !== 'object') continue
+      const normalizedKey = cleanString(key)
+      const current = merged[normalizedKey] ?? {}
+      const next = normalizeTrackingIdMap({ [normalizedKey]: raw })[normalizedKey]
+      if (!normalizedKey || !next) continue
+
+      merged[normalizedKey] = compactObject({
+        first: current.first || next.first,
+        firstCapturedAt: current.firstCapturedAt || next.firstCapturedAt,
+        last: next.last || current.last,
+        lastCapturedAt: next.lastCapturedAt || current.lastCapturedAt,
+      })
+    }
+  }
+
+  return merged
+}
+
+function trackingIdsFromParams(params, timestamp) {
+  const ids = {}
+  const capturedAt = normalizeIsoDate(timestamp) || new Date().toISOString()
+
+  for (const [key, value] of Object.entries(params ?? {})) {
+    const cleaned = cleanString(value).slice(0, 256)
+    if (!cleaned) continue
+    ids[key] = {
+      first: cleaned,
+      firstCapturedAt: capturedAt,
+      last: cleaned,
+      lastCapturedAt: capturedAt,
+    }
+  }
+
+  return ids
+}
+
+function firstTrackingId(trackingIds, key) {
+  return cleanString(trackingIds?.[key]?.first)
+}
+
+function lastTrackingId(trackingIds, key) {
+  return cleanString(trackingIds?.[key]?.last)
 }
 
 function inferMediumFromReferrer(referrer) {
@@ -1126,6 +1436,25 @@ function normalizeGa4ClientId(value) {
 function toFiniteNumber(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number : null
+}
+
+function toNullableBoolean(value) {
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  return undefined
+}
+
+function compactObject(value) {
+  return Object.fromEntries(
+    Object.entries(value ?? {}).filter(([, item]) => {
+      if (item === undefined || item === null || item === '') return false
+      if (Array.isArray(item) && item.length === 0) return false
+      if (typeof item === 'object' && !Array.isArray(item) && Object.keys(item).length === 0) {
+        return false
+      }
+      return true
+    }),
+  )
 }
 
 function orderMetafield(ownerId, key, value) {

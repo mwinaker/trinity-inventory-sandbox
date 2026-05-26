@@ -196,6 +196,23 @@ function buildSessionRow(session) {
     lastEventAt: clean(session.lastEventAt),
     orderName: clean(session.orderName),
     customerEmailHash: clean(session.customerEmailHash),
+    metaDatasetId: clean(session.metaDatasetId || session.integration?.metaDatasetId),
+    metaBusinessId: clean(session.metaBusinessId || session.integration?.metaBusinessId),
+    facebookPageId: clean(session.facebookPageId || session.integration?.facebookPageId),
+    instagramHandle: clean(session.instagramHandle || session.integration?.instagramHandle),
+    dataSharingPreference: clean(
+      session.dataSharingPreference || session.integration?.dataSharingPreference,
+    ),
+    sourcePixel: clean(session.integration?.shopifyPixelName),
+    sourcePixelVersion: clean(session.integration?.shopifyPixelVersion),
+    lastShopifyClientId: clean(session.lastShopifyClientId),
+    firstMetaClickId: clean(session.firstMetaClickId),
+    lastMetaClickId: clean(session.lastMetaClickId),
+    lastMetaBrowserId: clean(session.lastMetaBrowserId),
+    lastMetaClickCookie: clean(session.lastMetaClickCookie),
+    trackingIds: compactJson(session.trackingIds),
+    browserCookies: compactJson(session.browserCookies),
+    consent: compactJson(session.consent),
     createdAt: clean(session.createdAt),
     updatedAt: clean(session.updatedAt || session.shopifyUpdatedAt),
     eventCount: events.length,
@@ -231,6 +248,12 @@ function buildSummary(rows) {
     addToCartSessions,
     checkoutStartedSessions,
     purchaseSessions,
+    metaClickSessions: rows.filter((row) => row.lastMetaClickId || row.firstMetaClickId).length,
+    metaBrowserIdSessions: rows.filter((row) => row.lastMetaBrowserId).length,
+    fbcCookieSessions: rows.filter((row) => row.lastMetaClickCookie).length,
+    facebookInstagramSourceSessions: rows.filter((row) =>
+      ['facebook', 'instagram', 'meta'].includes(row.lastSource),
+    ).length,
     addToCartRate: rate(addToCartSessions, totalSessions),
     checkoutStartRate: rate(checkoutStartedSessions, totalSessions),
     purchaseRate: rate(purchaseSessions, totalSessions),
@@ -266,6 +289,21 @@ function toCsv(rows) {
     'lastEventName',
     'lastEventAt',
     'orderName',
+    'metaDatasetId',
+    'metaBusinessId',
+    'facebookPageId',
+    'instagramHandle',
+    'dataSharingPreference',
+    'sourcePixel',
+    'sourcePixelVersion',
+    'lastShopifyClientId',
+    'firstMetaClickId',
+    'lastMetaClickId',
+    'lastMetaBrowserId',
+    'lastMetaClickCookie',
+    'trackingIds',
+    'browserCookies',
+    'consent',
     'createdAt',
     'updatedAt',
     'eventCount',
@@ -306,6 +344,15 @@ Window: ${context.since ? `${context.since.toISOString().slice(0, 10)} through $
 | Checkout starts | ${summary.checkoutStartedSessions} | ${formatPercent(summary.checkoutStartRate)} |
 | Purchases | ${summary.purchaseSessions} | ${formatPercent(summary.purchaseRate)} |
 | Checkout completion | ${summary.purchaseSessions} / ${summary.checkoutStartedSessions} | ${formatPercent(summary.checkoutCompletionRate)} |
+
+## Meta, Facebook, and Instagram Signals
+
+| Signal | Sessions |
+| --- | ---: |
+| Facebook/Instagram/Meta last-touch source | ${summary.facebookInstagramSourceSessions} |
+| Meta click ID captured \`fbclid\` | ${summary.metaClickSessions} |
+| Meta browser ID captured \`_fbp\` | ${summary.metaBrowserIdSessions} |
+| Meta click cookie captured \`_fbc\` | ${summary.fbcCookieSessions} |
 
 ## Top Last-Touch Sources
 
@@ -443,11 +490,21 @@ function clean(value) {
   return value === undefined || value === null ? '' : String(value).trim()
 }
 
+function compactJson(value) {
+  if (!value || typeof value !== 'object') return ''
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return ''
+  }
+}
+
 function normalizeTrafficSource(value) {
   const source = clean(value).toLowerCase()
   if (!source) return ''
-  if (['ig', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
-  if (['fb', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
+  if (['ig', 'instagram', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
+  if (['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
+  if (['meta', 'facebook-instagram', 'fbig'].includes(source)) return 'meta'
   if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x'
   return source
 }
