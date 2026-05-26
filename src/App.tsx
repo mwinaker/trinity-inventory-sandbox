@@ -963,6 +963,17 @@ function normalizeBillingContact(
   }
 }
 
+function normalizePlayerProfile(
+  record: Partial<PlayerProfile> & Pick<PlayerProfile, 'id'>,
+): PlayerProfile {
+  return {
+    id: record.id,
+    profileKind: record.profileKind === 'Trainer' ? 'Trainer' : 'Player',
+    playerName: record.playerName ?? '',
+    bats: Array.isArray(record.bats) ? record.bats : [],
+  }
+}
+
 function mergeOrderSpecs(primary?: OrderSpecs, fallback?: OrderSpecs): OrderSpecs {
   return {
     model: primary?.model || fallback?.model || '',
@@ -1307,21 +1318,26 @@ function normalizeContactSearchText(value: string) {
 }
 
 function getBillingContactOptionLabel(contact: BillingContact) {
-  return [contact.email, contact.phone, contact.relationship]
+  return [contact.company, contact.email, contact.phone, contact.relationship]
     .filter(Boolean)
     .join(' · ')
 }
 
 function getBillingContactSearchOptions(contact: BillingContact): BillingContactSearchOption[] {
   const label = getBillingContactOptionLabel(contact)
-  const value = [contact.name, contact.company].filter(Boolean).join(' · ')
+  const values = [
+    [contact.name, contact.company].filter(Boolean).join(' · '),
+    contact.email,
+    contact.phone,
+    contact.company,
+  ].filter(Boolean)
 
-  return [{
-    id: contact.id,
+  return Array.from(new Set(values)).map((value, index) => ({
+    id: `${contact.id}-${index}`,
     value,
     label,
     contactId: contact.id,
-  }]
+  }))
 }
 
 function getBillingContactForSearchValue(
@@ -1374,6 +1390,8 @@ type SalesOrderApiResponse = {
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
   orderJobs?: OrderJob[]
+  players?: PlayerProfile[]
+  billingContacts?: BillingContact[]
   draftOrder?: {
     id?: string
     name?: string
@@ -2612,7 +2630,8 @@ function InternalApp() {
   })
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     const stored = window.localStorage.getItem(playerStorageKey)
-    return stored ? (JSON.parse(stored) as PlayerProfile[]) : seedPlayers
+    const parsed = stored ? (JSON.parse(stored) as PlayerProfile[]) : seedPlayers
+    return parsed.map((player) => normalizePlayerProfile(player))
   })
   const [producedBats, setProducedBats] = useState<ProducedBatRecord[]>(() => {
     const stored = window.localStorage.getItem(producedBatStorageKey)
@@ -2779,7 +2798,9 @@ function InternalApp() {
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
         : []
-      const remotePlayers = Array.isArray(remote.players) ? remote.players : []
+      const remotePlayers = Array.isArray(remote.players)
+        ? remote.players.map((player) => normalizePlayerProfile(player))
+        : []
       const remoteProducedBats = Array.isArray(remote.producedBats)
         ? remote.producedBats.map((record) => normalizeProducedBatRecord(record))
         : []
@@ -3258,6 +3279,30 @@ function InternalApp() {
     )
   }
 
+  function mergeIncomingPlayers(incomingPlayers: PlayerProfile[]) {
+    if (incomingPlayers.length === 0) return
+
+    setPlayers((current) =>
+      mergeRecordsByKey(
+        current,
+        incomingPlayers.map((player) => normalizePlayerProfile(player)),
+        (player) => player.id || `${player.profileKind}:${player.playerName}`,
+      ),
+    )
+  }
+
+  function mergeIncomingBillingContacts(incomingContacts: BillingContact[]) {
+    if (incomingContacts.length === 0) return
+
+    setBillingContacts((current) =>
+      mergeRecordsByKey(
+        current,
+        incomingContacts.map((contact) => normalizeBillingContact(contact)),
+        (contact) => contact.id,
+      ).map((contact) => normalizeBillingContact(contact)),
+    )
+  }
+
   async function createSalesDraftOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const payerEmail = salesOrderDraft.billingDifferent
@@ -3316,20 +3361,12 @@ function InternalApp() {
         },
         body: JSON.stringify(salesOrderDraft),
       })
-      const payload = (await response.json()) as {
-        ok?: boolean
-        message?: string
-        invoiceSent?: boolean
-        emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
-        draftInvoiceReadyForReview?: boolean
-        orderJobs?: OrderJob[]
-        draftOrder?: { name?: string; invoiceUrl?: string }
-        order?: { name?: string }
-        internalNotificationRecipients?: string[]
-      }
+      const payload = (await response.json()) as SalesOrderApiResponse
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
 
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      mergeIncomingPlayers(payload.players ?? [])
+      mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
       const notificationNames = payload.internalNotificationRecipients?.length
         ? ' and Jeremy, Stefan, and Keith copied through Shopify'
@@ -3369,10 +3406,14 @@ function InternalApp() {
         message?: string
         importedOrders?: number
         orderJobs?: OrderJob[]
+        players?: PlayerProfile[]
+        billingContacts?: BillingContact[]
       }
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Order import failed')
 
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      mergeIncomingPlayers(payload.players ?? [])
+      mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setOrderActionMessage(
         `Imported ${payload.importedOrders ?? 0} recent Shopify order${
           payload.importedOrders === 1 ? '' : 's'
@@ -4691,7 +4732,9 @@ function InternalApp() {
                             key={contact.id}
                             onClick={() => applyBillingContact(contact)}
                           >
-                            {contact.name} · {contact.company}
+                            {[contact.name, contact.company].filter(Boolean).join(' · ') ||
+                              contact.email ||
+                              contact.phone}
                           </button>
                         ))}
                       </div>

@@ -440,17 +440,16 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     if (incomingJobs.length > 0) {
       await ensureDefinitions()
       const existingJobs = await listRecords(resourceConfigs.orderJobs)
-      await Promise.all(
-        incomingJobs.map((job) =>
-          upsertRecord(
-            resourceConfigs.orderJobs,
-            mergeOrderJob(
-              findMatchingOrderJob(existingJobs, job),
-              job,
-            ),
-          ),
+      const mergedJobs = incomingJobs.map((job) =>
+        mergeOrderJob(
+          findMatchingOrderJob(existingJobs, job),
+          job,
         ),
       )
+      await Promise.all([
+        Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+        rememberOrderJobContacts(mergedJobs),
+      ])
     }
 
     response.status(200).json({ ok: true, jobs: incomingJobs.length })
@@ -727,7 +726,10 @@ app.post('/api/sales-orders', async (request, response) => {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
       const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt)
-      await Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+      const [rememberedContacts] = await Promise.all([
+        rememberOrderJobContacts(jobs),
+        Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+      ])
       await syncOrderJobMetafields(jobs)
 
       response.json({
@@ -741,6 +743,8 @@ app.post('/api/sales-orders', async (request, response) => {
         internalNotificationRecipients: [],
         staffNotificationFlow: 'shopify_draft_order_review',
         orderJobs: jobs,
+        players: rememberedContacts.players,
+        billingContacts: rememberedContacts.billingContacts,
       })
       return
     }
@@ -758,7 +762,10 @@ app.post('/api/sales-orders', async (request, response) => {
     }
 
     const jobs = mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt)
-    await Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+    const [rememberedContacts] = await Promise.all([
+      rememberOrderJobContacts(jobs),
+      Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+    ])
     await syncOrderJobMetafields(jobs)
 
     response.json({
@@ -774,6 +781,8 @@ app.post('/api/sales-orders', async (request, response) => {
       internalNotificationRecipients: internalOrderNotificationEmails,
       staffNotificationFlow: 'shopify_new_order',
       orderJobs: jobs,
+      players: rememberedContacts.players,
+      billingContacts: rememberedContacts.billingContacts,
     })
   } catch (error) {
     response.status(500).json({
@@ -866,12 +875,17 @@ app.post('/api/orders/import', requireInternalAccess, async (request, response) 
     const jobs = orders.flatMap((order) => mapGraphQLOrderToJobs(order))
     const mergedJobs = jobs.map((job) => mergeOrderJob(findMatchingOrderJob(existingJobs, job), job))
 
-    await Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+    const [rememberedContacts] = await Promise.all([
+      rememberOrderJobContacts(mergedJobs),
+      Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+    ])
 
     response.json({
       ok: true,
       importedOrders: orders.length,
       orderJobs: mergedJobs,
+      players: rememberedContacts.players,
+      billingContacts: rememberedContacts.billingContacts,
     })
   } catch (error) {
     response.status(500).json({
@@ -3155,6 +3169,177 @@ function isZeroDollarSalesOrder(payload) {
   }
 
   return Math.abs(total) < 0.005
+}
+
+function normalizePersonKey(value) {
+  return cleanString(value).toLowerCase().replace(/\s+/g, ' ')
+}
+
+function normalizeEmailKey(value) {
+  return cleanString(value).toLowerCase()
+}
+
+function normalizePhoneKey(value) {
+  return cleanString(value).replace(/\D/g, '')
+}
+
+function createStablePeopleRecordId(prefix, ...parts) {
+  const slug = sanitizeHandle(parts.map((part) => cleanString(part)).filter(Boolean).join('-'))
+  return slug ? `${prefix}-${slug}` : createPlainId(prefix)
+}
+
+function buildRememberedPlayerFromJob(job) {
+  const playerName = cleanString(job?.playerName || job?.customerName)
+  if (!playerName) return null
+
+  return {
+    id: createStablePeopleRecordId('player', playerName),
+    profileKind: 'Player',
+    playerName,
+    bats: [],
+  }
+}
+
+function buildRememberedBillingContactFromJob(job) {
+  const billingDifferent = isTruthy(job?.billingDifferent)
+  const name = cleanString(job?.billingName || job?.customerName || job?.playerName || job?.billingEmail)
+  const email = cleanString(job?.billingEmail || job?.customerEmail || job?.playerEmail)
+  const phone = cleanString(job?.billingPhone)
+  const company = cleanString(job?.billingCompany)
+  const relationship =
+    cleanString(job?.billingRelationship) || (billingDifferent ? '' : 'Direct customer')
+
+  if (!name && !email && !phone && !company) return null
+
+  const playerName = cleanString(job?.playerName)
+  const orderName = cleanString(job?.shopifyOrderName || job?.shopifyDraftOrderName)
+  const orderSubmittedAt = cleanString(job?.orderSubmittedAt || job?.createdAt)
+  const notes = [
+    orderSubmittedAt ? `Last invoice/order: ${orderSubmittedAt}` : '',
+    orderName ? `Shopify order: ${orderName}` : '',
+    playerName && normalizePersonKey(playerName) !== normalizePersonKey(name)
+      ? `Player: ${playerName}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return {
+    id: createStablePeopleRecordId('billing-contact', email || phone || name, company),
+    name: name || email || phone,
+    email,
+    phone,
+    company,
+    relationship,
+    notes,
+  }
+}
+
+function getBillingContactDedupeKey(contact) {
+  const email = normalizeEmailKey(contact?.email)
+  if (email) return `email:${email}`
+
+  const phone = normalizePhoneKey(contact?.phone)
+  if (phone) return `phone:${phone}`
+
+  const name = normalizePersonKey(contact?.name)
+  const company = normalizePersonKey(contact?.company)
+  return [name, company].filter(Boolean).join('|')
+}
+
+function findExistingPlayerProfile(existingPlayers, incomingPlayer) {
+  const playerKey = normalizePersonKey(incomingPlayer?.playerName)
+  if (!playerKey) return null
+
+  return existingPlayers.find((player) => normalizePersonKey(player?.playerName) === playerKey) ?? null
+}
+
+function findExistingBillingContact(existingContacts, incomingContact) {
+  const incomingEmail = normalizeEmailKey(incomingContact?.email)
+  if (incomingEmail) {
+    const match = existingContacts.find((contact) => normalizeEmailKey(contact?.email) === incomingEmail)
+    if (match) return match
+  }
+
+  const incomingPhone = normalizePhoneKey(incomingContact?.phone)
+  if (incomingPhone) {
+    const match = existingContacts.find((contact) => normalizePhoneKey(contact?.phone) === incomingPhone)
+    if (match) return match
+  }
+
+  const incomingName = normalizePersonKey(incomingContact?.name)
+  const incomingCompany = normalizePersonKey(incomingContact?.company)
+  if (!incomingName && !incomingCompany) return null
+
+  return (
+    existingContacts.find((contact) => {
+      const contactName = normalizePersonKey(contact?.name)
+      const contactCompany = normalizePersonKey(contact?.company)
+      return contactName === incomingName && contactCompany === incomingCompany
+    }) ?? null
+  )
+}
+
+function mergeRememberedPlayer(existingPlayer, incomingPlayer) {
+  return {
+    id: cleanString(existingPlayer?.id) || incomingPlayer.id,
+    profileKind: cleanString(existingPlayer?.profileKind) || incomingPlayer.profileKind,
+    playerName: cleanString(existingPlayer?.playerName) || incomingPlayer.playerName,
+    bats: Array.isArray(existingPlayer?.bats) ? existingPlayer.bats : incomingPlayer.bats,
+  }
+}
+
+function mergeRememberedBillingContact(existingContact, incomingContact) {
+  return {
+    id: cleanString(existingContact?.id) || incomingContact.id,
+    name: cleanString(existingContact?.name) || incomingContact.name,
+    email: cleanString(existingContact?.email) || incomingContact.email,
+    phone: cleanString(existingContact?.phone) || incomingContact.phone,
+    company: cleanString(existingContact?.company) || incomingContact.company,
+    relationship: cleanString(existingContact?.relationship) || incomingContact.relationship,
+    notes: cleanString(existingContact?.notes) || incomingContact.notes,
+  }
+}
+
+async function rememberOrderJobContacts(jobs) {
+  const jobList = Array.isArray(jobs) ? jobs : []
+  const playerDrafts = mergeRecordsByKey(
+    [],
+    jobList.map((job) => buildRememberedPlayerFromJob(job)).filter(Boolean),
+    (player) => normalizePersonKey(player.playerName),
+  )
+  const billingContactDrafts = mergeRecordsByKey(
+    [],
+    jobList.map((job) => buildRememberedBillingContactFromJob(job)).filter(Boolean),
+    (contact) => getBillingContactDedupeKey(contact),
+  )
+
+  if (playerDrafts.length === 0 && billingContactDrafts.length === 0) {
+    return { players: [], billingContacts: [] }
+  }
+
+  const [existingPlayers, existingBillingContacts] = await Promise.all([
+    playerDrafts.length > 0 ? listRecords(resourceConfigs.players) : Promise.resolve([]),
+    billingContactDrafts.length > 0
+      ? listRecords(resourceConfigs.billingContacts)
+      : Promise.resolve([]),
+  ])
+
+  const players = playerDrafts.map((player) =>
+    mergeRememberedPlayer(findExistingPlayerProfile(existingPlayers, player), player),
+  )
+  const billingContacts = billingContactDrafts.map((contact) =>
+    mergeRememberedBillingContact(findExistingBillingContact(existingBillingContacts, contact), contact),
+  )
+
+  await Promise.all([
+    Promise.all(players.map((player) => upsertRecord(resourceConfigs.players, player))),
+    Promise.all(
+      billingContacts.map((contact) => upsertRecord(resourceConfigs.billingContacts, contact)),
+    ),
+  ])
+
+  return { players, billingContacts }
 }
 
 function formatSalesLineShopifyTitle(line, isProOrder) {
