@@ -314,7 +314,7 @@ async function readTrackingCookies() {
 
 async function safeCookieGet(name) {
   try {
-    if (!browser?.cookie?.get) return '';
+    if (typeof browser === 'undefined' || !browser.cookie || !browser.cookie.get) return '';
     return asString(await browser.cookie.get(name));
   } catch {
     return '';
@@ -350,14 +350,12 @@ function safeInitData() {
       myshopifyDomain: asString(shop.myshopifyDomain),
       storefrontUrl: asString(shop.storefrontUrl),
       countryCode: asString(shop.countryCode),
-      currencyCode: asString(shop.paymentSettings?.currencyCode),
+      currencyCode: asString(shop.paymentSettings && shop.paymentSettings.currencyCode),
     },
     hasCustomer: Boolean(initData.customer),
     hasCart: Boolean(initData.cart),
     hasCheckout: Boolean(initData.checkout),
-    productVariantCount: Array.isArray(initData.productVariants)
-      ? initData.productVariants.length
-      : 0,
+    productVariantCount: Array.isArray(initData.productVariants) ? initData.productVariants.length : 0,
   };
 }
 
@@ -398,9 +396,10 @@ function pathFromUrl(value) {
 }
 
 function safeContext(context) {
-  const documentContext = context?.document || {};
-  const navigatorContext = context?.navigator || {};
-  const windowContext = context?.window || {};
+  const safeContextSource = context || {};
+  const documentContext = safeContextSource.document || {};
+  const navigatorContext = safeContextSource.navigator || {};
+  const windowContext = safeContextSource.window || {};
   const location = documentContext.location || {};
   return {
     document: {
@@ -422,24 +421,29 @@ function safeContext(context) {
 function safeEventData(event) {
   const data = event.data || event.customData || {};
   if (event.name === 'checkout_completed' || event.name.startsWith('checkout_')) {
+    const checkout = data.checkout || {};
+    const order = checkout.order || {};
+    const shippingLine = checkout.shippingLine;
+    let safeShippingLine;
+    if (shippingLine) {
+      safeShippingLine = {
+        price: shippingLine.price,
+        title: shippingLine.title,
+      };
+    }
     return {
       checkout: {
-        token: data.checkout?.token,
+        token: checkout.token,
         order: {
-          id: data.checkout?.order?.id,
-          name: data.checkout?.order?.name || data.checkout?.order?.orderNumber,
+          id: order.id,
+          name: order.name || order.orderNumber,
         },
-        currencyCode: data.checkout?.currencyCode,
-        totalPrice: data.checkout?.totalPrice,
-        subtotalPrice: data.checkout?.subtotalPrice,
-        totalTax: data.checkout?.totalTax,
-        shippingLine: data.checkout?.shippingLine
-          ? {
-              price: data.checkout.shippingLine.price,
-              title: data.checkout.shippingLine.title,
-            }
-          : undefined,
-        lineItems: safeLineItems(data.checkout?.lineItems),
+        currencyCode: checkout.currencyCode,
+        totalPrice: checkout.totalPrice,
+        subtotalPrice: checkout.subtotalPrice,
+        totalTax: checkout.totalTax,
+        shippingLine: safeShippingLine,
+        lineItems: safeLineItems(checkout.lineItems),
       },
     };
   }
@@ -457,29 +461,32 @@ function safeEventData(event) {
   }
 
   if (event.name === 'cart_viewed') {
+    const cart = data.cart || {};
     return {
       cart: {
-        id: data.cart?.id,
-        cost: data.cart?.cost,
-        lines: safeLineItems(data.cart?.lines),
+        id: cart.id,
+        cost: cart.cost,
+        lines: safeLineItems(cart.lines),
       },
     };
   }
 
   if (event.name === 'collection_viewed') {
+    const collection = data.collection || {};
     return {
       collection: {
-        id: data.collection?.id,
-        title: data.collection?.title,
-        handle: data.collection?.handle,
+        id: collection.id,
+        title: collection.title,
+        handle: collection.handle,
       },
     };
   }
 
   if (event.name === 'search_submitted') {
+    const searchResult = data.searchResult || {};
     return {
       searchResult: {
-        query: data.searchResult?.query || data.query || '',
+        query: searchResult.query || data.query || '',
       },
     };
   }
@@ -511,20 +518,22 @@ function safeCartLine(line) {
 
 function safeVariant(variant) {
   if (!variant) return undefined;
+  let safeProduct;
+  if (variant.product) {
+    safeProduct = {
+      id: variant.product.id,
+      title: variant.product.title,
+      handle: variant.product.handle,
+      type: variant.product.type,
+      vendor: variant.product.vendor,
+    };
+  }
   return {
     id: variant.id,
     sku: variant.sku,
     title: variant.title,
     price: variant.price,
-    product: variant.product
-      ? {
-          id: variant.product.id,
-          title: variant.product.title,
-          handle: variant.product.handle,
-          type: variant.product.type,
-          vendor: variant.product.vendor,
-        }
-      : undefined,
+    product: safeProduct,
   };
 }
 
@@ -553,10 +562,10 @@ function inferDevice(userAgent) {
 }
 
 function makeId(prefix) {
-  const random =
-    typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let random = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    random = crypto.randomUUID();
+  }
   return `${prefix}-${random}`;
 }
 
