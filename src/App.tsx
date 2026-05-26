@@ -1472,22 +1472,20 @@ function getSalesOrderSuccessMessage(
 
 function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
-  const isDirectBillOrder = !draft.billingDifferent
-  const hasMissingDirectContact =
-    isDirectBillOrder &&
-    (!draft.playerPhone.trim() ||
-      (draft.requiresShipping &&
-        (!draft.shippingAddress1.trim() ||
-          !draft.shippingCity.trim() ||
-          !draft.shippingProvinceCode.trim() ||
-          !draft.shippingZip.trim() ||
-          !draft.shippingCountryCode.trim() ||
-          (draft.billingAddressDifferent &&
-            (!draft.billingAddress1.trim() ||
-              !draft.billingCity.trim() ||
-              !draft.billingProvinceCode.trim() ||
-              !draft.billingZip.trim() ||
-              !draft.billingCountryCode.trim())))))
+  const hasMissingDirectContact = !draft.billingDifferent && !draft.playerPhone.trim()
+  const hasMissingShippingAddress =
+    draft.requiresShipping &&
+    (!draft.shippingAddress1.trim() ||
+      !draft.shippingCity.trim() ||
+      !draft.shippingProvinceCode.trim() ||
+      !draft.shippingZip.trim() ||
+      !draft.shippingCountryCode.trim() ||
+      (draft.billingAddressDifferent &&
+        (!draft.billingAddress1.trim() ||
+          !draft.billingCity.trim() ||
+          !draft.billingProvinceCode.trim() ||
+          !draft.billingZip.trim() ||
+          !draft.billingCountryCode.trim())))
   const hasInvalidLine = draft.lines.some(
     (line) =>
       !line.title.trim() ||
@@ -1498,7 +1496,186 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
       line.quantity < 1,
   )
 
-  return !draft.playerName.trim() || !payerEmail.trim() || hasMissingDirectContact || hasInvalidLine
+  return (
+    !draft.playerName.trim() ||
+    !payerEmail.trim() ||
+    hasMissingDirectContact ||
+    hasMissingShippingAddress ||
+    hasInvalidLine
+  )
+}
+
+type SalesOrderDraftFieldUpdater = <K extends keyof SalesOrderDraft>(
+  key: K,
+  value: SalesOrderDraft[K],
+) => void
+
+function SalesOrderShippingAddressFields({
+  draft,
+  updateField,
+}: {
+  draft: SalesOrderDraft
+  updateField: SalesOrderDraftFieldUpdater
+}) {
+  return (
+    <div className="billing-panel">
+      <div className="form-row">
+        <label>
+          Player phone
+          <input
+            type="tel"
+            value={draft.playerPhone}
+            placeholder="Example: (321) 652-1800"
+            onChange={(event) => updateField('playerPhone', event.target.value)}
+          />
+        </label>
+        {draft.requiresShipping ? (
+          <label>
+            Shipping country code
+            <input
+              value={draft.shippingCountryCode}
+              placeholder="US"
+              onChange={(event) =>
+                updateField('shippingCountryCode', event.target.value.toUpperCase())
+              }
+            />
+          </label>
+        ) : null}
+      </div>
+
+      {draft.requiresShipping ? (
+        <>
+          <div className="form-row">
+            <label>
+              Shipping address
+              <input
+                value={draft.shippingAddress1}
+                placeholder="Street address"
+                onChange={(event) => updateField('shippingAddress1', event.target.value)}
+              />
+            </label>
+            <label>
+              Apartment, suite, etc.
+              <input
+                value={draft.shippingAddress2}
+                placeholder="Optional"
+                onChange={(event) => updateField('shippingAddress2', event.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              Shipping city
+              <input
+                value={draft.shippingCity}
+                placeholder="City"
+                onChange={(event) => updateField('shippingCity', event.target.value)}
+              />
+            </label>
+            <label>
+              Shipping state
+              <input
+                value={draft.shippingProvinceCode}
+                placeholder="Example: CO"
+                onChange={(event) =>
+                  updateField('shippingProvinceCode', event.target.value.toUpperCase())
+                }
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              Shipping ZIP
+              <input
+                value={draft.shippingZip}
+                placeholder="ZIP code"
+                onChange={(event) => updateField('shippingZip', event.target.value)}
+              />
+            </label>
+          </div>
+
+          <label className="checkbox-row billing-toggle">
+            <input
+              type="checkbox"
+              checked={draft.billingAddressDifferent}
+              onChange={(event) => updateField('billingAddressDifferent', event.target.checked)}
+            />
+            <span>Billing address is different from shipping address</span>
+          </label>
+
+          {draft.billingAddressDifferent ? (
+            <>
+              <div className="form-row">
+                <label>
+                  Billing country code
+                  <input
+                    value={draft.billingCountryCode}
+                    placeholder="US"
+                    onChange={(event) =>
+                      updateField('billingCountryCode', event.target.value.toUpperCase())
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Billing address
+                  <input
+                    value={draft.billingAddress1}
+                    placeholder="Street address"
+                    onChange={(event) => updateField('billingAddress1', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Apartment, suite, etc.
+                  <input
+                    value={draft.billingAddress2}
+                    placeholder="Optional"
+                    onChange={(event) => updateField('billingAddress2', event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Billing city
+                  <input
+                    value={draft.billingCity}
+                    placeholder="City"
+                    onChange={(event) => updateField('billingCity', event.target.value)}
+                  />
+                </label>
+                <label>
+                  Billing state
+                  <input
+                    value={draft.billingProvinceCode}
+                    placeholder="Example: CO"
+                    onChange={(event) =>
+                      updateField('billingProvinceCode', event.target.value.toUpperCase())
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Billing ZIP
+                  <input
+                    value={draft.billingZip}
+                    placeholder="ZIP code"
+                    onChange={(event) => updateField('billingZip', event.target.value)}
+                  />
+                </label>
+              </div>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  )
 }
 
 function findShopifyCatalogProductByName(
@@ -1697,7 +1874,7 @@ function PublicSalesOrderForm() {
 
     if (hasInvalidSalesOrderDraft(salesOrderDraft)) {
       setMessage(
-        'Add the player, payer email, direct-bill contact/address details, bat model, unit price, and complete each line before submitting.',
+        'Add the player, payer email, shipping address, bat model, unit price, and complete each line before submitting.',
       )
       return
     }
@@ -1941,23 +2118,6 @@ function PublicSalesOrderForm() {
                 setSalesOrderDraft((current) => ({
                   ...current,
                   billingDifferent,
-                  playerEmail: billingDifferent ? '' : current.playerEmail,
-                  playerPhone: billingDifferent ? '' : current.playerPhone,
-                  shippingAddress1: billingDifferent ? '' : current.shippingAddress1,
-                  shippingAddress2: billingDifferent ? '' : current.shippingAddress2,
-                  shippingCity: billingDifferent ? '' : current.shippingCity,
-                  shippingProvinceCode: billingDifferent ? '' : current.shippingProvinceCode,
-                  shippingZip: billingDifferent ? '' : current.shippingZip,
-                  shippingCountryCode: billingDifferent ? 'US' : current.shippingCountryCode,
-                  billingAddressDifferent: billingDifferent
-                    ? false
-                    : current.billingAddressDifferent,
-                  billingAddress1: billingDifferent ? '' : current.billingAddress1,
-                  billingAddress2: billingDifferent ? '' : current.billingAddress2,
-                  billingCity: billingDifferent ? '' : current.billingCity,
-                  billingProvinceCode: billingDifferent ? '' : current.billingProvinceCode,
-                  billingZip: billingDifferent ? '' : current.billingZip,
-                  billingCountryCode: billingDifferent ? 'US' : current.billingCountryCode,
                 }))
               }}
             />
@@ -2090,187 +2250,12 @@ function PublicSalesOrderForm() {
                 />
               </label>
             </div>
-          ) : (
-            <div className="billing-panel">
-              <div className="form-row">
-                <label>
-                  Player phone
-                  <input
-                    type="tel"
-                    value={salesOrderDraft.playerPhone}
-                    placeholder="Example: (321) 652-1800"
-                    onChange={(event) => updateSalesDraftField('playerPhone', event.target.value)}
-                  />
-                </label>
-                <label>
-                  Shipping country code
-                  <input
-                    value={salesOrderDraft.shippingCountryCode}
-                    placeholder="US"
-                    onChange={(event) =>
-                      updateSalesDraftField(
-                        'shippingCountryCode',
-                        event.target.value.toUpperCase(),
-                      )
-                    }
-                  />
-                </label>
-              </div>
+          ) : null}
 
-              {salesOrderDraft.requiresShipping ? (
-                <>
-                  <div className="form-row">
-                    <label>
-                      Shipping address
-                      <input
-                        value={salesOrderDraft.shippingAddress1}
-                        placeholder="Street address"
-                        onChange={(event) =>
-                          updateSalesDraftField('shippingAddress1', event.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      Apartment, suite, etc.
-                      <input
-                        value={salesOrderDraft.shippingAddress2}
-                        placeholder="Optional"
-                        onChange={(event) =>
-                          updateSalesDraftField('shippingAddress2', event.target.value)
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Shipping city
-                      <input
-                        value={salesOrderDraft.shippingCity}
-                        placeholder="City"
-                        onChange={(event) =>
-                          updateSalesDraftField('shippingCity', event.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      Shipping state
-                      <input
-                        value={salesOrderDraft.shippingProvinceCode}
-                        placeholder="Example: CO"
-                        onChange={(event) =>
-                          updateSalesDraftField(
-                            'shippingProvinceCode',
-                            event.target.value.toUpperCase(),
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <label>
-                    Shipping ZIP
-                    <input
-                      value={salesOrderDraft.shippingZip}
-                      placeholder="ZIP code"
-                      onChange={(event) => updateSalesDraftField('shippingZip', event.target.value)}
-                    />
-                  </label>
-
-                  <label className="checkbox-row billing-toggle">
-                    <input
-                      type="checkbox"
-                      checked={salesOrderDraft.billingAddressDifferent}
-                      onChange={(event) =>
-                        updateSalesDraftField('billingAddressDifferent', event.target.checked)
-                      }
-                    />
-                    <span>Billing address is different from shipping address</span>
-                  </label>
-
-                  {salesOrderDraft.billingAddressDifferent ? (
-                    <>
-                      <div className="form-row">
-                        <label>
-                          Billing country code
-                          <input
-                            value={salesOrderDraft.billingCountryCode}
-                            placeholder="US"
-                            onChange={(event) =>
-                              updateSalesDraftField(
-                                'billingCountryCode',
-                                event.target.value.toUpperCase(),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      <div className="form-row">
-                        <label>
-                          Billing address
-                          <input
-                            value={salesOrderDraft.billingAddress1}
-                            placeholder="Street address"
-                            onChange={(event) =>
-                              updateSalesDraftField('billingAddress1', event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Apartment, suite, etc.
-                          <input
-                            value={salesOrderDraft.billingAddress2}
-                            placeholder="Optional"
-                            onChange={(event) =>
-                              updateSalesDraftField('billingAddress2', event.target.value)
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      <div className="form-row">
-                        <label>
-                          Billing city
-                          <input
-                            value={salesOrderDraft.billingCity}
-                            placeholder="City"
-                            onChange={(event) =>
-                              updateSalesDraftField('billingCity', event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Billing state
-                          <input
-                            value={salesOrderDraft.billingProvinceCode}
-                            placeholder="Example: CO"
-                            onChange={(event) =>
-                              updateSalesDraftField(
-                                'billingProvinceCode',
-                                event.target.value.toUpperCase(),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      <label>
-                        Billing ZIP
-                        <input
-                          value={salesOrderDraft.billingZip}
-                          placeholder="ZIP code"
-                          onChange={(event) =>
-                            updateSalesDraftField('billingZip', event.target.value)
-                          }
-                        />
-                      </label>
-                    </>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          )}
+          <SalesOrderShippingAddressFields
+            draft={salesOrderDraft}
+            updateField={updateSalesDraftField}
+          />
 
           <label>
             Sales rep
@@ -3278,23 +3263,22 @@ function InternalApp() {
     const payerEmail = salesOrderDraft.billingDifferent
       ? salesOrderDraft.billingEmail
       : salesOrderDraft.playerEmail
-    const isDirectBillOrder = !salesOrderDraft.billingDifferent
     const requiresShipping = salesOrderDraft.requiresShipping
     const hasMissingDirectContact =
-      isDirectBillOrder &&
-      (!salesOrderDraft.playerPhone.trim() ||
-        (requiresShipping &&
-          (!salesOrderDraft.shippingAddress1.trim() ||
-            !salesOrderDraft.shippingCity.trim() ||
-            !salesOrderDraft.shippingProvinceCode.trim() ||
-            !salesOrderDraft.shippingZip.trim() ||
-            !salesOrderDraft.shippingCountryCode.trim() ||
-            (salesOrderDraft.billingAddressDifferent &&
-              (!salesOrderDraft.billingAddress1.trim() ||
-                !salesOrderDraft.billingCity.trim() ||
-                !salesOrderDraft.billingProvinceCode.trim() ||
-                !salesOrderDraft.billingZip.trim() ||
-                !salesOrderDraft.billingCountryCode.trim())))))
+      !salesOrderDraft.billingDifferent && !salesOrderDraft.playerPhone.trim()
+    const hasMissingShippingAddress =
+      requiresShipping &&
+      (!salesOrderDraft.shippingAddress1.trim() ||
+        !salesOrderDraft.shippingCity.trim() ||
+        !salesOrderDraft.shippingProvinceCode.trim() ||
+        !salesOrderDraft.shippingZip.trim() ||
+        !salesOrderDraft.shippingCountryCode.trim() ||
+        (salesOrderDraft.billingAddressDifferent &&
+          (!salesOrderDraft.billingAddress1.trim() ||
+            !salesOrderDraft.billingCity.trim() ||
+            !salesOrderDraft.billingProvinceCode.trim() ||
+            !salesOrderDraft.billingZip.trim() ||
+            !salesOrderDraft.billingCountryCode.trim())))
     const hasInvalidLine = salesOrderDraft.lines.some(
       (line) =>
         !line.title.trim() ||
@@ -3309,10 +3293,11 @@ function InternalApp() {
       !salesOrderDraft.playerName.trim() ||
       !payerEmail.trim() ||
       hasMissingDirectContact ||
+      hasMissingShippingAddress ||
       hasInvalidLine
     ) {
       setOrderActionMessage(
-        'Add the player, payer email, direct-bill contact/address details, bat model, unit price, and complete each line before creating the order.',
+        'Add the player, payer email, shipping address, bat model, unit price, and complete each line before creating the order.',
       )
       return
     }
@@ -4553,23 +4538,6 @@ function InternalApp() {
                       setSalesOrderDraft((current) => ({
                         ...current,
                         billingDifferent,
-                        playerEmail: billingDifferent ? '' : current.playerEmail,
-                        playerPhone: billingDifferent ? '' : current.playerPhone,
-                        shippingAddress1: billingDifferent ? '' : current.shippingAddress1,
-                        shippingAddress2: billingDifferent ? '' : current.shippingAddress2,
-                        shippingCity: billingDifferent ? '' : current.shippingCity,
-                        shippingProvinceCode: billingDifferent ? '' : current.shippingProvinceCode,
-                        shippingZip: billingDifferent ? '' : current.shippingZip,
-                        shippingCountryCode: billingDifferent ? 'US' : current.shippingCountryCode,
-                        billingAddressDifferent: billingDifferent
-                          ? false
-                          : current.billingAddressDifferent,
-                        billingAddress1: billingDifferent ? '' : current.billingAddress1,
-                        billingAddress2: billingDifferent ? '' : current.billingAddress2,
-                        billingCity: billingDifferent ? '' : current.billingCity,
-                        billingProvinceCode: billingDifferent ? '' : current.billingProvinceCode,
-                        billingZip: billingDifferent ? '' : current.billingZip,
-                        billingCountryCode: billingDifferent ? 'US' : current.billingCountryCode,
                       }))
                     }}
                   />
@@ -4729,191 +4697,12 @@ function InternalApp() {
                       </div>
                     </div>
                   </div>
-                ) : (
-                  <div className="billing-panel">
-                    <div className="form-row">
-                      <label>
-                        Player phone
-                        <input
-                          type="tel"
-                          value={salesOrderDraft.playerPhone}
-                          placeholder="Example: (321) 652-1800"
-                          onChange={(event) =>
-                            updateSalesDraftField('playerPhone', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Shipping country code
-                        <input
-                          value={salesOrderDraft.shippingCountryCode}
-                          placeholder="US"
-                          onChange={(event) =>
-                            updateSalesDraftField(
-                              'shippingCountryCode',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
+                ) : null}
 
-                    <div className="form-row">
-                      <label>
-                        Shipping address
-                        <input
-                          value={salesOrderDraft.shippingAddress1}
-                          placeholder="Street address"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingAddress1', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Apartment, suite, etc.
-                        <input
-                          value={salesOrderDraft.shippingAddress2}
-                          placeholder="Optional"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingAddress2', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Shipping city
-                        <input
-                          value={salesOrderDraft.shippingCity}
-                          placeholder="City"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingCity', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Shipping state
-                        <input
-                          value={salesOrderDraft.shippingProvinceCode}
-                          placeholder="Example: CO"
-                          onChange={(event) =>
-                            updateSalesDraftField(
-                              'shippingProvinceCode',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Shipping ZIP
-                        <input
-                          value={salesOrderDraft.shippingZip}
-                          placeholder="ZIP code"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingZip', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <label className="checkbox-row billing-toggle">
-                      <input
-                        type="checkbox"
-                        checked={salesOrderDraft.billingAddressDifferent}
-                        onChange={(event) =>
-                          updateSalesDraftField('billingAddressDifferent', event.target.checked)
-                        }
-                      />
-                      <span>Billing address is different from shipping address</span>
-                    </label>
-
-                    {salesOrderDraft.billingAddressDifferent ? (
-                      <>
-                        <div className="form-row">
-                          <label>
-                            Billing country code
-                            <input
-                              value={salesOrderDraft.billingCountryCode}
-                              placeholder="US"
-                              onChange={(event) =>
-                                updateSalesDraftField(
-                                  'billingCountryCode',
-                                  event.target.value.toUpperCase(),
-                                )
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Billing address
-                            <input
-                              value={salesOrderDraft.billingAddress1}
-                              placeholder="Street address"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingAddress1', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            Apartment, suite, etc.
-                            <input
-                              value={salesOrderDraft.billingAddress2}
-                              placeholder="Optional"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingAddress2', event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Billing city
-                            <input
-                              value={salesOrderDraft.billingCity}
-                              placeholder="City"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingCity', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            Billing state
-                            <input
-                              value={salesOrderDraft.billingProvinceCode}
-                              placeholder="Example: CO"
-                              onChange={(event) =>
-                                updateSalesDraftField(
-                                  'billingProvinceCode',
-                                  event.target.value.toUpperCase(),
-                                )
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Billing ZIP
-                            <input
-                              value={salesOrderDraft.billingZip}
-                              placeholder="ZIP code"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingZip', event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                )}
+                <SalesOrderShippingAddressFields
+                  draft={salesOrderDraft}
+                  updateField={updateSalesDraftField}
+                />
 
                 <label>
                   Sales rep

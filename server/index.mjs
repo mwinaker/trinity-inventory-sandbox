@@ -3010,21 +3010,16 @@ function resolvePayer(payload) {
 }
 
 function buildDirectOrderAddresses(payload) {
-  if (isTruthy(payload.billingDifferent)) {
-    return {
-      shippingAddress: null,
-      billingAddress: null,
-      billingAddressDifferent: false,
-    }
-  }
-
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const shippingAddress = buildMailingAddressInput(payload, 'shipping', playerName, playerPhone)
+  const billingDifferent = isTruthy(payload.billingDifferent)
   const billingAddressDifferent = isTruthy(payload.billingAddressDifferent)
   const billingAddress = billingAddressDifferent
     ? buildMailingAddressInput(payload, 'billing', playerName, playerPhone)
-    : shippingAddress
+    : billingDifferent
+      ? null
+      : shippingAddress
 
   return {
     shippingAddress,
@@ -3091,27 +3086,27 @@ function validateSalesOrderPayload(payload) {
   if (!payer.email) return 'Payer email is required.'
   if (!isPlausibleEmail(payer.email)) return 'Payer email must be a valid email address.'
 
-  if (!billingDifferent) {
-    if (!payer.phone) return 'Player phone is required for direct-bill orders.'
+  if (!billingDifferent && !payer.phone) {
+    return 'Player phone is required for direct-bill orders.'
+  }
 
-    if (requiresShipping) {
-      const missingShippingAddress =
-        !cleanString(payload?.shippingAddress1) ||
-        !cleanString(payload?.shippingCity) ||
-        !cleanString(payload?.shippingProvinceCode) ||
-        !cleanString(payload?.shippingZip) ||
-        !cleanString(payload?.shippingCountryCode)
-      if (missingShippingAddress) return 'Shipping address is required for direct-bill orders.'
+  if (requiresShipping) {
+    const missingShippingAddress =
+      !cleanString(payload?.shippingAddress1) ||
+      !cleanString(payload?.shippingCity) ||
+      !cleanString(payload?.shippingProvinceCode) ||
+      !cleanString(payload?.shippingZip) ||
+      !cleanString(payload?.shippingCountryCode)
+    if (missingShippingAddress) return 'Shipping address is required for shipped orders.'
 
-      if (isTruthy(payload?.billingAddressDifferent)) {
-        const missingBillingAddress =
-          !cleanString(payload?.billingAddress1) ||
-          !cleanString(payload?.billingCity) ||
-          !cleanString(payload?.billingProvinceCode) ||
-          !cleanString(payload?.billingZip) ||
-          !cleanString(payload?.billingCountryCode)
-        if (missingBillingAddress) return 'Billing address is required when it differs from shipping.'
-      }
+    if (isTruthy(payload?.billingAddressDifferent)) {
+      const missingBillingAddress =
+        !cleanString(payload?.billingAddress1) ||
+        !cleanString(payload?.billingCity) ||
+        !cleanString(payload?.billingProvinceCode) ||
+        !cleanString(payload?.billingZip) ||
+        !cleanString(payload?.billingCountryCode)
+      if (missingBillingAddress) return 'Billing address is required when it differs from shipping.'
     }
   }
 
@@ -3218,6 +3213,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const salesRep = cleanString(payload.salesRep)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
+  const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
   const shippingOption = resolveShippingOption(payload, requiresShipping)
@@ -3249,7 +3245,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
-    !billingDifferent && payer.phone ? `Player phone: ${payer.phone}` : '',
+    playerPhone ? `Player phone: ${playerPhone}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
     billingAddressDifferent ? 'Billing address differs from shipping address' : '',
     billingAddressDifferent && formattedBillingAddress
@@ -3306,7 +3302,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_sales_rep: salesRep,
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
-      trinity_player_phone: !billingDifferent ? payer.phone : '',
+      trinity_player_phone: playerPhone,
       trinity_shipping_address: formattedShippingAddress,
       trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
       trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
@@ -3362,6 +3358,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const salesRep = cleanString(payload.salesRep)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
+  const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
   const shippingOption = resolveShippingOption(payload, requiresShipping)
@@ -3390,7 +3387,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
-    !billingDifferent && payer.phone ? `Player phone: ${payer.phone}` : '',
+    playerPhone ? `Player phone: ${playerPhone}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
     billingAddressDifferent ? 'Billing address differs from shipping address' : '',
     billingAddressDifferent && formattedBillingAddress
@@ -3440,7 +3437,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_sales_rep: salesRep,
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
-      trinity_player_phone: !billingDifferent ? payer.phone : '',
+      trinity_player_phone: playerPhone,
       trinity_shipping_address: formattedShippingAddress,
       trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
       trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
