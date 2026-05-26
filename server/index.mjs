@@ -66,6 +66,14 @@ const draftOrderShippingOptions = {
       process.env.TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT ?? '75.00',
     ),
   },
+  comped: {
+    key: 'comped',
+    label: 'Comped',
+    title: cleanString(process.env.TRINITY_DRAFT_SHIPPING_COMPED_TITLE) || 'Comped Shipping',
+    amount: normalizeNonNegativeMoneyAmount(
+      process.env.TRINITY_DRAFT_SHIPPING_COMPED_AMOUNT ?? '0.00',
+    ),
+  },
 }
 const rushProductionSurchargeTitle =
   cleanString(process.env.TRINITY_RUSH_PRODUCTION_TITLE) || 'Rush Production Surcharge'
@@ -4090,6 +4098,12 @@ function requiresShippingForOrder(payload = {}) {
 function normalizePositiveMoneyAmount(value) {
   const amount = Number(cleanString(value))
   if (!Number.isFinite(amount) || amount <= 0) return ''
+  return amount.toFixed(2)
+}
+
+function normalizeNonNegativeMoneyAmount(value) {
+  const amount = Number(cleanString(value))
+  if (!Number.isFinite(amount) || amount < 0) return ''
   return amount.toFixed(2)
 }
 

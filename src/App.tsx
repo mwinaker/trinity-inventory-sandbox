@@ -241,7 +241,7 @@ type SalesOrderLineDraft = {
   notes: string
 }
 
-type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast'
+type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast' | 'comped'
 type ProductionTimelineOption = 'normal' | 'rush'
 
 type SalesOrderDraft = {
@@ -351,6 +351,7 @@ const shippingSpeedOptions: Array<{ value: ShippingSpeedOption; label: string }>
   { value: 'standard', label: 'Standard' },
   { value: 'fast', label: 'Fast' },
   { value: 'really_fast', label: 'Really fast' },
+  { value: 'comped', label: 'Comped' },
 ]
 const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label: string }> = [
   { value: 'normal', label: 'Normal' },
@@ -1433,6 +1434,32 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   return !draft.playerName.trim() || !payerEmail.trim() || hasMissingDirectContact || hasInvalidLine
 }
 
+function findShopifyCatalogProductByName(
+  catalog: ShopifyCatalogProduct[],
+  typedModelName: string,
+) {
+  const normalizedModelName = typedModelName.trim().toLowerCase()
+  if (!normalizedModelName) return undefined
+
+  return catalog.find((product) => product.name.trim().toLowerCase() === normalizedModelName)
+}
+
+function getTypedBatModelPatch(
+  catalog: ShopifyCatalogProduct[],
+  typedModelName: string,
+  currentLine: SalesOrderLineDraft,
+): Partial<SalesOrderLineDraft> {
+  const product = findShopifyCatalogProductByName(catalog, typedModelName)
+  const firstVariant = product?.variants[0]
+
+  return {
+    productId: product?.id ?? '',
+    variantId: firstVariant?.id ?? '',
+    title: product?.name ?? typedModelName,
+    unitPrice: firstVariant?.price ?? currentLine.unitPrice,
+  }
+}
+
 function cloneSalesOrderDraft(draft: SalesOrderDraft): SalesOrderDraft {
   return {
     ...draft,
@@ -1476,7 +1503,7 @@ function getDraftOrderTotal(review: PublicDraftInvoiceReview) {
 
 function getDraftOrderShippingLine(review: PublicDraftInvoiceReview) {
   const amount = Number(review.draftOrder.shippingLine?.originalPriceSet?.shopMoney?.amount)
-  if (!Number.isFinite(amount) || amount <= 0) return null
+  if (!review.draftOrder.shippingLine?.title || !Number.isFinite(amount) || amount < 0) return null
 
   return {
     title: review.draftOrder.shippingLine?.title || 'Shipping',
@@ -2234,15 +2261,9 @@ function PublicSalesOrderForm() {
                           return
                         }
 
-                        const matchedProduct = shopifyCatalog.find(
-                          (item) => item.name.toLowerCase() === line.title.trim().toLowerCase(),
-                        )
                         updateSalesLine(line.id, {
                           isProOrder,
-                          productId: matchedProduct?.id ?? '',
-                          variantId: matchedProduct?.variants[0]?.id ?? '',
-                          title: matchedProduct?.name ?? line.title,
-                          unitPrice: matchedProduct?.variants[0]?.price ?? line.unitPrice,
+                          ...getTypedBatModelPatch(shopifyCatalog, line.title, line),
                         })
                       }}
                     />
@@ -2251,12 +2272,14 @@ function PublicSalesOrderForm() {
 
                   <div className={`form-row ${line.isProOrder ? 'single-field-row' : ''}`}>
                     <label>
-                      {line.isProOrder ? 'Bat model' : 'Shopify product / bat model'}
+                      Bat model
                       <input
                         list={line.isProOrder ? undefined : 'public-shopify-bat-products'}
                         value={productInputValue}
                         placeholder={
-                          line.isProOrder ? 'Example: T141 pro custom' : 'Start typing a bat model'
+                          line.isProOrder
+                            ? 'Example: T141 pro custom'
+                            : 'Type a model or choose a Shopify product'
                         }
                         onChange={(event) => {
                           const typedProduct = event.target.value
@@ -2269,15 +2292,10 @@ function PublicSalesOrderForm() {
                             return
                           }
 
-                          const product = shopifyCatalog.find(
-                            (item) => item.name.toLowerCase() === typedProduct.trim().toLowerCase(),
+                          updateSalesLine(
+                            line.id,
+                            getTypedBatModelPatch(shopifyCatalog, typedProduct, line),
                           )
-                          updateSalesLine(line.id, {
-                            productId: product?.id ?? '',
-                            variantId: product?.variants[0]?.id ?? '',
-                            title: product?.name ?? typedProduct,
-                            unitPrice: product?.variants[0]?.price ?? line.unitPrice,
-                          })
                         }}
                       />
                     </label>
@@ -2298,7 +2316,11 @@ function PublicSalesOrderForm() {
                           }}
                         >
                           <option value="">
-                            {lineProduct ? 'Select variant' : 'Choose a product first'}
+                            {lineProduct
+                              ? 'Select variant'
+                              : line.title.trim()
+                                ? 'Manual model, no Shopify variant'
+                                : 'Optional Shopify variant'}
                           </option>
                           {lineProduct?.variants.map((variant) => (
                             <option key={variant.id} value={variant.id}>
@@ -4862,16 +4884,9 @@ function InternalApp() {
                                 return
                               }
 
-                              const matchedProduct = shopifyCatalog.find(
-                                (item) =>
-                                  item.name.toLowerCase() === line.title.trim().toLowerCase(),
-                              )
                               updateSalesLine(line.id, {
                                 isProOrder,
-                                productId: matchedProduct?.id ?? '',
-                                variantId: matchedProduct?.variants[0]?.id ?? '',
-                                title: matchedProduct?.name ?? line.title,
-                                unitPrice: matchedProduct?.variants[0]?.price ?? line.unitPrice,
+                                ...getTypedBatModelPatch(shopifyCatalog, line.title, line),
                               })
                             }}
                           />
@@ -4880,14 +4895,14 @@ function InternalApp() {
 
                         <div className={`form-row ${line.isProOrder ? 'single-field-row' : ''}`}>
                           <label>
-                            {line.isProOrder ? 'Bat model' : 'Shopify product / bat model'}
+                            Bat model
                             <input
                               list={line.isProOrder ? undefined : 'shopify-bat-products'}
                               value={productInputValue}
                               placeholder={
                                 line.isProOrder
                                   ? 'Example: T141 pro custom'
-                                  : 'Start typing a bat model'
+                                  : 'Type a model or choose a Shopify product'
                               }
                               onChange={(event) => {
                                 const typedProduct = event.target.value
@@ -4900,16 +4915,10 @@ function InternalApp() {
                                   return
                                 }
 
-                                const product = shopifyCatalog.find(
-                                  (item) =>
-                                    item.name.toLowerCase() === typedProduct.trim().toLowerCase(),
+                                updateSalesLine(
+                                  line.id,
+                                  getTypedBatModelPatch(shopifyCatalog, typedProduct, line),
                                 )
-                                updateSalesLine(line.id, {
-                                  productId: product?.id ?? '',
-                                  variantId: product?.variants[0]?.id ?? '',
-                                  title: product?.name ?? typedProduct,
-                                  unitPrice: product?.variants[0]?.price ?? line.unitPrice,
-                                })
                               }}
                             />
                           </label>
@@ -4930,7 +4939,11 @@ function InternalApp() {
                                 }}
                               >
                                 <option value="">
-                                  {lineProduct ? 'Select variant' : 'Choose a product first'}
+                                  {lineProduct
+                                    ? 'Select variant'
+                                    : line.title.trim()
+                                      ? 'Manual model, no Shopify variant'
+                                      : 'Optional Shopify variant'}
                                 </option>
                                 {lineProduct?.variants.map((variant) => (
                                   <option key={variant.id} value={variant.id}>
