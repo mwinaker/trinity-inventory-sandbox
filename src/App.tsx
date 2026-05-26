@@ -2964,7 +2964,7 @@ function InternalApp() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(patch),
+        body: JSON.stringify({ ...patch, stateSnapshot: snapshot }),
       })
       const payload = (await response.json().catch(() => ({}))) as {
         ok?: boolean

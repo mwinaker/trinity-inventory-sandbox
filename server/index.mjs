@@ -90,9 +90,13 @@ const internalSessionSecret =
 const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
-const metaobjectsPageSize = 25
+const metaobjectsPageSize = readPositiveIntegerEnv('TRINITY_METAOBJECTS_PAGE_SIZE', 50)
 const stateCacheTtlMs = 60 * 60 * 1000
+const stateCacheStaleMaxAgeMs = 24 * 60 * 60 * 1000
+const stateCacheFilePath =
+  process.env.TRINITY_STATE_CACHE_PATH ?? path.join('/tmp', 'trinity-inventory-state-cache.json')
 const catalogCacheTtlMs = 10 * 60 * 1000
+const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -462,7 +466,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
   }
 })
 
-app.use(express.json({ limit: '2mb' }))
+app.use(express.json({ limit: '5mb' }))
 app.use(establishInternalSession)
 
 app.options('/api/analytics/events', (request, response) => {
@@ -578,9 +582,10 @@ app.get('/api/state', requireInternalAccess, async (_request, response) => {
 
     response.json(await getSharedState())
   } catch (error) {
-    if (stateCacheValue) {
+    const fallback = getStateCacheFallback()
+    if (fallback) {
       response.set('X-Trinity-State-Cache', 'stale-fallback')
-      response.json(stateCacheValue)
+      response.json(fallback)
       return
     }
 
@@ -627,7 +632,7 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
     const result = await enqueueStateWrite(async () => {
       await ensureDefinitions()
 
-      const currentState = await loadSharedState()
+      const currentState = await getSharedState()
       const nextPlayers = mergeRecordsByKey(
         currentState.players,
         arrayFromPayload(payload.players),
@@ -1373,6 +1378,7 @@ function primeStateCache(value) {
   stateCacheValue = value
   stateCacheExpiresAt = Date.now() + stateCacheTtlMs
   stateCachePromise = null
+  writeStateCacheFile(value)
 }
 
 async function getSharedState() {
@@ -1392,11 +1398,83 @@ async function getSharedState() {
       })
   }
 
-  return stateCachePromise
+  try {
+    return await stateCachePromise
+  } catch (error) {
+    const fallback = getStateCacheFallback()
+    if (fallback) return fallback
+    throw error
+  }
 }
 
 function arrayFromPayload(value) {
   return Array.isArray(value) ? value : []
+}
+
+function normalizeStateSnapshot(value) {
+  if (!value || typeof value !== 'object') return null
+
+  return {
+    ok: true,
+    billets: arrayFromPayload(value.billets),
+    players: arrayFromPayload(value.players),
+    producedBats: arrayFromPayload(value.producedBats),
+    customBatModels: arrayFromPayload(value.customBatModels),
+    orderJobs: arrayFromPayload(value.orderJobs),
+    billingContacts: arrayFromPayload(value.billingContacts),
+  }
+}
+
+function writeStateCacheFile(value) {
+  try {
+    fs.mkdirSync(path.dirname(stateCacheFilePath), { recursive: true })
+    fs.writeFileSync(
+      stateCacheFilePath,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        value: normalizeStateSnapshot(value),
+      }),
+      'utf8',
+    )
+  } catch (error) {
+    console.warn(
+      `Unable to write Trinity state cache file: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    )
+  }
+}
+
+function readStateCacheFile() {
+  try {
+    if (!fs.existsSync(stateCacheFilePath)) return null
+    const payload = JSON.parse(fs.readFileSync(stateCacheFilePath, 'utf8'))
+    const savedAtMs = Date.parse(payload?.savedAt)
+    if (!Number.isFinite(savedAtMs) || Date.now() - savedAtMs > stateCacheStaleMaxAgeMs) {
+      return null
+    }
+
+    return normalizeStateSnapshot(payload?.value)
+  } catch (error) {
+    console.warn(
+      `Unable to read Trinity state cache file: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    )
+    return null
+  }
+}
+
+function getStateCacheFallback() {
+  if (
+    stateCacheValue &&
+    stateCacheExpiresAt > 0 &&
+    Date.now() - stateCacheExpiresAt <= stateCacheStaleMaxAgeMs
+  ) {
+    return normalizeStateSnapshot(stateCacheValue)
+  }
+
+  return readStateCacheFile()
 }
 
 function enqueueStateWrite(operation) {
@@ -1548,8 +1626,11 @@ async function applyStatePatch(payload, options = {}) {
   }
 
   const patchedCache = applyStatePatchToCachedState(cachedStateBeforeWrite, patch)
+  const payloadSnapshot = normalizeStateSnapshot(payload?.stateSnapshot)
   if (patchedCache) {
     primeStateCache(patchedCache)
+  } else if (payloadSnapshot) {
+    primeStateCache(payloadSnapshot)
   } else {
     invalidateStateCache()
   }
@@ -1987,7 +2068,10 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
 
   if (!response.ok) {
     const body = await response.text()
-    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 10) {
+    if (
+      [429, 500, 502, 503, 504].includes(response.status) &&
+      attempt < shopifyGraphqlMaxAttempts - 1
+    ) {
       const retryAfterSeconds = Number(response.headers.get('retry-after'))
       const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0
       await sleep(Math.max(retryAfterMs, getRetryDelayMs(attempt)))
@@ -1999,7 +2083,7 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
   const payload = await response.json()
   if (payload.errors?.length) {
     const shouldRetry = payload.errors.some((item) => isRetryableShopifyError(item))
-    if (shouldRetry && attempt < 10) {
+    if (shouldRetry && attempt < shopifyGraphqlMaxAttempts - 1) {
       await sleep(getShopifyGraphQLRetryDelayMs(payload, attempt))
       return shopifyGraphQL(query, variables, attempt + 1)
     }
@@ -2014,7 +2098,7 @@ async function runWithShopifyRetry(operation, attempt = 0) {
   try {
     return await operation()
   } catch (error) {
-    if (isRetryableShopifyError(error) && attempt < 10) {
+    if (isRetryableShopifyError(error) && attempt < shopifyGraphqlMaxAttempts - 1) {
       await sleep(getRetryDelayMs(attempt))
       return runWithShopifyRetry(operation, attempt + 1)
     }
@@ -2053,7 +2137,7 @@ function getShopifyGraphQLRetryDelayMs(payload, attempt) {
     restoreRate > 0
   ) {
     const deficit = Math.max(0, requestedCost - available)
-    return Math.max(750, Math.ceil((deficit / restoreRate) * 1000) + 500)
+    return Math.max(1500, Math.ceil((deficit / restoreRate) * 1000) + 750)
   }
 
   return getRetryDelayMs(attempt)
@@ -4520,6 +4604,11 @@ function normalizeNonNegativeMoneyAmount(value) {
   const amount = Number(cleanString(value))
   if (!Number.isFinite(amount) || amount < 0) return ''
   return amount.toFixed(2)
+}
+
+function readPositiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name])
+  return Number.isInteger(value) && value > 0 ? value : fallback
 }
 
 function isBatProductLike(product) {
