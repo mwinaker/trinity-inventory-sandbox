@@ -146,6 +146,7 @@ const resourceConfigs = {
   players: {
     type: '$app:trinity_player_profile',
     name: 'Trinity Player Profile',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.profileKind || 'Profile'} ${item.playerName || item.id}`.trim()
     },
@@ -165,6 +166,7 @@ const resourceConfigs = {
   producedBats: {
     type: '$app:trinity_produced_bat',
     name: 'Trinity Produced Bat',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.modelId || item.id} ${item.length || ''} ${item.weight || ''}`.trim()
     },
@@ -294,6 +296,7 @@ const resourceConfigs = {
   customBatModels: {
     type: '$app:trinity_bat_model',
     name: 'Trinity Bat Model',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.name || item.id}`.trim()
     },
@@ -615,28 +618,63 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
     const payload = request.body ?? {}
     await ensureDefinitions()
 
+    const currentState = await loadSharedState()
+    const nextPlayers = mergeRecordsByKey(
+      currentState.players,
+      arrayFromPayload(payload.players),
+      (item) => item.id || `${item.profileKind}:${item.playerName}`,
+    )
+    const nextProducedBats = mergeRecordsByKey(
+      currentState.producedBats,
+      arrayFromPayload(payload.producedBats),
+      (item) => item.id || item.createdAt,
+    )
+    const nextCustomBatModels = mergeRecordsByKey(
+      currentState.customBatModels,
+      arrayFromPayload(payload.customBatModels),
+      (item) => item.id,
+    )
+    const nextOrderJobs = mergeRecordsByKey(
+      currentState.orderJobs,
+      arrayFromPayload(payload.orderJobs),
+      (item) => item.id,
+    )
+    const nextBillingContacts = mergeRecordsByKey(
+      currentState.billingContacts,
+      arrayFromPayload(payload.billingContacts),
+      (item) => item.id,
+    )
+    const nextBillets = reconcileBilletProductionStatuses(
+      mergeRecordsByKey(
+        currentState.billets,
+        arrayFromPayload(payload.billets),
+        (item) => item.barcode || item.id,
+      ),
+      nextProducedBats,
+    )
+
     await Promise.all([
-      upsertRecords(resourceConfigs.billets, payload.billets ?? []),
-      upsertRecords(resourceConfigs.players, payload.players ?? []),
-      upsertRecords(resourceConfigs.producedBats, payload.producedBats ?? []),
-      upsertRecords(resourceConfigs.customBatModels, payload.customBatModels ?? []),
-      upsertRecords(resourceConfigs.orderJobs, payload.orderJobs ?? [], {
+      upsertRecords(resourceConfigs.billets, nextBillets),
+      upsertRecords(resourceConfigs.players, nextPlayers),
+      upsertRecords(resourceConfigs.producedBats, nextProducedBats),
+      upsertRecords(resourceConfigs.customBatModels, nextCustomBatModels),
+      upsertRecords(resourceConfigs.orderJobs, nextOrderJobs, {
         deleteMissing: false,
       }),
-      upsertRecords(resourceConfigs.billingContacts, payload.billingContacts ?? [], {
+      upsertRecords(resourceConfigs.billingContacts, nextBillingContacts, {
         deleteMissing: false,
       }),
     ])
 
-    await syncOrderJobMetafields(payload.orderJobs ?? [])
+    await syncOrderJobMetafields(nextOrderJobs)
     primeStateCache({
       ok: true,
-      billets: payload.billets ?? [],
-      players: payload.players ?? [],
-      producedBats: payload.producedBats ?? [],
-      customBatModels: payload.customBatModels ?? [],
-      orderJobs: payload.orderJobs ?? [],
-      billingContacts: payload.billingContacts ?? [],
+      billets: nextBillets,
+      players: nextPlayers,
+      producedBats: nextProducedBats,
+      customBatModels: nextCustomBatModels,
+      orderJobs: nextOrderJobs,
+      billingContacts: nextBillingContacts,
     })
 
     response.json({
@@ -1313,6 +1351,43 @@ async function getSharedState() {
   }
 
   return stateCachePromise
+}
+
+function arrayFromPayload(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function mergeRecordsByKey(base, overrides, getKey) {
+  const merged = new Map()
+
+  for (const item of base) {
+    const key = cleanString(getKey(item))
+    if (key) merged.set(key, item)
+  }
+
+  for (const item of overrides) {
+    const key = cleanString(getKey(item))
+    if (key) merged.set(key, item)
+  }
+
+  return Array.from(merged.values())
+}
+
+function reconcileBilletProductionStatuses(billets, producedBats) {
+  const productionBilletIds = new Set(
+    producedBats.flatMap((record) => (Array.isArray(record.billetIds) ? record.billetIds : [])),
+  )
+
+  if (productionBilletIds.size === 0) return billets
+
+  return billets.map((billet) =>
+    productionBilletIds.has(billet.id)
+      ? {
+          ...billet,
+          status: 'production',
+        }
+      : billet,
+  )
 }
 
 function primeCatalogCache(products) {

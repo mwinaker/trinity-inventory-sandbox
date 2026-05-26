@@ -1,9 +1,25 @@
 export function registerServiceWorker() {
-  if (!('serviceWorker' in navigator) || import.meta.env.DEV) return
+  if (!('serviceWorker' in navigator)) return
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {
-      // Offline support is a progressive enhancement; the app still works online.
-    })
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((registrations) =>
+        Promise.all(registrations.map((registration) => registration.unregister())),
+      )
+      .catch(() => {})
+
+    if ('caches' in window) {
+      window.caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys
+              .filter((key) => key.startsWith('trinity-internal-tool'))
+              .map((key) => window.caches.delete(key)),
+          ),
+        )
+        .catch(() => {})
+    }
   })
 }

@@ -320,6 +320,15 @@ const producedBatStorageKey = 'trinity-produced-bats-v1'
 const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
 const orderJobStorageKey = 'trinity-order-jobs-v1'
 const billingContactStorageKey = 'trinity-billing-contacts-v1'
+const legacyLocalStateBackupKey = 'trinity-local-recovery-backup-v1'
+const legacyLocalStateKeys = [
+  billetStorageKey,
+  playerStorageKey,
+  producedBatStorageKey,
+  customBatModelStorageKey,
+  orderJobStorageKey,
+  billingContactStorageKey,
+]
 
 const standardBilletLength = 37
 const standardBilletDiameter = 2.75
@@ -959,12 +968,26 @@ function createNextBilletDraft(current: Omit<Billet, 'id'>, allBillets: Billet[]
   }
 }
 
-function safeReadStorage<T>(key: string, fallback: T): T {
+function backupLegacyLocalState() {
   try {
-    const stored = window.localStorage.getItem(key)
-    return stored ? (JSON.parse(stored) as T) : fallback
+    if (window.localStorage.getItem(legacyLocalStateBackupKey)) return
+
+    const values = Object.fromEntries(
+      legacyLocalStateKeys
+        .map((key) => [key, window.localStorage.getItem(key)] as const)
+        .filter(([, value]) => value !== null),
+    )
+    if (Object.keys(values).length === 0) return
+
+    window.localStorage.setItem(
+      legacyLocalStateBackupKey,
+      JSON.stringify({
+        backedUpAt: new Date().toISOString(),
+        values,
+      }),
+    )
   } catch {
-    return fallback
+    // Recovery backups are best-effort and should never block live sync.
   }
 }
 
@@ -2570,6 +2593,12 @@ function InternalApp() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const hasLoadedRemoteState = useRef(false)
+  const skipNextRemoteSync = useRef(false)
+  const hasPendingLocalSync = useRef(false)
+
+  useEffect(() => {
+    backupLegacyLocalState()
+  }, [])
 
   useEffect(() => {
     window.localStorage.setItem(billetStorageKey, JSON.stringify(billets))
@@ -2595,9 +2624,57 @@ function InternalApp() {
     window.localStorage.setItem(billingContactStorageKey, JSON.stringify(billingContacts))
   }, [billingContacts])
 
-  const loadRemoteState = useEffectEvent(async () => {
+  const syncRemoteState = useEffectEvent(async () => {
     try {
-      const response = await fetch(getApiPath('/api/state'), { cache: 'no-store' })
+      setSyncMessage('Syncing to Shopify...')
+      const response = await fetch(getApiPath('/api/state'), {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          billets,
+          players,
+          producedBats,
+          customBatModels,
+          orderJobs,
+          billingContacts,
+        } satisfies RemoteState),
+      })
+      if (!response.ok) throw new Error('Sync failed')
+
+      const payload = (await response.json()) as { syncedAt?: string }
+      const syncedAt = payload.syncedAt
+        ? new Date(payload.syncedAt).toLocaleTimeString([], {
+            hour: 'numeric',
+            minute: '2-digit',
+          })
+        : 'just now'
+
+      hasPendingLocalSync.current = false
+      if (backendStatus !== 'connected') {
+        skipNextRemoteSync.current = true
+      }
+      setBackendStatus('connected')
+      setSyncMessage(`Shopify sync complete at ${syncedAt}.`)
+      return true
+    } catch {
+      setBackendStatus('offline')
+      setSyncMessage(
+        'Shopify sync failed. Keep this tab open; editing is paused until live sync recovers.',
+      )
+      return false
+    }
+  })
+
+  const loadRemoteState = useEffectEvent(async (options?: { quiet?: boolean }) => {
+    try {
+      const response = await fetch(getApiPath('/api/state'), {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      })
       if (response.status === 401) {
         setBackendStatus('unauthorized')
         setSyncMessage('Use the secure internal access link or launch from Shopify admin.')
@@ -2607,22 +2684,6 @@ function InternalApp() {
       }
       if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
       const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
-
-      const localBillets = safeReadStorage<Billet[]>(billetStorageKey, []).map((billet) =>
-        normalizeBillet(billet),
-      )
-      const localPlayers = safeReadStorage<PlayerProfile[]>(playerStorageKey, [])
-      const localProducedBats = safeReadStorage<ProducedBatRecord[]>(producedBatStorageKey, []).map(
-        (record) => normalizeProducedBatRecord(record),
-      )
-      const localCustomBatModels = safeReadStorage<BatModelProduct[]>(customBatModelStorageKey, [])
-      const localOrderJobs = safeReadStorage<OrderJob[]>(orderJobStorageKey, []).map((job) =>
-        normalizeOrderJob(job),
-      )
-      const localBillingContacts = safeReadStorage<BillingContact[]>(
-        billingContactStorageKey,
-        seedBillingContacts,
-      ).map((contact) => normalizeBillingContact(contact))
 
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
@@ -2641,44 +2702,31 @@ function InternalApp() {
         ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
         : []
 
-      setBillets(
-        mergeRecordsByKey(localBillets, remoteBillets, (billet) => billet.barcode || billet.id),
-      )
-      setPlayers(
-        mergeRecordsByKey(
-          localPlayers,
-          remotePlayers,
-          (profile) => profile.id || `${profile.profileKind}:${profile.playerName}`,
-        ),
-      )
-      setProducedBats(
-        mergeRecordsByKey(
-          localProducedBats,
-          remoteProducedBats,
-          (record) => record.id || record.createdAt,
-        ),
-      )
-      setCustomBatModels(
-        mergeRecordsByKey(localCustomBatModels, remoteCustomBatModels, (model) => model.id),
-      )
-      setOrderJobs(mergeOrderJobs(localOrderJobs, remoteOrderJobs))
+      skipNextRemoteSync.current = true
+      setBillets(remoteBillets)
+      setPlayers(remotePlayers)
+      setProducedBats(remoteProducedBats)
+      setCustomBatModels(remoteCustomBatModels)
+      setOrderJobs(remoteOrderJobs)
       setBillingContacts(
         mergeRecordsByKey(
           seedBillingContacts,
-          mergeRecordsByKey(localBillingContacts, remoteBillingContacts, (contact) => contact.id),
+          remoteBillingContacts,
           (contact) => contact.id,
         ),
       )
 
       setBackendStatus('connected')
-      setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
+      if (!options?.quiet) {
+        setSyncMessage('Connected to Shopify. Live records are the source of truth.')
+      }
       hasLoadedRemoteState.current = true
       setIsLoadingRemoteState(false)
       return true
     } catch {
       setBackendStatus('offline')
       setSyncMessage(
-        'Shopify sync is offline. Device changes are safe here and retrying automatically.',
+        'Live Shopify sync is unavailable. Editing is paused so local-only data cannot be created.',
       )
       hasLoadedRemoteState.current = true
       setIsLoadingRemoteState(false)
@@ -2698,10 +2746,24 @@ function InternalApp() {
     if (backendStatus !== 'offline') return
 
     const retry = window.setInterval(() => {
-      void loadRemoteState()
+      if (hasPendingLocalSync.current) {
+        void syncRemoteState()
+      } else {
+        void loadRemoteState()
+      }
     }, 10000)
 
     return () => window.clearInterval(retry)
+  }, [backendStatus])
+
+  useEffect(() => {
+    if (backendStatus !== 'connected') return
+
+    const refresh = window.setInterval(() => {
+      if (!hasPendingLocalSync.current) void loadRemoteState({ quiet: true })
+    }, 30000)
+
+    return () => window.clearInterval(refresh)
   }, [backendStatus])
 
   useEffect(() => {
@@ -2731,41 +2793,14 @@ function InternalApp() {
 
   useEffect(() => {
     if (!hasLoadedRemoteState.current || backendStatus !== 'connected') return
+    if (skipNextRemoteSync.current) {
+      skipNextRemoteSync.current = false
+      return
+    }
 
+    hasPendingLocalSync.current = true
     const timeout = window.setTimeout(async () => {
-      try {
-        setSyncMessage('Syncing to Shopify...')
-        const response = await fetch(getApiPath('/api/state'), {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            billets,
-            players,
-            producedBats,
-            customBatModels,
-            orderJobs,
-            billingContacts,
-          } satisfies RemoteState),
-        })
-        if (!response.ok) throw new Error('Sync failed')
-
-        const payload = (await response.json()) as { syncedAt?: string }
-        const syncedAt = payload.syncedAt
-          ? new Date(payload.syncedAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })
-          : 'just now'
-
-        setSyncMessage(`Shopify sync complete at ${syncedAt}.`)
-      } catch {
-        setBackendStatus('offline')
-        setSyncMessage(
-          'Shopify sync paused. Local changes are saved on this device and retrying automatically.',
-        )
-      }
+      void syncRemoteState()
     }, 700)
 
     return () => window.clearTimeout(timeout)
@@ -3634,7 +3669,7 @@ function InternalApp() {
               ? 'Shopify-backed internal tool'
               : backendStatus === 'unauthorized'
                 ? 'Secure internal access required'
-                : 'Internal offline mode'}
+                : 'Live sync unavailable'}
           </strong>
           <p>{syncMessage}</p>
         </div>
@@ -3657,6 +3692,17 @@ function InternalApp() {
           <p className="empty-state">
             This page is live, but the shared Shopify inventory requires an internal session. Open
             the secure internal link we issued for Trinity or launch the tool from Shopify admin.
+          </p>
+        </section>
+      ) : backendStatus !== 'connected' ? (
+        <section className="panel inventory-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Live sync paused</p>
+            <h2>Editing is temporarily locked</h2>
+          </div>
+          <p className="empty-state">
+            This tool could not reach the live Shopify-backed inventory state. To prevent local-only
+            records, data entry is disabled until sync reconnects.
           </p>
         </section>
       ) : activeSection === 'inventory' ? (
