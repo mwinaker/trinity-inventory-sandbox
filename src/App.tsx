@@ -168,6 +168,7 @@ type OrderSpecs = {
   wood: string
   handleColor: string
   barrelColor: string
+  bandColor: string
   logoColor: string
   engraving: string
   cupped: string
@@ -234,6 +235,7 @@ type SalesOrderLineDraft = {
   targetWeight: string
   handleColor: string
   barrelColor: string
+  bandColor: string
   logoColor: string
   engraving: string
   cupped: 'Yes' | 'No'
@@ -360,32 +362,94 @@ const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label:
     label: `Rush production (+${formatSalesOrderMoney(rushProductionSurchargeUnitAmount)}/bat)`,
   },
 ]
-const customizerColorOptions = [
-  'Black',
-  'Dark Gray',
-  'Light Gray',
+const handleColorOptions = [
+  'Natural',
+  'Red',
+  'Walnut Stain',
+  'Blood Red',
+  'Crimson Stain',
+  'White Wash',
   'White',
-  'Solid White Gloss',
-  'Solid Black Gloss',
-  'Walker Black',
-  'Cherry',
-  'Flame Temper',
-  'Medium Brown',
-  'Dark Brown',
-  'Walnut',
+  'Gray',
+  'Black',
+  'Clear Gloss',
+  'Matte Black',
+  'Forest Green',
   'Navy Blue',
   'Royal Blue',
-  'Sky Blue',
-  'Seafoam Green',
-  'Forest Green',
+  'Electric Blue',
+  'Spa Blue',
+  'Denim Blue Stain',
+  'Pecan Stain',
+  'Ebony Stain',
+  'Classic Brown Stain',
   'Yellow',
-  'Orange',
-  'Red',
+  'Purple',
+  'Matte Army Tank Green',
   'Maroon',
   'Pink',
-  'Purple',
+  'Orange',
+  'Seaside',
+  'Flamed',
+  'Smoke Flame',
+]
+const barrelColorOptions = [
+  'Natural',
+  'Red',
+  'Walnut Stain',
+  'Black',
+  'Blood Red',
+  'Forest Green',
+  'Crimson Stain',
+  'Gray',
+  'White Wash',
+  'White',
   'Matte Black',
-  'Matte Dark Gray',
+  'Clear Gloss',
+  'Navy Blue',
+  'Royal Blue',
+  'Electric Blue',
+  'Spa Blue',
+  'Denim Blue Stain',
+  'Pecan Stain',
+  'Ebony Stain',
+  'Brown Stain',
+  'Yellow',
+  'Purple',
+  'Matte Army Tank Green',
+  'Maroon',
+  'Pink',
+  'Orange',
+  'Seaside',
+  'Flamed',
+  'Smoke Flame',
+]
+const bandColorOptions = ['Yellow', 'White', 'Red', 'Natural', 'Gray', 'Gold', 'Black']
+const logoColorOptions = [
+  'Black',
+  'Electric Blue',
+  'Forest Green',
+  'Gold',
+  'Gray',
+  'Maroon',
+  'Navy Blue',
+  'Orange',
+  'Pink',
+  'Purple',
+  'Red',
+  'Royal Blue',
+  'Seaside',
+  'Spa Blue',
+  'White',
+  'Yellow',
+  'Silver',
+  'Cosmic-Black',
+  'Iridescent Chrome',
+  'Silver Foil',
+  'Gold Foil',
+  'Red Hologram',
+  'Light Blue Hologram',
+  'Lime Green',
 ]
 const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
 const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
@@ -647,6 +711,7 @@ const emptySalesLine = (): SalesOrderLineDraft => ({
   targetWeight: '',
   handleColor: '',
   barrelColor: '',
+  bandColor: '',
   logoColor: '',
   engraving: '',
   cupped: 'No',
@@ -870,6 +935,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
       wood: specs.wood ?? '',
       handleColor: specs.handleColor ?? '',
       barrelColor: specs.barrelColor ?? '',
+      bandColor: specs.bandColor ?? '',
       logoColor: specs.logoColor ?? '',
       engraving: specs.engraving ?? '',
       cupped: specs.cupped ?? '',
@@ -905,6 +971,7 @@ function mergeOrderSpecs(primary?: OrderSpecs, fallback?: OrderSpecs): OrderSpec
     wood: primary?.wood || fallback?.wood || '',
     handleColor: primary?.handleColor || fallback?.handleColor || '',
     barrelColor: primary?.barrelColor || fallback?.barrelColor || '',
+    bandColor: primary?.bandColor || fallback?.bandColor || '',
     logoColor: primary?.logoColor || fallback?.logoColor || '',
     engraving: primary?.engraving || fallback?.engraving || '',
     cupped: primary?.cupped || fallback?.cupped || '',
@@ -2391,7 +2458,7 @@ function PublicSalesOrderForm() {
                         }
                       >
                         <option value="">Select handle color</option>
-                        {customizerColorOptions.map((color) => (
+                        {handleColorOptions.map((color) => (
                           <option key={color}>{color}</option>
                         ))}
                       </select>
@@ -2405,7 +2472,7 @@ function PublicSalesOrderForm() {
                         }
                       >
                         <option value="">Select barrel color</option>
-                        {customizerColorOptions.map((color) => (
+                        {barrelColorOptions.map((color) => (
                           <option key={color}>{color}</option>
                         ))}
                       </select>
@@ -2413,6 +2480,20 @@ function PublicSalesOrderForm() {
                   </div>
 
                   <div className="form-row">
+                    <label>
+                      Band color
+                      <select
+                        value={line.bandColor}
+                        onChange={(event) =>
+                          updateSalesLine(line.id, { bandColor: event.target.value })
+                        }
+                      >
+                        <option value="">Select band color</option>
+                        {bandColorOptions.map((color) => (
+                          <option key={color}>{color}</option>
+                        ))}
+                      </select>
+                    </label>
                     <label>
                       Logo color
                       <select
@@ -2422,11 +2503,14 @@ function PublicSalesOrderForm() {
                         }
                       >
                         <option value="">Select logo color</option>
-                        {customizerColorOptions.map((color) => (
+                        {logoColorOptions.map((color) => (
                           <option key={color}>{color}</option>
                         ))}
                       </select>
                     </label>
+                  </div>
+
+                  <div className="form-row">
                     <label>
                       Wood species
                       <select
@@ -3016,6 +3100,7 @@ function InternalApp() {
       job.specs.wood,
       job.specs.handleColor,
       job.specs.barrelColor,
+      job.specs.bandColor,
       job.specs.logoColor,
       job.specs.engraving,
       job.specs.cupped,
@@ -5014,7 +5099,7 @@ function InternalApp() {
                               }
                             >
                               <option value="">Select handle color</option>
-                              {customizerColorOptions.map((color) => (
+                              {handleColorOptions.map((color) => (
                                 <option key={color}>{color}</option>
                               ))}
                             </select>
@@ -5028,7 +5113,7 @@ function InternalApp() {
                               }
                             >
                               <option value="">Select barrel color</option>
-                              {customizerColorOptions.map((color) => (
+                              {barrelColorOptions.map((color) => (
                                 <option key={color}>{color}</option>
                               ))}
                             </select>
@@ -5036,6 +5121,20 @@ function InternalApp() {
                         </div>
 
                         <div className="form-row">
+                          <label>
+                            Band color
+                            <select
+                              value={line.bandColor}
+                              onChange={(event) =>
+                                updateSalesLine(line.id, { bandColor: event.target.value })
+                              }
+                            >
+                              <option value="">Select band color</option>
+                              {bandColorOptions.map((color) => (
+                                <option key={color}>{color}</option>
+                              ))}
+                            </select>
+                          </label>
                           <label>
                             Logo color
                             <select
@@ -5045,11 +5144,14 @@ function InternalApp() {
                               }
                             >
                               <option value="">Select logo color</option>
-                              {customizerColorOptions.map((color) => (
+                              {logoColorOptions.map((color) => (
                                 <option key={color}>{color}</option>
                               ))}
                             </select>
                           </label>
+                        </div>
+
+                        <div className="form-row">
                           <label>
                             Wood species
                             <select
@@ -5269,6 +5371,7 @@ function InternalApp() {
                             <p>Wood species: {job.specs.wood || 'N/A'}</p>
                             <p>Handle color: {job.specs.handleColor || 'N/A'}</p>
                             <p>Barrel color: {job.specs.barrelColor || 'N/A'}</p>
+                            <p>Band color: {job.specs.bandColor || 'N/A'}</p>
                             <p>Logo color: {job.specs.logoColor || 'N/A'}</p>
                             <p>Engraving: {job.specs.engraving || 'N/A'}</p>
                             <p>Cup: {job.specs.cupped || 'N/A'}</p>
