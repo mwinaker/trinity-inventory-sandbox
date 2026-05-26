@@ -316,6 +316,11 @@ type RemoteState = {
   billingContacts: BillingContact[]
 }
 
+type RemoteStateDeletes = Partial<Record<keyof RemoteState, string[]>>
+type RemoteStatePatch = Partial<RemoteState> & {
+  deletes?: RemoteStateDeletes
+}
+
 const billetStorageKey = 'trinity-billet-sandbox-v5'
 const playerStorageKey = 'trinity-player-profiles-v3'
 const producedBatStorageKey = 'trinity-produced-bats-v1'
@@ -1082,6 +1087,189 @@ function mergeRecordsByKey<T>(base: T[], overrides: T[], getKey: (item: T) => st
   }
 
   return Array.from(merged.values())
+}
+
+function createEmptyRemoteState(): RemoteState {
+  return {
+    billets: [],
+    players: [],
+    producedBats: [],
+    customBatModels: [],
+    orderJobs: [],
+    billingContacts: [],
+  }
+}
+
+function getRemoteStateRecordKey(collection: keyof RemoteState, item: unknown) {
+  const record = item as {
+    id?: string
+    barcode?: string
+    profileKind?: string
+    playerName?: string
+    createdAt?: string
+  }
+
+  switch (collection) {
+    case 'billets':
+      return record.barcode || record.id || ''
+    case 'players':
+      return record.id || `${record.profileKind ?? ''}:${record.playerName ?? ''}`
+    case 'producedBats':
+      return record.id || record.createdAt || ''
+    default:
+      return record.id || ''
+  }
+}
+
+function getChangedRemoteRecords<T>(
+  current: T[],
+  base: T[],
+  getKey: (item: T) => string,
+) {
+  const baseRecords = new Map<string, string>()
+
+  for (const item of base) {
+    const key = getKey(item).trim()
+    if (key) baseRecords.set(key, JSON.stringify(item))
+  }
+
+  return current.filter((item) => {
+    const key = getKey(item).trim()
+    if (!key) return false
+    return baseRecords.get(key) !== JSON.stringify(item)
+  })
+}
+
+function getDeletedRemoteRecordIds<T>(
+  current: T[],
+  base: T[],
+  getKey: (item: T) => string,
+) {
+  const currentKeys = new Set(current.map((item) => getKey(item).trim()).filter(Boolean))
+
+  return base
+    .filter((item) => {
+      const key = getKey(item).trim()
+      return key && !currentKeys.has(key)
+    })
+    .map((item) => {
+      const record = item as { id?: string }
+      return (record.id || getKey(item)).trim()
+    })
+    .filter(Boolean)
+}
+
+function buildRemoteStatePatch(current: RemoteState, base: RemoteState | null): RemoteStatePatch {
+  const baseState = base ?? createEmptyRemoteState()
+  const patch: RemoteStatePatch = {}
+  const changedBillets = getChangedRemoteRecords(current.billets, baseState.billets, (item) =>
+    getRemoteStateRecordKey('billets', item),
+  )
+  const changedPlayers = getChangedRemoteRecords(current.players, baseState.players, (item) =>
+    getRemoteStateRecordKey('players', item),
+  )
+  const changedProducedBats = getChangedRemoteRecords(
+    current.producedBats,
+    baseState.producedBats,
+    (item) => getRemoteStateRecordKey('producedBats', item),
+  )
+  const changedCustomBatModels = getChangedRemoteRecords(
+    current.customBatModels,
+    baseState.customBatModels,
+    (item) => getRemoteStateRecordKey('customBatModels', item),
+  )
+  const changedOrderJobs = getChangedRemoteRecords(current.orderJobs, baseState.orderJobs, (item) =>
+    getRemoteStateRecordKey('orderJobs', item),
+  )
+  const changedBillingContacts = getChangedRemoteRecords(
+    current.billingContacts,
+    baseState.billingContacts,
+    (item) => getRemoteStateRecordKey('billingContacts', item),
+  )
+  const deletedProducedBatIds = getDeletedRemoteRecordIds(
+    current.producedBats,
+    baseState.producedBats,
+    (item) => getRemoteStateRecordKey('producedBats', item),
+  )
+
+  if (changedBillets.length > 0) patch.billets = changedBillets
+  if (changedPlayers.length > 0) patch.players = changedPlayers
+  if (changedProducedBats.length > 0) patch.producedBats = changedProducedBats
+  if (changedCustomBatModels.length > 0) patch.customBatModels = changedCustomBatModels
+  if (changedOrderJobs.length > 0) patch.orderJobs = changedOrderJobs
+  if (changedBillingContacts.length > 0) patch.billingContacts = changedBillingContacts
+  if (deletedProducedBatIds.length > 0) {
+    patch.deletes = {
+      producedBats: deletedProducedBatIds,
+    }
+  }
+
+  return patch
+}
+
+function hasRemoteStatePatchChanges(patch: RemoteStatePatch) {
+  const hasUpserts = (Object.keys(createEmptyRemoteState()) as Array<keyof RemoteState>).some(
+    (collection) => (patch[collection]?.length ?? 0) > 0,
+  )
+  const hasDeletes = Object.values(patch.deletes ?? {}).some(
+    (deletedIds) => (deletedIds?.length ?? 0) > 0,
+  )
+
+  return hasUpserts || hasDeletes
+}
+
+function countRemoteStatePatchRecords(patch: RemoteStatePatch) {
+  const upsertCount = (Object.keys(createEmptyRemoteState()) as Array<keyof RemoteState>).reduce(
+    (total, collection) => total + (patch[collection]?.length ?? 0),
+    0,
+  )
+  const deleteCount = Object.values(patch.deletes ?? {}).reduce(
+    (total, deletedIds) => total + (deletedIds?.length ?? 0),
+    0,
+  )
+
+  return upsertCount + deleteCount
+}
+
+function applyRemoteStatePatchToSnapshot(
+  base: RemoteState | null,
+  patch: RemoteStatePatch,
+): RemoteState {
+  const nextState = base ?? createEmptyRemoteState()
+  const deletedProducedBatIds = new Set(patch.deletes?.producedBats ?? [])
+
+  return {
+    billets: patch.billets
+      ? mergeRecordsByKey(nextState.billets, patch.billets, (item) =>
+          getRemoteStateRecordKey('billets', item),
+        )
+      : nextState.billets,
+    players: patch.players
+      ? mergeRecordsByKey(nextState.players, patch.players, (item) =>
+          getRemoteStateRecordKey('players', item),
+        )
+      : nextState.players,
+    producedBats: patch.producedBats
+      ? mergeRecordsByKey(nextState.producedBats, patch.producedBats, (item) =>
+          getRemoteStateRecordKey('producedBats', item),
+        ).filter((record) => !deletedProducedBatIds.has(record.id))
+      : nextState.producedBats.filter((record) => !deletedProducedBatIds.has(record.id)),
+    customBatModels: patch.customBatModels
+      ? mergeRecordsByKey(nextState.customBatModels, patch.customBatModels, (item) =>
+          getRemoteStateRecordKey('customBatModels', item),
+        )
+      : nextState.customBatModels,
+    orderJobs: patch.orderJobs
+      ? mergeRecordsByKey(nextState.orderJobs, patch.orderJobs, (item) =>
+          getRemoteStateRecordKey('orderJobs', item),
+        )
+      : nextState.orderJobs,
+    billingContacts: patch.billingContacts
+      ? mergeRecordsByKey(nextState.billingContacts, patch.billingContacts, (item) =>
+          getRemoteStateRecordKey('billingContacts', item),
+        )
+      : nextState.billingContacts,
+  }
 }
 
 function compareText(a: string, b: string) {
@@ -2705,6 +2893,8 @@ function InternalApp() {
   const hasLoadedRemoteState = useRef(false)
   const skipNextRemoteSync = useRef(false)
   const hasPendingLocalSync = useRef(false)
+  const syncInFlight = useRef(false)
+  const lastSyncedState = useRef<RemoteState | null>(null)
 
   useEffect(() => {
     backupLegacyLocalState()
@@ -2734,26 +2924,55 @@ function InternalApp() {
     window.localStorage.setItem(billingContactStorageKey, JSON.stringify(billingContacts))
   }, [billingContacts])
 
+  function getCurrentRemoteState(): RemoteState {
+    return {
+      billets,
+      players,
+      producedBats,
+      customBatModels,
+      orderJobs,
+      billingContacts,
+    }
+  }
+
   const syncRemoteState = useEffectEvent(async () => {
+    if (syncInFlight.current) {
+      hasPendingLocalSync.current = true
+      return false
+    }
+
+    syncInFlight.current = true
+
     try {
-      setSyncMessage('Syncing to Shopify...')
+      const snapshot = getCurrentRemoteState()
+      const patch = buildRemoteStatePatch(snapshot, lastSyncedState.current)
+      const changeCount = countRemoteStatePatchRecords(patch)
+
+      if (!hasRemoteStatePatchChanges(patch)) {
+        hasPendingLocalSync.current = false
+        if (backendStatus !== 'connected') {
+          skipNextRemoteSync.current = true
+        }
+        setBackendStatus('connected')
+        setSyncMessage('Connected to Shopify. Live records are the source of truth.')
+        return true
+      }
+
+      setSyncMessage(`Syncing ${changeCount} changed record${changeCount === 1 ? '' : 's'} to Shopify...`)
       const response = await fetch(getApiPath('/api/state'), {
-        method: 'PUT',
+        method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          billets,
-          players,
-          producedBats,
-          customBatModels,
-          orderJobs,
-          billingContacts,
-        } satisfies RemoteState),
+        body: JSON.stringify(patch),
       })
-      if (!response.ok) throw new Error('Sync failed')
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean
+        message?: string
+        syncedAt?: string
+      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Sync failed')
 
-      const payload = (await response.json()) as { syncedAt?: string }
       const syncedAt = payload.syncedAt
         ? new Date(payload.syncedAt).toLocaleTimeString([], {
             hour: 'numeric',
@@ -2761,19 +2980,38 @@ function InternalApp() {
           })
         : 'just now'
 
-      hasPendingLocalSync.current = false
+      lastSyncedState.current = applyRemoteStatePatchToSnapshot(lastSyncedState.current, patch)
       if (backendStatus !== 'connected') {
         skipNextRemoteSync.current = true
       }
       setBackendStatus('connected')
-      setSyncMessage(`Shopify sync complete at ${syncedAt}.`)
+      setSyncMessage(
+        `Shopify sync complete at ${syncedAt}. Saved ${changeCount} changed record${
+          changeCount === 1 ? '' : 's'
+        }.`,
+      )
+
+      const remainingPatch = buildRemoteStatePatch(getCurrentRemoteState(), lastSyncedState.current)
+      if (hasRemoteStatePatchChanges(remainingPatch)) {
+        hasPendingLocalSync.current = true
+        window.setTimeout(() => {
+          void syncRemoteState()
+        }, 0)
+      } else {
+        hasPendingLocalSync.current = false
+      }
+
       return true
-    } catch {
+    } catch (error) {
       setBackendStatus('offline')
       setSyncMessage(
-        'Shopify sync failed. Keep this tab open; editing is paused until live sync recovers.',
+        `Shopify sync failed: ${
+          error instanceof Error ? error.message : 'Unknown sync error'
+        }. Keep this tab open; the app will retry this record-level save.`,
       )
       return false
+    } finally {
+      syncInFlight.current = false
     }
   })
 
@@ -2813,20 +3051,27 @@ function InternalApp() {
       const remoteBillingContacts = Array.isArray(remote.billingContacts)
         ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
         : []
-
-      skipNextRemoteSync.current = true
-      setBillets(remoteBillets)
-      setPlayers(remotePlayers)
-      setProducedBats(remoteProducedBats)
-      setCustomBatModels(remoteCustomBatModels)
-      setOrderJobs(remoteOrderJobs)
-      setBillingContacts(
-        mergeRecordsByKey(
+      const remoteState: RemoteState = {
+        billets: remoteBillets,
+        players: remotePlayers,
+        producedBats: remoteProducedBats,
+        customBatModels: remoteCustomBatModels,
+        orderJobs: remoteOrderJobs,
+        billingContacts: mergeRecordsByKey(
           seedBillingContacts,
           remoteBillingContacts,
           (contact) => contact.id,
-        ),
-      )
+        ).map((contact) => normalizeBillingContact(contact)),
+      }
+
+      skipNextRemoteSync.current = true
+      lastSyncedState.current = remoteState
+      setBillets(remoteState.billets)
+      setPlayers(remoteState.players)
+      setProducedBats(remoteState.producedBats)
+      setCustomBatModels(remoteState.customBatModels)
+      setOrderJobs(remoteState.orderJobs)
+      setBillingContacts(remoteState.billingContacts)
 
       setBackendStatus('connected')
       if (!options?.quiet) {

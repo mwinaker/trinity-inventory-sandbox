@@ -420,6 +420,7 @@ let stateCachePromise = null
 let catalogCacheValue = null
 let catalogCacheExpiresAt = 0
 let catalogCachePromise = null
+let stateWriteQueue = Promise.resolve()
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
   try {
@@ -623,75 +624,94 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
     }
 
     const payload = request.body ?? {}
-    await ensureDefinitions()
+    const result = await enqueueStateWrite(async () => {
+      await ensureDefinitions()
 
-    const currentState = await loadSharedState()
-    const nextPlayers = mergeRecordsByKey(
-      currentState.players,
-      arrayFromPayload(payload.players),
-      (item) => item.id || `${item.profileKind}:${item.playerName}`,
-    )
-    const nextProducedBats = mergeRecordsByKey(
-      currentState.producedBats,
-      arrayFromPayload(payload.producedBats),
-      (item) => item.id || item.createdAt,
-    )
-    const nextCustomBatModels = mergeRecordsByKey(
-      currentState.customBatModels,
-      arrayFromPayload(payload.customBatModels),
-      (item) => item.id,
-    )
-    const nextOrderJobs = mergeRecordsByKey(
-      currentState.orderJobs,
-      arrayFromPayload(payload.orderJobs),
-      (item) => item.id,
-    )
-    const nextBillingContacts = mergeRecordsByKey(
-      currentState.billingContacts,
-      arrayFromPayload(payload.billingContacts),
-      (item) => item.id,
-    )
-    const nextBillets = reconcileBilletProductionStatuses(
-      mergeRecordsByKey(
-        currentState.billets,
-        arrayFromPayload(payload.billets),
-        (item) => item.barcode || item.id,
-      ),
-      nextProducedBats,
-    )
+      const currentState = await loadSharedState()
+      const nextPlayers = mergeRecordsByKey(
+        currentState.players,
+        arrayFromPayload(payload.players),
+        (item) => item.id || `${item.profileKind}:${item.playerName}`,
+      )
+      const nextProducedBats = mergeRecordsByKey(
+        currentState.producedBats,
+        arrayFromPayload(payload.producedBats),
+        (item) => item.id || item.createdAt,
+      )
+      const nextCustomBatModels = mergeRecordsByKey(
+        currentState.customBatModels,
+        arrayFromPayload(payload.customBatModels),
+        (item) => item.id,
+      )
+      const nextOrderJobs = mergeRecordsByKey(
+        currentState.orderJobs,
+        arrayFromPayload(payload.orderJobs),
+        (item) => item.id,
+      )
+      const nextBillingContacts = mergeRecordsByKey(
+        currentState.billingContacts,
+        arrayFromPayload(payload.billingContacts),
+        (item) => item.id,
+      )
+      const nextBillets = reconcileBilletProductionStatuses(
+        mergeRecordsByKey(
+          currentState.billets,
+          arrayFromPayload(payload.billets),
+          (item) => item.barcode || item.id,
+        ),
+        nextProducedBats,
+      )
+      const nextState = {
+        ok: true,
+        billets: nextBillets,
+        players: nextPlayers,
+        producedBats: nextProducedBats,
+        customBatModels: nextCustomBatModels,
+        orderJobs: nextOrderJobs,
+        billingContacts: nextBillingContacts,
+      }
+      const patch = buildStatePatchFromStates(currentState, nextState)
+      const applied = await applyStatePatch(patch, { ensureDefinitions: false })
 
-    await Promise.all([
-      upsertRecords(resourceConfigs.billets, nextBillets),
-      upsertRecords(resourceConfigs.players, nextPlayers),
-      upsertRecords(resourceConfigs.producedBats, nextProducedBats),
-      upsertRecords(resourceConfigs.customBatModels, nextCustomBatModels),
-      upsertRecords(resourceConfigs.orderJobs, nextOrderJobs, {
-        deleteMissing: false,
-      }),
-      upsertRecords(resourceConfigs.billingContacts, nextBillingContacts, {
-        deleteMissing: false,
-      }),
-    ])
-
-    await syncOrderJobMetafields(nextOrderJobs)
-    primeStateCache({
-      ok: true,
-      billets: nextBillets,
-      players: nextPlayers,
-      producedBats: nextProducedBats,
-      customBatModels: nextCustomBatModels,
-      orderJobs: nextOrderJobs,
-      billingContacts: nextBillingContacts,
+      primeStateCache(nextState)
+      return applied
     })
 
     response.json({
       ok: true,
       syncedAt: new Date().toISOString(),
+      mode: 'full-compat-diff',
+      applied: result.applied,
     })
   } catch (error) {
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify sync error.',
+    })
+  }
+})
+
+app.patch('/api/state', requireInternalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const result = await enqueueStateWrite(() => applyStatePatch(request.body ?? {}))
+    response.json({
+      ok: true,
+      syncedAt: new Date().toISOString(),
+      mode: 'delta',
+      applied: result.applied,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown Shopify delta sync error.',
     })
   }
 })
@@ -1379,6 +1399,164 @@ function arrayFromPayload(value) {
   return Array.isArray(value) ? value : []
 }
 
+function enqueueStateWrite(operation) {
+  const queued = stateWriteQueue.catch(() => undefined).then(operation)
+  stateWriteQueue = queued.catch(() => undefined)
+  return queued
+}
+
+function getStateResourcePatchConfigs() {
+  return [
+    {
+      key: 'billets',
+      config: resourceConfigs.billets,
+      getKey: (item) => item.barcode || item.id,
+    },
+    {
+      key: 'players',
+      config: resourceConfigs.players,
+      getKey: (item) => item.id || `${item.profileKind}:${item.playerName}`,
+    },
+    {
+      key: 'producedBats',
+      config: resourceConfigs.producedBats,
+      getKey: (item) => item.id || item.createdAt,
+    },
+    {
+      key: 'customBatModels',
+      config: resourceConfigs.customBatModels,
+      getKey: (item) => item.id,
+    },
+    {
+      key: 'orderJobs',
+      config: resourceConfigs.orderJobs,
+      getKey: (item) => item.id,
+    },
+    {
+      key: 'billingContacts',
+      config: resourceConfigs.billingContacts,
+      getKey: (item) => item.id,
+    },
+  ]
+}
+
+function normalizeStatePatch(payload) {
+  const patch = Object.fromEntries(
+    getStateResourcePatchConfigs().map((entry) => [
+      entry.key,
+      arrayFromPayload(payload?.[entry.key]).filter(Boolean),
+    ]),
+  )
+  patch.deletes = Object.fromEntries(
+    getStateResourcePatchConfigs().map((entry) => [
+      entry.key,
+      arrayFromPayload(payload?.deletes?.[entry.key])
+        .map((id) => cleanString(id))
+        .filter(Boolean),
+    ]),
+  )
+
+  return patch
+}
+
+function getChangedRecords(base, next, getKey) {
+  const baseRecords = new Map()
+  for (const item of arrayFromPayload(base)) {
+    const key = cleanString(getKey(item))
+    if (key) baseRecords.set(key, JSON.stringify(item))
+  }
+
+  return arrayFromPayload(next).filter((item) => {
+    const key = cleanString(getKey(item))
+    if (!key) return false
+    return baseRecords.get(key) !== JSON.stringify(item)
+  })
+}
+
+function buildStatePatchFromStates(baseState, nextState) {
+  const patch = {}
+  for (const entry of getStateResourcePatchConfigs()) {
+    const changedRecords = getChangedRecords(
+      baseState?.[entry.key],
+      nextState?.[entry.key],
+      entry.getKey,
+    )
+    if (changedRecords.length > 0) {
+      patch[entry.key] = changedRecords
+    }
+  }
+
+  return patch
+}
+
+function applyStatePatchToCachedState(state, patch) {
+  if (!state) return null
+
+  const nextState = {
+    ok: true,
+    billets: arrayFromPayload(state.billets),
+    players: arrayFromPayload(state.players),
+    producedBats: arrayFromPayload(state.producedBats),
+    customBatModels: arrayFromPayload(state.customBatModels),
+    orderJobs: arrayFromPayload(state.orderJobs),
+    billingContacts: arrayFromPayload(state.billingContacts),
+  }
+
+  for (const entry of getStateResourcePatchConfigs()) {
+    const items = arrayFromPayload(patch?.[entry.key])
+    const deletedIds = new Set(arrayFromPayload(patch?.deletes?.[entry.key]).map((id) => cleanString(id)))
+    if (deletedIds.size > 0) {
+      nextState[entry.key] = nextState[entry.key].filter((item) => {
+        const id = cleanString(item?.id)
+        const key = cleanString(entry.getKey(item))
+        return !deletedIds.has(id) && !deletedIds.has(key)
+      })
+    }
+    if (items.length === 0) continue
+    nextState[entry.key] = mergeRecordsByKey(nextState[entry.key], items, entry.getKey)
+  }
+
+  return nextState
+}
+
+async function applyStatePatch(payload, options = {}) {
+  if (options.ensureDefinitions !== false) {
+    await ensureDefinitions()
+  }
+
+  const patch = normalizeStatePatch(payload)
+  const cachedStateBeforeWrite = stateCacheValue
+  const applied = {}
+
+  for (const entry of getStateResourcePatchConfigs()) {
+    const items = patch[entry.key]
+    const deletedIds = patch.deletes[entry.key]
+    applied[entry.key] = items.length
+    applied[`${entry.key}Deleted`] = deletedIds.length
+
+    for (const id of deletedIds) {
+      await deleteRecord(entry.config, id)
+    }
+
+    for (const item of items) {
+      await upsertRecord(entry.config, item)
+    }
+  }
+
+  if (patch.orderJobs.length > 0) {
+    await syncOrderJobMetafields(patch.orderJobs)
+  }
+
+  const patchedCache = applyStatePatchToCachedState(cachedStateBeforeWrite, patch)
+  if (patchedCache) {
+    primeStateCache(patchedCache)
+  } else {
+    invalidateStateCache()
+  }
+
+  return { applied }
+}
+
 function mergeRecordsByKey(base, overrides, getKey) {
   const merged = new Map()
 
@@ -1684,6 +1862,56 @@ async function upsertRecord(config, item) {
 
   invalidateStateCache()
   return handle
+}
+
+async function deleteRecord(config, id) {
+  const handle = sanitizeHandle(id)
+  if (!handle) return false
+
+  const existing = await shopifyGraphQL(
+    `
+      query MetaobjectIdByHandle($handle: MetaobjectHandleInput!) {
+        metaobjectByHandle(handle: $handle) {
+          id
+        }
+      }
+    `,
+    {
+      handle: {
+        type: config.type,
+        handle,
+      },
+    },
+  )
+  const metaobjectId = existing?.data?.metaobjectByHandle?.id
+  if (!metaobjectId) return false
+
+  const result = await shopifyGraphQL(
+    `
+      mutation DeleteMetaobject($id: ID!) {
+        metaobjectDelete(id: $id) {
+          deletedId
+          userErrors {
+            field
+            message
+            code
+          }
+        }
+      }
+    `,
+    { id: metaobjectId },
+  )
+  const errors = result?.data?.metaobjectDelete?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(
+      `Metaobject delete error for ${config.type}/${handle}: ${errors
+        .map((item) => item.message)
+        .join(', ')}`,
+    )
+  }
+
+  invalidateStateCache()
+  return true
 }
 
 async function getDefinitionByType(type) {
