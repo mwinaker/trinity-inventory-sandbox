@@ -83,7 +83,8 @@ const rushProductionSurchargeAmount = normalizePositiveMoneyAmount(
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const internalSessionCookieName = 'trinity_internal_session'
-const internalSessionMaxAgeMs = 12 * 60 * 60 * 1000
+const internalSessionMaxAgeDays = 90
+const internalSessionMaxAgeMs = internalSessionMaxAgeDays * 24 * 60 * 60 * 1000
 const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
 const internalSessionSecret =
   process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
