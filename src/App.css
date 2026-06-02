@@ -964,6 +964,13 @@ button:hover {
   background: #fffaf0;
 }
 
+.bat-card-heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
 .bat-card span,
 .compatible-list span {
   display: block;

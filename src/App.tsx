@@ -109,6 +109,11 @@ type BatVariation = {
   notes: string
 }
 
+type EditingVariantTarget = {
+  profileId: string
+  variantId: string
+}
+
 type PlayerProfile = {
   id: string
   profileKind: ProfileKind
@@ -702,6 +707,21 @@ const emptyBat: Omit<BatVariation, 'id'> = {
   idealBilletWeight: '',
   compatibleBilletIds: [],
   notes: '',
+}
+
+function createBatDraftFromVariation(bat: BatVariation): Omit<BatVariation, 'id'> {
+  return {
+    modelNumber: bat.modelNumber,
+    length: bat.length,
+    weight: bat.weight,
+    source: bat.source,
+    species: bat.species,
+    woodTier: bat.woodTier,
+    colorPreferences: bat.colorPreferences,
+    idealBilletWeight: bat.idealBilletWeight,
+    compatibleBilletIds: [...bat.compatibleBilletIds],
+    notes: bat.notes,
+  }
 }
 
 const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
@@ -3035,6 +3055,7 @@ function InternalApp() {
   const [playerNameDraft, setPlayerNameDraft] = useState('')
   const [batDraft, setBatDraft] = useState(emptyBat)
   const [variantTargetProfileId, setVariantTargetProfileId] = useState<string | null>(null)
+  const [editingVariantTarget, setEditingVariantTarget] = useState<EditingVariantTarget | null>(null)
   const [playerQuery, setPlayerQuery] = useState('')
   const [scannerMessage, setScannerMessage] = useState('')
   const [isScanning, setIsScanning] = useState(false)
@@ -3964,16 +3985,43 @@ function InternalApp() {
       return
     }
 
-    const newBat = {
+    const savedBat: BatVariation = {
       ...batDraft,
-      id: createId('bat'),
+      id: editingVariantTarget?.variantId ?? createId('bat'),
       modelNumber: batDraft.modelNumber.trim(),
       weight: batDraft.weight.trim(),
       source: batDraft.source,
       idealBilletWeight: batDraft.idealBilletWeight.trim(),
     }
 
+    if (editingVariantTarget) {
+      setPlayers((current) =>
+        current.map((player) =>
+          player.id === editingVariantTarget.profileId
+            ? {
+                ...player,
+                playerName: profileName,
+                bats: player.bats.map((bat) =>
+                  bat.id === editingVariantTarget.variantId ? savedBat : bat,
+                ),
+              }
+            : player,
+        ),
+      )
+
+      resetProfileDraft()
+      return
+    }
+
     setPlayers((current) => {
+      if (variantTargetProfileId) {
+        return current.map((player) =>
+          player.id === variantTargetProfileId
+            ? { ...player, bats: [savedBat, ...player.bats] }
+            : player,
+        )
+      }
+
       const existingProfile = current.find(
         (player) =>
           player.profileKind === profileKindDraft &&
@@ -3983,7 +4031,7 @@ function InternalApp() {
       if (existingProfile) {
         return current.map((player) =>
           player.id === existingProfile.id
-            ? { ...player, bats: [newBat, ...player.bats] }
+            ? { ...player, bats: [savedBat, ...player.bats] }
             : player,
         )
       }
@@ -3993,15 +4041,20 @@ function InternalApp() {
           id: createId('profile'),
           profileKind: profileKindDraft,
           playerName: profileName,
-          bats: [newBat],
+          bats: [savedBat],
         },
         ...current,
       ]
     })
 
+    resetProfileDraft()
+  }
+
+  function resetProfileDraft() {
     setPlayerNameDraft('')
     setBatDraft(emptyBat)
     setVariantTargetProfileId(null)
+    setEditingVariantTarget(null)
   }
 
   function startAddVariant(profile: PlayerProfile) {
@@ -4010,6 +4063,17 @@ function InternalApp() {
     setPlayerNameDraft(profile.playerName)
     setBatDraft(emptyBat)
     setVariantTargetProfileId(profile.id)
+    setEditingVariantTarget(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function startEditVariant(profile: PlayerProfile, bat: BatVariation) {
+    setActiveSection('players')
+    setProfileKindDraft(profile.profileKind)
+    setPlayerNameDraft(profile.playerName)
+    setBatDraft(createBatDraftFromVariation(bat))
+    setVariantTargetProfileId(null)
+    setEditingVariantTarget({ profileId: profile.id, variantId: bat.id })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -5798,16 +5862,18 @@ function InternalApp() {
         <section className="profiles-page">
           <section className="panel profile-entry-panel">
             <div className="section-heading">
-              <p className="eyebrow">Add pro player</p>
-              <h2>Store a bat profile</h2>
+              <p className="eyebrow">{editingVariantTarget ? 'Edit pro player' : 'Add pro player'}</p>
+              <h2>{editingVariantTarget ? 'Edit saved variant' : 'Store a bat profile'}</h2>
             </div>
 
             <form className="bat-form profile-entry-form" onSubmit={addProfileBat}>
               <div className="form-instructions">
                 <strong>
-                  {variantTargetProfileId
-                    ? `Add a new variant to ${playerNameDraft || 'this profile'}`
-                    : 'Enter a pro player bat record'}
+                  {editingVariantTarget
+                    ? `Edit variant for ${playerNameDraft || 'this profile'}`
+                    : variantTargetProfileId
+                      ? `Add a new variant to ${playerNameDraft || 'this profile'}`
+                      : 'Enter a pro player bat record'}
                 </strong>
                 <p>
                   Add the model, finished bat specs, wood species, wood tier, color notes, and
@@ -5815,7 +5881,12 @@ function InternalApp() {
                   all MLB-caliber storage billets. If the name already exists, this saves as
                   another bat variation under that profile.
                 </p>
-                {variantTargetProfileId ? (
+                {editingVariantTarget ? (
+                  <p>
+                    Changes will update the saved variant and keep its matched billet lookup
+                    connected to this profile.
+                  </p>
+                ) : variantTargetProfileId ? (
                   <p>
                     This will be saved inside the existing pro player profile for {playerNameDraft}.
                   </p>
@@ -5830,7 +5901,9 @@ function InternalApp() {
                     placeholder="Example: Corey Seager"
                     onChange={(event) => {
                       setPlayerNameDraft(event.target.value)
-                      setVariantTargetProfileId(null)
+                      if (!editingVariantTarget) {
+                        setVariantTargetProfileId(null)
+                      }
                     }}
                   />
                 </label>
@@ -5954,19 +6027,19 @@ function InternalApp() {
 
               <div className="input-action-row">
                 <button type="submit">
-                  {variantTargetProfileId ? 'Save variant' : 'Save pro bat profile'}
+                  {editingVariantTarget
+                    ? 'Save changes'
+                    : variantTargetProfileId
+                      ? 'Save variant'
+                      : 'Save pro bat profile'}
                 </button>
-                {variantTargetProfileId ? (
+                {variantTargetProfileId || editingVariantTarget ? (
                   <button
                     type="button"
                     className="secondary-button"
-                    onClick={() => {
-                      setVariantTargetProfileId(null)
-                      setPlayerNameDraft('')
-                      setBatDraft(emptyBat)
-                    }}
+                    onClick={resetProfileDraft}
                   >
-                    Cancel variant
+                    {editingVariantTarget ? 'Cancel edit' : 'Cancel variant'}
                   </button>
                 ) : null}
               </div>
@@ -6017,10 +6090,21 @@ function InternalApp() {
                         return (
                           <article className="bat-card" key={bat.id}>
                             <div>
-                              <span>Model {bat.modelNumber}</span>
-                              <strong>
-                                {bat.length} in / {bat.weight} oz
-                              </strong>
+                              <div className="bat-card-heading">
+                                <div>
+                                  <span>Model {bat.modelNumber}</span>
+                                  <strong>
+                                    {bat.length} in / {bat.weight} oz
+                                  </strong>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="secondary-button compact-button"
+                                  onClick={() => startEditVariant(profile, bat)}
+                                >
+                                  Edit
+                                </button>
+                              </div>
                               <p>
                                 {bat.source || 'No source selected'} / {bat.species} / {bat.woodTier}
                               </p>
