@@ -98,6 +98,10 @@ const stateCacheFilePath =
   process.env.TRINITY_STATE_CACHE_PATH ?? path.join('/tmp', 'trinity-inventory-state-cache.json')
 const catalogCacheTtlMs = 10 * 60 * 1000
 const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
+const billetDiameterWeightCorrectionOz = 1.75
+const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
+const billetSourceOptions = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
+const billetSpeciesOptions = new Set(['Maple', 'Birch', 'Ash'])
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -627,6 +631,7 @@ app.get('/api/billets/game-model-matches', requireInternalAccess, async (request
       species,
       idealBilletWeight,
       toleranceOz: 0.5,
+      diameterCorrectionOz: billetDiameterWeightCorrectionOz,
       count: billets.length,
       billets,
     })
@@ -1718,28 +1723,50 @@ function getGameModelBilletMatches(billets, { source, species, idealBilletWeight
   const normalizedSource = cleanString(source)
   const normalizedSpecies = cleanString(species)
   const targetWeight = Number(idealBilletWeight)
-  const validSources = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
-  const validSpecies = new Set(['Maple', 'Birch', 'Ash'])
   if (
-    !validSources.has(normalizedSource) ||
-    !validSpecies.has(normalizedSpecies) ||
+    !billetSourceOptions.has(normalizedSource) ||
+    !billetSpeciesOptions.has(normalizedSpecies) ||
     !Number.isFinite(targetWeight)
   ) {
     return []
   }
 
-  return arrayFromPayload(billets).filter((billet) => {
-    const billetWeight = Number(billet?.weight)
-    return (
+  return arrayFromPayload(billets)
+    .map((billet) => {
+      const billetWeight = Number(billet?.weight)
+      const adjustedTargetWeight = getAdjustedTargetBilletWeight(
+        normalizedSource,
+        targetWeight,
+        cleanString(billet?.source),
+      )
+
+      return { billet, billetWeight, adjustedTargetWeight }
+    })
+    .filter(({ billet, billetWeight, adjustedTargetWeight }) => (
       cleanString(billet?.status) === 'storage' &&
       isTruthy(billet?.mlbEligible) &&
       cleanString(billet?.hasBarrelKnot) !== 'Yes' &&
-      cleanString(billet?.source) === normalizedSource &&
       cleanString(billet?.species) === normalizedSpecies &&
       Number.isFinite(billetWeight) &&
-      Math.abs(billetWeight - targetWeight) <= 0.5
-    )
-  })
+      Math.abs(billetWeight - adjustedTargetWeight) <= 0.5
+    ))
+    .sort((a, b) => {
+      const aDifference = Math.abs(a.billetWeight - a.adjustedTargetWeight)
+      const bDifference = Math.abs(b.billetWeight - b.adjustedTargetWeight)
+      if (aDifference !== bDifference) return aDifference - bDifference
+      return cleanString(a.billet?.source).localeCompare(cleanString(b.billet?.source))
+    })
+    .map(({ billet }) => billet)
+}
+
+function getAdjustedTargetBilletWeight(referenceSource, idealWeight, candidateSource) {
+  const referenceIsOversized = oversizedBilletDiameterSources.has(referenceSource)
+  const candidateIsOversized = oversizedBilletDiameterSources.has(candidateSource)
+
+  if (referenceIsOversized === candidateIsOversized) return idealWeight
+  return referenceIsOversized
+    ? idealWeight - billetDiameterWeightCorrectionOz
+    : idealWeight + billetDiameterWeightCorrectionOz
 }
 
 function primeCatalogCache(products) {

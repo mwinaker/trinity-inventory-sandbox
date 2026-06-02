@@ -345,6 +345,7 @@ const legacyLocalStateKeys = [
 const standardBilletLength = 37
 const standardBilletDiameter = 2.75
 const rjBilletDiameter = 2.79
+const billetDiameterWeightCorrectionOz = 1.75
 const defaultMoisture = 8
 const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
 const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
@@ -356,6 +357,7 @@ const sourceGradeOptions: Record<Source, Grade[]> = {
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Cahan', 'Champeau']
+const oversizedDiameterSources = new Set<Source>(["RJ's Tree Farms", 'Cahan'])
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
 const rushProductionSurchargeUnitAmount = 50
@@ -804,23 +806,56 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   return Math.round(weightScore + lengthScore + gradeScore + moistureScore)
 }
 
+function getAdjustedTargetBilletWeight(
+  referenceSource: Source,
+  idealWeight: number,
+  candidateSource: Source,
+) {
+  const referenceIsOversized = oversizedDiameterSources.has(referenceSource)
+  const candidateIsOversized = oversizedDiameterSources.has(candidateSource)
+
+  if (referenceIsOversized === candidateIsOversized) return idealWeight
+  return referenceIsOversized
+    ? idealWeight - billetDiameterWeightCorrectionOz
+    : idealWeight + billetDiameterWeightCorrectionOz
+}
+
 function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
   const idealWeight = Number(bat.idealBilletWeight)
   if (!bat.source || !Number.isFinite(idealWeight)) return []
 
-  return billets.filter((billet) => {
-    const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
+  return billets
+    .map((billet) => {
+      const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
+      const adjustedTargetWeight = getAdjustedTargetBilletWeight(
+        bat.source as Source,
+        idealWeight,
+        billet.source,
+      )
 
-    return (
-      billet.status === 'storage' &&
-      billet.mlbEligible &&
-      billet.hasBarrelKnot !== 'Yes' &&
-      billet.source === bat.source &&
-      billet.species === bat.species &&
-      billetWeight !== null &&
-      Math.abs(billetWeight - idealWeight) <= 0.5
+      return {
+        billet,
+        billetWeight,
+        adjustedTargetWeight,
+      }
+    })
+    .filter(({ billet, billetWeight, adjustedTargetWeight }) =>
+      (
+        billet.status === 'storage' &&
+        billet.mlbEligible &&
+        billet.hasBarrelKnot !== 'Yes' &&
+        billet.species === bat.species &&
+        billetWeight !== null &&
+        Math.abs(billetWeight - adjustedTargetWeight) <= 0.5
+      ),
     )
-  })
+    .sort((a, b) => {
+      const aDifference = Math.abs((a.billetWeight ?? 0) - a.adjustedTargetWeight)
+      const bDifference = Math.abs((b.billetWeight ?? 0) - b.adjustedTargetWeight)
+      if (aDifference !== bDifference) return aDifference - bDifference
+      return compareText(a.billet.source, b.billet.source) || compareWeight(a.billet, b.billet, 'asc')
+    })
+    .map(({ billet }) => billet)
 }
 
 function isProPlayerProfile(profile: PlayerProfile) {
@@ -1619,7 +1654,7 @@ function parseQuickEntry(
 
 function getBilletLabel(billet: Billet) {
   const trophyText = billet.trophyEligible ? ', trophy capable' : ''
-  return `${billet.barcode} - ${billet.species} ${billet.grade}${trophyText}, ${billet.weight || 'no weight'} oz`
+  return `${billet.barcode} - ${billet.source}, ${billet.species} ${billet.grade}${trophyText}, ${billet.weight || 'no weight'} oz`
 }
 
 function getBatModelName(modelId: string, models: BatModelProduct[]) {
@@ -5776,8 +5811,9 @@ function InternalApp() {
                 </strong>
                 <p>
                   Add the model, finished bat specs, wood species, wood tier, color notes, and
-                  ideal billet weight. If the name already exists, this saves as another bat
-                  variation under that profile.
+                  ideal billet weight. Source sets the weight scale for diameter correction across
+                  all MLB-caliber storage billets. If the name already exists, this saves as
+                  another bat variation under that profile.
                 </p>
                 {variantTargetProfileId ? (
                   <p>
@@ -5999,7 +6035,10 @@ function InternalApp() {
                                 {profileBilletMatches.length === 1 ? '' : 's'}
                               </strong>
                               {profileBilletMatches.length === 0 ? (
-                                <p>No MLB storage billets match the source, species, and ideal weight.</p>
+                                <p>
+                                  No MLB storage billets match the source-adjusted species and
+                                  ideal weight.
+                                </p>
                               ) : (
                                 profileBilletMatches.map((billet) => (
                                   <p key={billet.id}>{getBilletLabel(billet)}</p>
