@@ -100,6 +100,7 @@ type BatVariation = {
   modelNumber: string
   length: number | ''
   weight: string
+  source: Source | ''
   species: Species
   woodTier: WoodTier
   colorPreferences: string
@@ -629,6 +630,7 @@ const seedPlayers: PlayerProfile[] = [
         modelNumber: 'CS271',
         length: 34,
         weight: '32',
+        source: 'Great Lakes Veneer',
         species: 'Birch',
         woodTier: 'Prime',
         colorPreferences: 'All black',
@@ -691,6 +693,7 @@ const emptyBat: Omit<BatVariation, 'id'> = {
   modelNumber: '',
   length: '',
   weight: '',
+  source: '',
   species: 'Maple',
   woodTier: 'Prime',
   colorPreferences: '',
@@ -803,7 +806,7 @@ function getFitScore(billet: Billet, build: CustomBuild) {
 
 function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
   const idealWeight = Number(bat.idealBilletWeight)
-  if (!Number.isFinite(idealWeight)) return []
+  if (!bat.source || !Number.isFinite(idealWeight)) return []
 
   return billets.filter((billet) => {
     const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
@@ -812,6 +815,7 @@ function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
       billet.status === 'storage' &&
       billet.mlbEligible &&
       billet.hasBarrelKnot !== 'Yes' &&
+      billet.source === bat.source &&
       billet.species === bat.species &&
       billetWeight !== null &&
       Math.abs(billetWeight - idealWeight) <= 0.5
@@ -1033,6 +1037,7 @@ function normalizeBatVariation(record: Partial<BatVariation> & Pick<BatVariation
     modelNumber: record.modelNumber ?? '',
     length: record.length ?? '',
     weight: record.weight ?? '',
+    source: sourceOptions.includes(record.source as Source) ? (record.source as Source) : '',
     species: speciesOptions.includes(record.species as Species) ? (record.species as Species) : 'Maple',
     woodTier: woodTierOptions.includes(record.woodTier as WoodTier)
       ? (record.woodTier as WoodTier)
@@ -1051,6 +1056,18 @@ function inferSpeciesFromText(value: string): Species | null {
   return speciesOptions.find((species) => normalized.includes(species.toLowerCase())) ?? null
 }
 
+function inferSourceFromText(value: string): Source | null {
+  const normalized = value.toLowerCase()
+  if (normalized.includes('great lakes') || normalized.includes('glv')) return 'Great Lakes Veneer'
+  if (normalized.includes('champeau')) return 'Champeau'
+  if (normalized.includes('cahan')) return 'Cahan'
+  if (normalized.includes('rj') || normalized.includes("rj's") || normalized.includes('tree farm')) {
+    return "RJ's Tree Farms"
+  }
+
+  return null
+}
+
 function inferBilletWeightFromText(value: string) {
   const match = value.match(/\b(\d{2,3}(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b/i)
   const weight = match?.[1] ? Number(match[1]) : null
@@ -1061,19 +1078,20 @@ function hydratePlayerProfileBilletTargets(profile: PlayerProfile, billets: Bill
   return {
     ...profile,
     bats: profile.bats.map((bat) => {
-      if (bat.idealBilletWeight.trim()) return bat
-
       const legacyBillet = bat.compatibleBilletIds
         .map((id) => billets.find((billet) => billet.id === id))
         .find((billet): billet is Billet => Boolean(billet))
       const inferredWeight =
-        typeof legacyBillet?.weight === 'number'
+        bat.idealBilletWeight.trim() ||
+        (typeof legacyBillet?.weight === 'number'
           ? String(legacyBillet.weight)
-          : inferBilletWeightFromText(bat.notes)
+          : inferBilletWeightFromText(bat.notes))
+      const inferredSource = bat.source || legacyBillet?.source || inferSourceFromText(bat.notes)
       const inferredSpecies = legacyBillet?.species ?? inferSpeciesFromText(bat.notes)
 
       return {
         ...bat,
+        source: inferredSource ?? bat.source,
         species: inferredSpecies ?? bat.species,
         idealBilletWeight: inferredWeight,
       }
@@ -3391,6 +3409,7 @@ function InternalApp() {
       ...player.bats.flatMap((bat) => [
         bat.modelNumber,
         bat.weight,
+        bat.source,
         bat.species,
         bat.woodTier,
         bat.idealBilletWeight,
@@ -3904,6 +3923,7 @@ function InternalApp() {
       !batDraft.modelNumber.trim() ||
       batDraft.length === '' ||
       !batDraft.weight.trim() ||
+      !batDraft.source ||
       !batDraft.idealBilletWeight.trim()
     ) {
       return
@@ -3914,6 +3934,7 @@ function InternalApp() {
       id: createId('bat'),
       modelNumber: batDraft.modelNumber.trim(),
       weight: batDraft.weight.trim(),
+      source: batDraft.source,
       idealBilletWeight: batDraft.idealBilletWeight.trim(),
     }
 
@@ -5832,6 +5853,20 @@ function InternalApp() {
 
               <div className="form-row">
                 <label>
+                  Source
+                  <select
+                    value={batDraft.source}
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, source: event.target.value as Source | '' })
+                    }
+                  >
+                    <option value="">Select source</option>
+                    {sourceOptions.map((source) => (
+                      <option key={source}>{source}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Wood species
                   <select
                     value={batDraft.species}
@@ -5844,6 +5879,9 @@ function InternalApp() {
                     ))}
                   </select>
                 </label>
+              </div>
+
+              <div className="form-row">
                 <label>
                   Wood tier
                   <select
@@ -5857,18 +5895,17 @@ function InternalApp() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Color preferences
+                  <input
+                    value={batDraft.colorPreferences}
+                    placeholder="Example: all black"
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, colorPreferences: event.target.value })
+                    }
+                  />
+                </label>
               </div>
-
-              <label>
-                Color preferences
-                <input
-                  value={batDraft.colorPreferences}
-                  placeholder="Example: all black"
-                  onChange={(event) =>
-                    setBatDraft({ ...batDraft, colorPreferences: event.target.value })
-                  }
-                />
-              </label>
 
               <label className="notes-field">
                 Notes
@@ -5908,7 +5945,7 @@ function InternalApp() {
               </div>
               <input
                 aria-label="Search pro player profiles"
-                placeholder="Search pro player, model, species, weight, wood tier..."
+                placeholder="Search pro player, model, source, species, weight, wood tier..."
                 value={playerQuery}
                 onChange={(event) => setPlayerQuery(event.target.value)}
               />
@@ -5949,7 +5986,7 @@ function InternalApp() {
                                 {bat.length} in / {bat.weight} oz
                               </strong>
                               <p>
-                                {bat.species} / {bat.woodTier}
+                                {bat.source || 'No source selected'} / {bat.species} / {bat.woodTier}
                               </p>
                               <p>Ideal billet: {bat.idealBilletWeight || 'N/A'} oz</p>
                               <p>{bat.colorPreferences || 'No color preferences saved.'}</p>
@@ -5962,7 +5999,7 @@ function InternalApp() {
                                 {profileBilletMatches.length === 1 ? '' : 's'}
                               </strong>
                               {profileBilletMatches.length === 0 ? (
-                                <p>No MLB storage billets match the species and ideal weight.</p>
+                                <p>No MLB storage billets match the source, species, and ideal weight.</p>
                               ) : (
                                 profileBilletMatches.map((billet) => (
                                   <p key={billet.id}>{getBilletLabel(billet)}</p>

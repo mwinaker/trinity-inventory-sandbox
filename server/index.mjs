@@ -611,13 +611,19 @@ app.get('/api/billets/game-model-matches', requireInternalAccess, async (request
       return
     }
 
+    const source = cleanString(request.query?.source)
     const species = cleanString(request.query?.species)
     const idealBilletWeight = cleanString(request.query?.idealBilletWeight)
     const state = await getSharedState()
-    const billets = getGameModelBilletMatches(state.billets, { species, idealBilletWeight })
+    const billets = getGameModelBilletMatches(state.billets, {
+      source,
+      species,
+      idealBilletWeight,
+    })
 
     response.json({
       ok: true,
+      source,
       species,
       idealBilletWeight,
       toleranceOz: 0.5,
@@ -1708,11 +1714,19 @@ function reconcileBilletProductionStatuses(billets, producedBats) {
   )
 }
 
-function getGameModelBilletMatches(billets, { species, idealBilletWeight }) {
+function getGameModelBilletMatches(billets, { source, species, idealBilletWeight }) {
+  const normalizedSource = cleanString(source)
   const normalizedSpecies = cleanString(species)
   const targetWeight = Number(idealBilletWeight)
+  const validSources = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
   const validSpecies = new Set(['Maple', 'Birch', 'Ash'])
-  if (!validSpecies.has(normalizedSpecies) || !Number.isFinite(targetWeight)) return []
+  if (
+    !validSources.has(normalizedSource) ||
+    !validSpecies.has(normalizedSpecies) ||
+    !Number.isFinite(targetWeight)
+  ) {
+    return []
+  }
 
   return arrayFromPayload(billets).filter((billet) => {
     const billetWeight = Number(billet?.weight)
@@ -1720,6 +1734,7 @@ function getGameModelBilletMatches(billets, { species, idealBilletWeight }) {
       cleanString(billet?.status) === 'storage' &&
       isTruthy(billet?.mlbEligible) &&
       cleanString(billet?.hasBarrelKnot) !== 'Yes' &&
+      cleanString(billet?.source) === normalizedSource &&
       cleanString(billet?.species) === normalizedSpecies &&
       Number.isFinite(billetWeight) &&
       Math.abs(billetWeight - targetWeight) <= 0.5
