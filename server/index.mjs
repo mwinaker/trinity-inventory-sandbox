@@ -126,6 +126,7 @@ const resourceConfigs = {
         fieldValue('barcode', item.barcode),
         fieldValue('species', item.species),
         fieldValue('grade', item.grade),
+        fieldValue('trophy_eligible', toBooleanValue(item.trophyEligible)),
         fieldValue('mlb_eligible', toBooleanValue(item.mlbEligible)),
         fieldValue('has_barrel_knot', toLegacyBarrelKnotValue(item.hasBarrelKnot)),
         fieldValue('barrel_knot_status', item.hasBarrelKnot),
@@ -143,6 +144,7 @@ const resourceConfigs = {
       definitionField('barcode', 'Barcode', 'single_line_text_field'),
       definitionField('species', 'Species', 'single_line_text_field'),
       definitionField('grade', 'Grade', 'single_line_text_field'),
+      definitionField('trophy_eligible', 'Trophy Eligible', 'boolean'),
       definitionField('mlb_eligible', 'MLB Eligible', 'boolean'),
       definitionField('has_barrel_knot', 'Barrel Knot', 'boolean'),
       definitionField('barrel_knot_status', 'Barrel Knot Status', 'single_line_text_field'),
@@ -172,7 +174,7 @@ const resourceConfigs = {
     },
     fieldDefinitions: [
       definitionField('profile_kind', 'Profile Kind', 'single_line_text_field'),
-      definitionField('player_name', 'Player or Trainer Name', 'single_line_text_field'),
+      definitionField('player_name', 'Pro Player Name', 'single_line_text_field'),
       definitionField('bats_json', 'Bats JSON', 'json'),
     ],
   },
@@ -593,6 +595,40 @@ app.get('/api/state', requireInternalAccess, async (_request, response) => {
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify sync error.',
+    })
+  }
+})
+
+app.get('/api/billets/game-model-matches', requireInternalAccess, async (request, response) => {
+  try {
+    response.set('Cache-Control', 'no-store')
+
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const species = cleanString(request.query?.species)
+    const idealBilletWeight = cleanString(request.query?.idealBilletWeight)
+    const state = await getSharedState()
+    const billets = getGameModelBilletMatches(state.billets, { species, idealBilletWeight })
+
+    response.json({
+      ok: true,
+      species,
+      idealBilletWeight,
+      toleranceOz: 0.5,
+      count: billets.length,
+      billets,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message:
+        error instanceof Error ? error.message : 'Unknown game model billet match error.',
     })
   }
 })
@@ -1670,6 +1706,25 @@ function reconcileBilletProductionStatuses(billets, producedBats) {
         }
       : billet,
   )
+}
+
+function getGameModelBilletMatches(billets, { species, idealBilletWeight }) {
+  const normalizedSpecies = cleanString(species)
+  const targetWeight = Number(idealBilletWeight)
+  const validSpecies = new Set(['Maple', 'Birch', 'Ash'])
+  if (!validSpecies.has(normalizedSpecies) || !Number.isFinite(targetWeight)) return []
+
+  return arrayFromPayload(billets).filter((billet) => {
+    const billetWeight = Number(billet?.weight)
+    return (
+      cleanString(billet?.status) === 'storage' &&
+      isTruthy(billet?.mlbEligible) &&
+      cleanString(billet?.hasBarrelKnot) !== 'Yes' &&
+      cleanString(billet?.species) === normalizedSpecies &&
+      Number.isFinite(billetWeight) &&
+      Math.abs(billetWeight - targetWeight) <= 0.5
+    )
+  })
 }
 
 function primeCatalogCache(products) {
@@ -3502,6 +3557,8 @@ function createStablePeopleRecordId(prefix, ...parts) {
 }
 
 function buildRememberedPlayerFromJob(job) {
+  if (job?.origin !== 'internal_sales') return null
+
   const playerName = cleanString(job?.playerName || job?.customerName)
   if (!playerName) return null
 

@@ -461,6 +461,10 @@ button:hover {
   grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.1fr);
 }
 
+.profiles-page {
+  grid-template-columns: 1fr;
+}
+
 .models-page {
   grid-template-columns: 1fr;
 }

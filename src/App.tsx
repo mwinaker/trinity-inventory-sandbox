@@ -47,7 +47,7 @@ type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'not_required'
 
 type Species = 'Maple' | 'Birch' | 'Ash'
-type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
+type Grade = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau' | 'Cahan'
@@ -58,6 +58,7 @@ type Billet = {
   barcode: string
   species: Species
   grade: Grade
+  trophyEligible: boolean
   mlbEligible: boolean
   hasBarrelKnot: KnotStatus
   source: Source
@@ -83,6 +84,7 @@ type InventorySort =
 
 type SortDirection = 'asc' | 'desc'
 type InventoryMlbFilter = 'yes' | 'no'
+type InventoryTrophyFilter = 'yes' | 'no'
 
 type CustomBuild = {
   model: string
@@ -98,8 +100,10 @@ type BatVariation = {
   modelNumber: string
   length: number | ''
   weight: string
+  species: Species
   woodTier: WoodTier
   colorPreferences: string
+  idealBilletWeight: string
   compatibleBilletIds: string[]
   notes: string
 }
@@ -342,11 +346,11 @@ const standardBilletDiameter = 2.75
 const rjBilletDiameter = 2.79
 const defaultMoisture = 8
 const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
-const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
+const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceGradeOptions: Record<Source, Grade[]> = {
-  "RJ's Tree Farms": ['Prime', 'Select', 'Choice', 'Trophy'],
-  'Great Lakes Veneer': ['Prime', 'Select', 'Choice', 'Trophy'],
-  Cahan: ['Prime', 'Select', 'Choice', 'Trophy'],
+  "RJ's Tree Farms": ['Prime', 'Select', 'Choice'],
+  'Great Lakes Veneer': ['Prime', 'Select', 'Choice'],
+  Cahan: ['Prime', 'Select', 'Choice'],
   Champeau: ['Pro', 'Semi-Pro', 'Promo', 'Blem'],
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
@@ -457,7 +461,7 @@ const logoColorOptions = [
   'Lime Green',
 ]
 const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
-const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
+const autoNonMlbGrades = new Set<Grade>(['Choice', 'Semi-Pro', 'Promo', 'Blem'])
 
 const billetCostReferences: BilletCostReference[] = [
   { id: 'glv-prime-light-mid', source: 'Great Lakes Veneer', species: 'Maple', tier: 'Prime', weightRange: 'Light/Midweight 50/50 mix', price: '$59.95', priceValue: 59.95, notes: 'GLV 2026 Maple Standard Pricing.' },
@@ -566,6 +570,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0001',
     species: 'Birch',
     grade: 'Prime',
+    trophyEligible: false,
     mlbEligible: true,
     hasBarrelKnot: 'No',
     source: 'Great Lakes Veneer',
@@ -582,6 +587,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0002',
     species: 'Birch',
     grade: 'Select',
+    trophyEligible: false,
     mlbEligible: true,
     hasBarrelKnot: 'No',
     source: 'Great Lakes Veneer',
@@ -598,6 +604,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0003',
     species: 'Maple',
     grade: 'Pro',
+    trophyEligible: false,
     mlbEligible: false,
     hasBarrelKnot: 'No',
     source: 'Champeau',
@@ -622,8 +629,10 @@ const seedPlayers: PlayerProfile[] = [
         modelNumber: 'CS271',
         length: 34,
         weight: '32',
+        species: 'Birch',
         woodTier: 'Prime',
         colorPreferences: 'All black',
+        idealBilletWeight: '91',
         compatibleBilletIds: ['billet-001'],
         notes: 'Uses a 91 oz Prime Birch billet for this Trinity CS271 profile.',
       },
@@ -656,6 +665,7 @@ const emptyBillet: Omit<Billet, 'id'> = {
   barcode: '',
   species: 'Maple',
   grade: 'Prime',
+  trophyEligible: false,
   mlbEligible: true,
   hasBarrelKnot: 'No',
   source: "RJ's Tree Farms",
@@ -681,8 +691,10 @@ const emptyBat: Omit<BatVariation, 'id'> = {
   modelNumber: '',
   length: '',
   weight: '',
+  species: 'Maple',
   woodTier: 'Prime',
   colorPreferences: '',
+  idealBilletWeight: '',
   compatibleBilletIds: [],
   notes: '',
 }
@@ -777,7 +789,6 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   if (build.mlbOnly && !billet.mlbEligible) return 0
   if (build.mlbOnly && billet.hasBarrelKnot === 'Yes') return 0
   if (build.grade === 'Prime' && billet.grade !== 'Prime') return 0
-  if (build.grade === 'Trophy' && billet.grade !== 'Trophy') return 0
   if (standardBilletLength < build.length + 2.5) return 0
 
   const targetBilletWeight = build.targetWeight + 18
@@ -788,6 +799,28 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   const moistureScore = billet.moisture >= 6.5 && billet.moisture <= 9 ? 15 : 5
 
   return Math.round(weightScore + lengthScore + gradeScore + moistureScore)
+}
+
+function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
+  const idealWeight = Number(bat.idealBilletWeight)
+  if (!Number.isFinite(idealWeight)) return []
+
+  return billets.filter((billet) => {
+    const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
+
+    return (
+      billet.status === 'storage' &&
+      billet.mlbEligible &&
+      billet.hasBarrelKnot !== 'Yes' &&
+      billet.species === bat.species &&
+      billetWeight !== null &&
+      Math.abs(billetWeight - idealWeight) <= 0.5
+    )
+  })
+}
+
+function isProPlayerProfile(profile: PlayerProfile) {
+  return profile.profileKind === 'Player' && profile.bats.length > 0
 }
 
 function createId(prefix: string) {
@@ -807,9 +840,22 @@ function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
   return 'No'
 }
 
-function normalizeBillet(billet: Billet): Billet {
+function normalizeTrophyEligible(billet: Partial<Billet> & { grade?: string }) {
+  if (typeof billet.trophyEligible === 'boolean') return billet.trophyEligible
+  return String(billet.grade ?? '').toLowerCase() === 'trophy'
+}
+
+function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)): Billet {
+  const source = sourceOptions.includes(billet.source as Source)
+    ? (billet.source as Source)
+    : "RJ's Tree Farms"
+
   return {
+    ...emptyBillet,
     ...billet,
+    source,
+    grade: normalizeGradeForSource(source, billet.grade),
+    trophyEligible: normalizeTrophyEligible(billet),
     hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
     deliveryDate: billet.deliveryDate ?? '',
     status: normalizeBilletStatus(billet.status),
@@ -836,9 +882,9 @@ function getDeliveryDateOptionsForSource(
   return Array.from(dates).sort((a, b) => b.localeCompare(a))
 }
 
-function normalizeGradeForSource(source: Source, grade: Grade): Grade {
+function normalizeGradeForSource(source: Source, grade: Grade | string | null | undefined): Grade {
   const validGrades = getGradeOptionsForSource(source)
-  return validGrades.includes(grade) ? grade : validGrades[0]
+  return validGrades.includes(grade as Grade) ? (grade as Grade) : validGrades[0]
 }
 
 function normalizeProducedBatRecord(
@@ -859,7 +905,9 @@ function normalizeProducedBatRecord(
     sourceModelId: record.sourceModelId ?? '',
     sourceBilletStatuses,
     billetWeight: record.billetWeight ?? '',
-    billetGrade: record.billetGrade ?? 'Prime',
+    billetGrade: allGradeOptions.includes(record.billetGrade as Grade)
+      ? (record.billetGrade as Grade)
+      : 'Prime',
     cupped: record.cupped ?? 'No',
     modifications: record.modifications ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
@@ -975,7 +1023,61 @@ function normalizePlayerProfile(
     id: record.id,
     profileKind: record.profileKind === 'Trainer' ? 'Trainer' : 'Player',
     playerName: record.playerName ?? '',
-    bats: Array.isArray(record.bats) ? record.bats : [],
+    bats: Array.isArray(record.bats) ? record.bats.map((bat) => normalizeBatVariation(bat)) : [],
+  }
+}
+
+function normalizeBatVariation(record: Partial<BatVariation> & Pick<BatVariation, 'id'>): BatVariation {
+  return {
+    id: record.id,
+    modelNumber: record.modelNumber ?? '',
+    length: record.length ?? '',
+    weight: record.weight ?? '',
+    species: speciesOptions.includes(record.species as Species) ? (record.species as Species) : 'Maple',
+    woodTier: woodTierOptions.includes(record.woodTier as WoodTier)
+      ? (record.woodTier as WoodTier)
+      : 'Prime',
+    colorPreferences: record.colorPreferences ?? '',
+    idealBilletWeight: record.idealBilletWeight ?? '',
+    compatibleBilletIds: Array.isArray(record.compatibleBilletIds)
+      ? record.compatibleBilletIds
+      : [],
+    notes: record.notes ?? '',
+  }
+}
+
+function inferSpeciesFromText(value: string): Species | null {
+  const normalized = value.toLowerCase()
+  return speciesOptions.find((species) => normalized.includes(species.toLowerCase())) ?? null
+}
+
+function inferBilletWeightFromText(value: string) {
+  const match = value.match(/\b(\d{2,3}(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b/i)
+  const weight = match?.[1] ? Number(match[1]) : null
+  return weight !== null && weight >= 70 && weight <= 120 ? String(weight) : ''
+}
+
+function hydratePlayerProfileBilletTargets(profile: PlayerProfile, billets: Billet[]): PlayerProfile {
+  return {
+    ...profile,
+    bats: profile.bats.map((bat) => {
+      if (bat.idealBilletWeight.trim()) return bat
+
+      const legacyBillet = bat.compatibleBilletIds
+        .map((id) => billets.find((billet) => billet.id === id))
+        .find((billet): billet is Billet => Boolean(billet))
+      const inferredWeight =
+        typeof legacyBillet?.weight === 'number'
+          ? String(legacyBillet.weight)
+          : inferBilletWeightFromText(bat.notes)
+      const inferredSpecies = legacyBillet?.species ?? inferSpeciesFromText(bat.notes)
+
+      return {
+        ...bat,
+        species: inferredSpecies ?? bat.species,
+        idealBilletWeight: inferredWeight,
+      }
+    }),
   }
 }
 
@@ -1364,7 +1466,6 @@ function detectGrade(text: string) {
     { grade: 'Semi-Pro', pattern: /\bsemi[-\s]?pro\b/ },
     { grade: 'Blem', pattern: /\bblem\b/ },
     { grade: 'Pro', pattern: /\bpro\b/ },
-    { grade: 'Trophy', pattern: /\btrophy\b/ },
     { grade: 'Choice', pattern: /\bchoice\b/ },
     { grade: 'Select', pattern: /\bselect\b/ },
     { grade: 'Prime', pattern: /\bprime\b/ },
@@ -1468,6 +1569,11 @@ function parseQuickEntry(
 
   if (hasAnyPhrase(normalized, mlbYesPhrases)) next.mlbEligible = true
   if (hasAnyPhrase(normalized, mlbNoPhrases)) next.mlbEligible = false
+  if (/\b(no|not|non)\b[^.\n]{0,20}\btrophy\b/.test(normalized)) {
+    next.trophyEligible = false
+  } else if (/\btrophy\b/.test(normalized)) {
+    next.trophyEligible = true
+  }
   const describesNoBarrelKnot = hasAnyPhrase(normalized, noBarrelKnotPhrases)
   const describesYesBarrelKnot = hasAnyPhrase(normalized, yesBarrelKnotPhrases)
 
@@ -1494,7 +1600,8 @@ function parseQuickEntry(
 }
 
 function getBilletLabel(billet: Billet) {
-  return `${billet.barcode} - ${billet.species} ${billet.grade}, ${billet.weight || 'no weight'} oz`
+  const trophyText = billet.trophyEligible ? ', trophy capable' : ''
+  return `${billet.barcode} - ${billet.species} ${billet.grade}${trophyText}, ${billet.weight || 'no weight'} oz`
 }
 
 function getBatModelName(modelId: string, models: BatModelProduct[]) {
@@ -2819,7 +2926,9 @@ function InternalApp() {
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     const stored = window.localStorage.getItem(playerStorageKey)
     const parsed = stored ? (JSON.parse(stored) as PlayerProfile[]) : seedPlayers
-    return parsed.map((player) => normalizePlayerProfile(player))
+    return parsed
+      .map((player) => normalizePlayerProfile(player))
+      .map((player) => hydratePlayerProfileBilletTargets(player, billets))
   })
   const [producedBats, setProducedBats] = useState<ProducedBatRecord[]>(() => {
     const stored = window.localStorage.getItem(producedBatStorageKey)
@@ -2862,6 +2971,7 @@ function InternalApp() {
   const [sourceFilters, setSourceFilters] = useState<Source[]>([])
   const [gradeFilters, setGradeFilters] = useState<Grade[]>([])
   const [mlbFilters, setMlbFilters] = useState<InventoryMlbFilter[]>([])
+  const [trophyFilters, setTrophyFilters] = useState<InventoryTrophyFilter[]>([])
   const [knotFilters, setKnotFilters] = useState<KnotStatus[]>([])
   const [deliveryDateFilters, setDeliveryDateFilters] = useState<string[]>([])
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
@@ -2886,6 +2996,7 @@ function InternalApp() {
   >(
     'connecting',
   )
+  const [syncRetryNonce, setSyncRetryNonce] = useState(0)
   const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(true)
   const [syncMessage, setSyncMessage] = useState('Connecting to Shopify backend...')
   const videoRef = useRef<HTMLVideoElement | null>(null)
@@ -2994,9 +3105,7 @@ function InternalApp() {
       const remainingPatch = buildRemoteStatePatch(getCurrentRemoteState(), lastSyncedState.current)
       if (hasRemoteStatePatchChanges(remainingPatch)) {
         hasPendingLocalSync.current = true
-        window.setTimeout(() => {
-          void syncRemoteState()
-        }, 0)
+        setSyncRetryNonce((current) => current + 1)
       } else {
         hasPendingLocalSync.current = false
       }
@@ -3037,7 +3146,9 @@ function InternalApp() {
         ? remote.billets.map((billet) => normalizeBillet(billet))
         : []
       const remotePlayers = Array.isArray(remote.players)
-        ? remote.players.map((player) => normalizePlayerProfile(player))
+        ? remote.players
+            .map((player) => normalizePlayerProfile(player))
+            .map((player) => hydratePlayerProfileBilletTargets(player, remoteBillets))
         : []
       const remoteProducedBats = Array.isArray(remote.producedBats)
         ? remote.producedBats.map((record) => normalizeProducedBatRecord(record))
@@ -3114,6 +3225,17 @@ function InternalApp() {
   }, [backendStatus])
 
   useEffect(() => {
+    if (!hasLoadedRemoteState.current || backendStatus !== 'connected') return
+    if (!hasPendingLocalSync.current || syncInFlight.current) return
+
+    const retry = window.setTimeout(() => {
+      void syncRemoteState()
+    }, 0)
+
+    return () => window.clearTimeout(retry)
+  }, [backendStatus, syncRetryNonce])
+
+  useEffect(() => {
     if (backendStatus !== 'connected') return
 
     const refresh = window.setInterval(() => {
@@ -3179,6 +3301,7 @@ function InternalApp() {
     setSourceFilters([])
     setGradeFilters([])
     setMlbFilters([])
+    setTrophyFilters([])
     setKnotFilters([])
     setDeliveryDateFilters([])
     setMinWeightFilter('')
@@ -3191,6 +3314,7 @@ function InternalApp() {
       billet.barcode,
       billet.species,
       billet.grade,
+      billet.trophyEligible ? 'trophy capable' : 'not trophy capable',
       billet.mlbEligible ? 'MLB eligible' : 'not MLB eligible',
       billet.hasBarrelKnot === 'Yes'
         ? 'barrel knot'
@@ -3211,6 +3335,11 @@ function InternalApp() {
     const matchesMlb =
       mlbFilters.length === 0 ||
       mlbFilters.some((filter) => (filter === 'yes' ? billet.mlbEligible : !billet.mlbEligible))
+    const matchesTrophy =
+      trophyFilters.length === 0 ||
+      trophyFilters.some((filter) =>
+        filter === 'yes' ? billet.trophyEligible : !billet.trophyEligible,
+      )
     const matchesKnot = knotFilters.length === 0 || knotFilters.includes(billet.hasBarrelKnot)
     const matchesDelivery =
       deliveryDateFilters.length === 0 || deliveryDateFilters.includes(billet.deliveryDate)
@@ -3229,6 +3358,7 @@ function InternalApp() {
       matchesSource &&
       matchesGrade &&
       matchesMlb &&
+      matchesTrophy &&
       matchesKnot &&
       matchesDelivery &&
       matchesVisibility &&
@@ -3253,18 +3383,19 @@ function InternalApp() {
   }
 
   const filteredPlayers = players.filter((player) => {
+    if (!isProPlayerProfile(player)) return false
+
     const searchable = [
       player.playerName,
       player.profileKind,
       ...player.bats.flatMap((bat) => [
         bat.modelNumber,
         bat.weight,
+        bat.species,
         bat.woodTier,
+        bat.idealBilletWeight,
         bat.colorPreferences,
         bat.notes,
-        ...bat.compatibleBilletIds.map(
-          (id) => billets.find((billet) => billet.id === id)?.barcode ?? id,
-        ),
       ]),
     ]
       .join(' ')
@@ -3772,7 +3903,8 @@ function InternalApp() {
       !profileName ||
       !batDraft.modelNumber.trim() ||
       batDraft.length === '' ||
-      !batDraft.weight.trim()
+      !batDraft.weight.trim() ||
+      !batDraft.idealBilletWeight.trim()
     ) {
       return
     }
@@ -3782,6 +3914,7 @@ function InternalApp() {
       id: createId('bat'),
       modelNumber: batDraft.modelNumber.trim(),
       weight: batDraft.weight.trim(),
+      idealBilletWeight: batDraft.idealBilletWeight.trim(),
     }
 
     setPlayers((current) => {
@@ -3822,18 +3955,6 @@ function InternalApp() {
     setBatDraft(emptyBat)
     setVariantTargetProfileId(profile.id)
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  function toggleCompatibleBillet(id: string) {
-    setBatDraft((current) => {
-      const exists = current.compatibleBilletIds.includes(id)
-      return {
-        ...current,
-        compatibleBilletIds: exists
-          ? current.compatibleBilletIds.filter((billetId) => billetId !== id)
-          : [...current.compatibleBilletIds, id],
-      }
-    })
   }
 
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
@@ -4097,7 +4218,7 @@ function InternalApp() {
                   Quick entry by typing or dictation
                   <textarea
                     value={quickEntry}
-                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB yes, no barrel knot, 48.5 ounces, rack A2"
+                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB yes, trophy no, no barrel knot, 48.5 ounces, rack A2"
                     onChange={(event) => setQuickEntry(event.target.value)}
                   />
                 </label>
@@ -4253,6 +4374,16 @@ function InternalApp() {
                     <option value="yes">Yes</option>
                     <option value="no">No</option>
                   </select>
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={draft.trophyEligible}
+                    onChange={(event) =>
+                      setDraft({ ...draft, trophyEligible: event.target.checked })
+                    }
+                  />
+                  <span>Trophy billet?</span>
                 </label>
                 <label>
                   Knot in barrel?
@@ -4560,6 +4691,31 @@ function InternalApp() {
                   </div>
                 </div>
                 <div className="filter-group">
+                  <p className="filter-group-label">Trophy</p>
+                  <div className="filter-chip-row">
+                    {[
+                      ['yes', 'Trophy capable'],
+                      ['no', 'Not trophy capable'],
+                    ].map(([value, label]) => (
+                      <label
+                        key={value}
+                        className={`filter-chip ${trophyFilters.includes(value as InventoryTrophyFilter) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={trophyFilters.includes(value as InventoryTrophyFilter)}
+                          onChange={() =>
+                            setTrophyFilters((current) =>
+                              toggleSelectedValue(current, value as InventoryTrophyFilter),
+                            )
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
                   <p className="filter-group-label">Knot in barrel</p>
                   <div className="filter-chip-row">
                     {(['No', 'Yes', 'N/A'] as KnotStatus[]).map((status) => (
@@ -4656,6 +4812,7 @@ function InternalApp() {
                       </button>
                     </th>
                     <th>MLB</th>
+                    <th>Trophy</th>
                     <th>Barrel knot</th>
                     <th>
                       <button
@@ -4686,6 +4843,11 @@ function InternalApp() {
                       <td>
                         <span className={billet.mlbEligible ? 'pill yes' : 'pill no'}>
                           {billet.mlbEligible ? 'Yes' : 'No'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={billet.trophyEligible ? 'pill yes' : 'pill no'}>
+                          {billet.trophyEligible ? 'Yes' : 'No'}
                         </span>
                       </td>
                       <td>
@@ -5580,7 +5742,7 @@ function InternalApp() {
         <section className="profiles-page">
           <section className="panel profile-entry-panel">
             <div className="section-heading">
-              <p className="eyebrow">Add Player/Trainer</p>
+              <p className="eyebrow">Add pro player</p>
               <h2>Store a bat profile</h2>
             </div>
 
@@ -5589,40 +5751,26 @@ function InternalApp() {
                 <strong>
                   {variantTargetProfileId
                     ? `Add a new variant to ${playerNameDraft || 'this profile'}`
-                    : 'Enter a new Player or Trainer bat record'}
+                    : 'Enter a pro player bat record'}
                 </strong>
                 <p>
-                  Choose whether this is a Player or Trainer first, then add the model,
-                  finished bat specs, wood tier, color notes, and any billets that can make it.
-                  If the name already exists, this saves as another bat variation under that profile.
+                  Add the model, finished bat specs, wood species, wood tier, color notes, and
+                  ideal billet weight. If the name already exists, this saves as another bat
+                  variation under that profile.
                 </p>
                 {variantTargetProfileId ? (
                   <p>
-                    This will be saved inside the existing {profileKindDraft.toLowerCase()} profile
-                    for {playerNameDraft}.
+                    This will be saved inside the existing pro player profile for {playerNameDraft}.
                   </p>
                 ) : null}
               </div>
 
-              <div className="form-row">
-                <label>
-                  Player or Trainer
-                  <select
-                    value={profileKindDraft}
-                    onChange={(event) => {
-                      setProfileKindDraft(event.target.value as ProfileKind)
-                      setVariantTargetProfileId(null)
-                    }}
-                  >
-                    <option>Player</option>
-                    <option>Trainer</option>
-                  </select>
-                </label>
+              <div className="form-row single-field-row">
                 <label>
                   Name
                   <input
                     value={playerNameDraft}
-                    placeholder={profileKindDraft === 'Player' ? 'Example: Corey Seager' : 'Example: Team Trainer'}
+                    placeholder="Example: Corey Seager"
                     onChange={(event) => {
                       setPlayerNameDraft(event.target.value)
                       setVariantTargetProfileId(null)
@@ -5661,12 +5809,40 @@ function InternalApp() {
 
               <div className="form-row">
                 <label>
-                  Weight
+                  Finished weight
                   <input
                     value={batDraft.weight}
-                    placeholder={profileKindDraft === 'Trainer' ? 'Example: 95+ or 30-33' : 'Example: 32'}
+                    placeholder="Example: 32"
                     onChange={(event) => setBatDraft({ ...batDraft, weight: event.target.value })}
                   />
+                </label>
+                <label>
+                  Ideal billet weight
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={batDraft.idealBilletWeight}
+                    placeholder="Example: 91"
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, idealBilletWeight: event.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Wood species
+                  <select
+                    value={batDraft.species}
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, species: event.target.value as Species })
+                    }
+                  >
+                    {speciesOptions.map((species) => (
+                      <option key={species}>{species}</option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   Wood tier
@@ -5694,34 +5870,18 @@ function InternalApp() {
                 />
               </label>
 
-              <fieldset className="billet-picker">
-                <legend>Billets that can make this model</legend>
-                <div>
-                  {billets.map((billet) => (
-                    <label className="checkbox-row" key={billet.id}>
-                      <input
-                        type="checkbox"
-                        checked={batDraft.compatibleBilletIds.includes(billet.id)}
-                        onChange={() => toggleCompatibleBillet(billet.id)}
-                      />
-                      <span>{getBilletLabel(billet)}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
               <label className="notes-field">
                 Notes
                 <textarea
                   value={batDraft.notes}
-                  placeholder="Feel, balance, knob, cup, trainer use case, or production notes"
+                  placeholder="Feel, balance, knob, cup, pro-player preference, or production notes"
                   onChange={(event) => setBatDraft({ ...batDraft, notes: event.target.value })}
                 />
               </label>
 
               <div className="input-action-row">
                 <button type="submit">
-                  {variantTargetProfileId ? 'Save variant' : 'Save Player/Trainer bat'}
+                  {variantTargetProfileId ? 'Save variant' : 'Save pro bat profile'}
                 </button>
                 {variantTargetProfileId ? (
                   <button
@@ -5747,8 +5907,8 @@ function InternalApp() {
                 <h2>Stored profiles</h2>
               </div>
               <input
-                aria-label="Search players and trainers"
-                placeholder="Search name, type, model, wood tier, color, billet..."
+                aria-label="Search pro player profiles"
+                placeholder="Search pro player, model, species, weight, wood tier..."
                 value={playerQuery}
                 onChange={(event) => setPlayerQuery(event.target.value)}
               />
@@ -5756,13 +5916,13 @@ function InternalApp() {
 
             <div className="profile-results">
               {filteredPlayers.length === 0 ? (
-                <p className="empty-state">No Player/Trainer profiles match that search yet.</p>
+                <p className="empty-state">No pro player profiles match that search yet.</p>
               ) : (
                 filteredPlayers.map((profile) => (
                   <article className="profile-result-card" key={profile.id}>
                     <div className="split-heading">
                       <div>
-                        <span className="profile-type-pill">{profile.profileKind}</span>
+                        <span className="profile-type-pill">Pro player</span>
                         <h3>{profile.playerName}</h3>
                       </div>
                       <div className="profile-actions">
@@ -5778,30 +5938,40 @@ function InternalApp() {
                     </div>
 
                     <div className="bat-list">
-                      {profile.bats.map((bat) => (
-                        <article className="bat-card" key={bat.id}>
-                          <div>
-                            <span>Model {bat.modelNumber}</span>
-                            <strong>
-                              {bat.length} in / {bat.weight} oz
-                            </strong>
-                            <p>Wood tier: {bat.woodTier}</p>
-                            <p>{bat.colorPreferences || 'No color preferences saved.'}</p>
-                            {bat.notes ? <p>{bat.notes}</p> : null}
-                          </div>
-                          <div className="compatible-list">
-                            <span>Compatible billets</span>
-                            {bat.compatibleBilletIds.length === 0 ? (
-                              <p>No billets selected.</p>
-                            ) : (
-                              bat.compatibleBilletIds.map((id) => {
-                                const billet = billets.find((item) => item.id === id)
-                                return <p key={id}>{billet ? getBilletLabel(billet) : id}</p>
-                              })
-                            )}
-                          </div>
-                        </article>
-                      ))}
+                      {profile.bats.map((bat) => {
+                        const profileBilletMatches = getProfileBilletMatches(bat, billets)
+
+                        return (
+                          <article className="bat-card" key={bat.id}>
+                            <div>
+                              <span>Model {bat.modelNumber}</span>
+                              <strong>
+                                {bat.length} in / {bat.weight} oz
+                              </strong>
+                              <p>
+                                {bat.species} / {bat.woodTier}
+                              </p>
+                              <p>Ideal billet: {bat.idealBilletWeight || 'N/A'} oz</p>
+                              <p>{bat.colorPreferences || 'No color preferences saved.'}</p>
+                              {bat.notes ? <p>{bat.notes}</p> : null}
+                            </div>
+                            <div className="compatible-list">
+                              <span>Storage billets that match</span>
+                              <strong>
+                                {profileBilletMatches.length} billet
+                                {profileBilletMatches.length === 1 ? '' : 's'}
+                              </strong>
+                              {profileBilletMatches.length === 0 ? (
+                                <p>No MLB storage billets match the species and ideal weight.</p>
+                              ) : (
+                                profileBilletMatches.map((billet) => (
+                                  <p key={billet.id}>{getBilletLabel(billet)}</p>
+                                ))
+                              )}
+                            </div>
+                          </article>
+                        )
+                      })}
                     </div>
                   </article>
                 ))
