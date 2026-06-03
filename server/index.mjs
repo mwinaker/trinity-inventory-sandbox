@@ -32,6 +32,8 @@ const shopifyApiKey = process.env.SHOPIFY_API_KEY ?? ''
 const shopifyApiSecret = process.env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_WEBHOOK_SECRET ?? ''
 const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? shopifyApiSecret
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
+const draftInvoiceHost =
+  normalizeHostname(process.env.TRINITY_DRAFT_INVOICE_HOST) || normalizeHostname(shopDomain)
 const defaultShippingSpeed = 'standard'
 const draftOrderShippingOptions = {
   standard: {
@@ -765,7 +767,7 @@ app.post('/api/sales-orders/send-draft-invoice', async (request, response) => {
       draftOrder: {
         id: tokenPayload.draftOrderId,
         name: matchingJobs[0]?.shopifyDraftOrderName ?? '',
-        invoiceUrl: matchingJobs[0]?.shopifyDraftInvoiceUrl ?? '',
+        invoiceUrl: normalizeDraftInvoiceUrl(matchingJobs[0]?.shopifyDraftInvoiceUrl),
       },
       orderJobs: matchingJobs,
     })
@@ -1231,11 +1233,16 @@ async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice =
   if (!normalizedDraftOrderId) throw new Error('draftOrderId is required.')
 
   const existingJobs = await listRecords(resourceConfigs.orderJobs)
-  const matchingJobs = existingJobs.filter(
-    (job) =>
-      cleanString(job.shopifyDraftOrderId) === normalizedDraftOrderId &&
-      (!intakeId || cleanString(job.intakeId) === intakeId),
-  )
+  const matchingJobs = existingJobs
+    .filter(
+      (job) =>
+        cleanString(job.shopifyDraftOrderId) === normalizedDraftOrderId &&
+        (!intakeId || cleanString(job.intakeId) === intakeId),
+    )
+    .map((job) => ({
+      ...job,
+      shopifyDraftInvoiceUrl: normalizeDraftInvoiceUrl(job.shopifyDraftInvoiceUrl),
+    }))
 
   if (matchingJobs.length === 0) {
     throw new Error('Could not find the submitted draft invoice in the production queue.')
@@ -1243,7 +1250,10 @@ async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice =
 
   const alreadySent = matchingJobs.every((job) => cleanString(job.invoiceStatus) === 'sent')
   if (sendInvoice && !alreadySent) {
-    await sendDraftOrderInvoice(normalizedDraftOrderId)
+    await sendDraftOrderInvoice(
+      normalizedDraftOrderId,
+      buildDraftOrderInvoiceEmailInput(matchingJobs),
+    )
   }
 
   const now = new Date().toISOString()
@@ -1873,7 +1883,7 @@ async function createDraftOrder(input) {
     throw new Error(`Draft order error: ${errors.map((item) => item.message).join(', ')}`)
   }
 
-  return result?.data?.draftOrderCreate?.draftOrder
+  return normalizeDraftOrderInvoiceUrl(result?.data?.draftOrderCreate?.draftOrder)
 }
 
 async function createPendingOrder(order, options = {}) {
@@ -2031,11 +2041,11 @@ async function completeDraftOrderAsPending(draftOrderId) {
   return result?.data?.draftOrderComplete?.draftOrder
 }
 
-async function sendDraftOrderInvoice(draftOrderId) {
+async function sendDraftOrderInvoice(draftOrderId, emailInput) {
   const result = await shopifyGraphQL(
     `
-      mutation SendDraftOrderInvoice($id: ID!) {
-        draftOrderInvoiceSend(id: $id) {
+      mutation SendDraftOrderInvoice($id: ID!, $email: EmailInput) {
+        draftOrderInvoiceSend(id: $id, email: $email) {
           draftOrder {
             id
             name
@@ -2047,7 +2057,7 @@ async function sendDraftOrderInvoice(draftOrderId) {
         }
       }
     `,
-    { id: draftOrderId },
+    { id: draftOrderId, email: emailInput },
   )
 
   const errors = result?.data?.draftOrderInvoiceSend?.userErrors ?? []
@@ -3090,6 +3100,41 @@ function buildOrderInvoiceEmailInput(payload, order) {
   return emailInput
 }
 
+function buildDraftOrderInvoiceEmailInput(jobs) {
+  const primaryJob = Array.isArray(jobs) ? (jobs[0] ?? {}) : {}
+  const invoiceUrl = normalizeDraftInvoiceUrl(primaryJob.shopifyDraftInvoiceUrl)
+  const draftOrderName = cleanString(primaryJob.shopifyDraftOrderName) || 'Trinity order'
+  const recipientEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail)
+  const playerName = cleanString(primaryJob.playerName)
+  const billingCompany = cleanString(primaryJob.billingCompany)
+  const notes = cleanString(primaryJob.internalNotes || primaryJob.notes)
+  const customMessage = [
+    'A Trinity Sports Group invoice has been created from an internal sales order.',
+    invoiceUrl
+      ? `If the payment button does not open correctly, use this secure invoice link: ${invoiceUrl}`
+      : '',
+    playerName ? `Player: ${playerName}` : '',
+    billingCompany ? `Team/agency: ${billingCompany}` : '',
+    notes ? `Notes: ${notes}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const emailInput = {
+    subject: `${draftOrderName} invoice from Trinity Sports Group`,
+    customMessage,
+  }
+
+  if (recipientEmail) {
+    emailInput.to = recipientEmail
+  }
+  if (internalOrderNotificationEmails.length > 0) {
+    emailInput.bcc = internalOrderNotificationEmails
+  }
+
+  return emailInput
+}
+
 function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const salesRep = cleanString(payload.salesRep)
@@ -3533,6 +3578,7 @@ function mapDraftOrderToJobs(
   const playerEmail = cleanString(payload.playerEmail)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const payer = resolvePayer(payload)
+  const draftInvoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
 
   return lines.map((line, index) => {
     const draftLine = draftLines[index] ?? {}
@@ -3548,7 +3594,7 @@ function mapDraftOrderToJobs(
       shopifyOrderName: '',
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
-      shopifyDraftInvoiceUrl: draftOrder.invoiceUrl ?? '',
+      shopifyDraftInvoiceUrl: draftInvoiceUrl,
       lineItemId: draftLine.id ?? '',
       orderSubmittedAt,
       customerName: payer.name || playerName,
@@ -3611,7 +3657,7 @@ function mapCompletedDraftOrderToJobs(
       intakeId,
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
-      shopifyDraftInvoiceUrl: draftOrder.invoiceUrl ?? '',
+      shopifyDraftInvoiceUrl: normalizeDraftInvoiceUrl(draftOrder.invoiceUrl),
       orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       specs: mergeSpecs(job.specs, fallbackSpecs),
@@ -4105,6 +4151,49 @@ function toShopifyGid(type, value) {
 function extractNumericId(value) {
   const match = String(value ?? '').match(/(\d+)$/)
   return match?.[1] ?? String(value ?? '')
+}
+
+function normalizeHostname(value) {
+  const host = cleanString(value)
+    .replace(/^https?:\/\//i, '')
+    .split('/')[0]
+    .split(':')[0]
+    .trim()
+    .toLowerCase()
+
+  return host
+}
+
+function normalizeDraftInvoiceUrl(invoiceUrl) {
+  const rawUrl = cleanString(invoiceUrl)
+  if (!rawUrl || !draftInvoiceHost) return rawUrl
+
+  try {
+    const url = new URL(rawUrl)
+    const knownInvoiceHosts = new Set(
+      [shopDomain, draftInvoiceHost, 'trinitybatco.com', 'www.trinitybatco.com']
+        .map(normalizeHostname)
+        .filter(Boolean),
+    )
+
+    if (!knownInvoiceHosts.has(normalizeHostname(url.hostname))) return rawUrl
+
+    url.protocol = 'https:'
+    url.hostname = draftInvoiceHost
+    url.port = ''
+    return url.toString()
+  } catch {
+    return rawUrl
+  }
+}
+
+function normalizeDraftOrderInvoiceUrl(draftOrder) {
+  if (!draftOrder) return draftOrder
+
+  return {
+    ...draftOrder,
+    invoiceUrl: normalizeDraftInvoiceUrl(draftOrder.invoiceUrl),
+  }
 }
 
 function createPlainId(prefix) {
