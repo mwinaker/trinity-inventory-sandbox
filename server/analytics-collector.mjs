@@ -18,7 +18,7 @@ if (fs.existsSync(envPath)) {
 const app = express()
 const port = Number(process.env.PORT ?? 4178)
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
-const analyticsCollectorVersion = '2026-05-26-meta-shopify-signals'
+const analyticsCollectorVersion = '2026-06-06-meta-instagram-visibility'
 const shopDomain = process.env.SHOPIFY_SHOP
 const analyticsAdminToken =
   process.env.TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN ??
@@ -86,6 +86,8 @@ const customerSessionConfig = {
       fieldValue('last_shopify_client_id', item.lastShopifyClientId),
       fieldValue('first_meta_click_id', item.firstMetaClickId),
       fieldValue('last_meta_click_id', item.lastMetaClickId),
+      fieldValue('first_instagram_click_id', item.firstInstagramClickId),
+      fieldValue('last_instagram_click_id', item.lastInstagramClickId),
       fieldValue('last_meta_browser_id', item.lastMetaBrowserId),
       fieldValue('last_meta_click_cookie', item.lastMetaClickCookie),
       fieldValue('tracking_ids_json', JSON.stringify(item.trackingIds ?? {})),
@@ -128,6 +130,8 @@ const customerSessionConfig = {
     definitionField('last_shopify_client_id', 'Last Shopify Client ID', 'single_line_text_field'),
     definitionField('first_meta_click_id', 'First Meta Click ID', 'single_line_text_field'),
     definitionField('last_meta_click_id', 'Last Meta Click ID', 'single_line_text_field'),
+    definitionField('first_instagram_click_id', 'First Instagram Click ID', 'single_line_text_field'),
+    definitionField('last_instagram_click_id', 'Last Instagram Click ID', 'single_line_text_field'),
     definitionField('last_meta_browser_id', 'Last Meta Browser ID', 'single_line_text_field'),
     definitionField('last_meta_click_cookie', 'Last Meta Click Cookie', 'single_line_text_field'),
     definitionField('tracking_ids_json', 'Tracking IDs JSON', 'json'),
@@ -837,12 +841,22 @@ async function upsertCustomerSessionFromEvent(event, cachedSessions) {
     : existing?.consent ?? {}
   const firstMetaClickId =
     cleanString(existing?.firstMetaClickId) ||
-    firstTrackingId(trackingIds, 'fbclid') ||
-    cleanString(firstTouch.fbclid)
+    firstMetaTrackingId(trackingIds) ||
+    cleanString(firstTouch.fbclid) ||
+    cleanString(firstTouch.igshid)
   const lastMetaClickId =
-    lastTrackingId(trackingIds, 'fbclid') ||
+    lastMetaTrackingId(trackingIds) ||
     cleanString(lastTouch.fbclid) ||
+    cleanString(lastTouch.igshid) ||
     cleanString(existing?.lastMetaClickId)
+  const firstInstagramClickId =
+    cleanString(existing?.firstInstagramClickId) ||
+    firstTrackingId(trackingIds, 'igshid') ||
+    cleanString(firstTouch.igshid)
+  const lastInstagramClickId =
+    lastTrackingId(trackingIds, 'igshid') ||
+    cleanString(lastTouch.igshid) ||
+    cleanString(existing?.lastInstagramClickId)
   const lastMetaBrowserId = cleanString(browserCookies._fbp || existing?.lastMetaBrowserId)
   const lastMetaClickCookie = cleanString(browserCookies._fbc || existing?.lastMetaClickCookie)
 
@@ -880,6 +894,8 @@ async function upsertCustomerSessionFromEvent(event, cachedSessions) {
     lastShopifyClientId: event.clientId || cleanString(existing?.lastShopifyClientId),
     firstMetaClickId,
     lastMetaClickId,
+    firstInstagramClickId,
+    lastInstagramClickId,
     lastMetaBrowserId,
     lastMetaClickCookie,
     trackingIds,
@@ -926,6 +942,10 @@ function firstPopulatedTouchpoint(existing, primary, secondary, fallback) {
       cleanString(existing?.firstFbclid) ||
       cleanString(primary?.fbclid) ||
       cleanString(secondary?.fbclid),
+    igshid:
+      cleanString(existing?.firstIgshid) ||
+      cleanString(primary?.igshid) ||
+      cleanString(secondary?.igshid),
     landingPage:
       cleanString(existing?.firstLandingPage) ||
       cleanString(primary?.landingPage) ||
@@ -954,6 +974,7 @@ function lastPopulatedTouchpoint(primary, secondary, fallback) {
     term: cleanString(primary?.term) || cleanString(secondary?.term),
     campaignId: cleanString(primary?.campaignId) || cleanString(secondary?.campaignId),
     fbclid: cleanString(primary?.fbclid) || cleanString(secondary?.fbclid),
+    igshid: cleanString(primary?.igshid) || cleanString(secondary?.igshid),
     landingPage:
       cleanString(primary?.landingPage) ||
       cleanString(secondary?.landingPage) ||
@@ -1002,7 +1023,8 @@ function summarizeAnalyticsEvent(event) {
     facebookPageId: event.integration.facebookPageId,
     instagramHandle: event.integration.instagramHandle,
     dataSharingPreference: event.integration.dataSharingPreference,
-    metaClickId: lastTrackingId(event.browserSignals.persistedTrackingIds, 'fbclid'),
+    metaClickId: lastMetaTrackingId(event.browserSignals.persistedTrackingIds),
+    instagramClickId: lastTrackingId(event.browserSignals.persistedTrackingIds, 'igshid'),
     metaBrowserId: event.browserSignals.cookies._fbp || '',
     metaClickCookie: event.browserSignals.cookies._fbc || '',
     value: extractAnalyticsValue(event.data),
@@ -1096,6 +1118,8 @@ function buildOrderAttributionPayload(session, event) {
     tracking: {
       firstMetaClickId: session.firstMetaClickId,
       lastMetaClickId: session.lastMetaClickId,
+      firstInstagramClickId: session.firstInstagramClickId,
+      lastInstagramClickId: session.lastInstagramClickId,
       lastMetaBrowserId: session.lastMetaBrowserId,
       lastMetaClickCookie: session.lastMetaClickCookie,
       lastShopifyClientId: session.lastShopifyClientId,
@@ -1113,6 +1137,7 @@ function buildOrderAttributionPayload(session, event) {
       orderName: item.orderName,
       items: item.items,
       metaClickId: item.metaClickId,
+      instagramClickId: item.instagramClickId,
       metaBrowserId: item.metaBrowserId,
       shopifyClientId: item.shopifyClientId,
     })),
@@ -1324,9 +1349,24 @@ function inferSourceFromReferrer(referrer) {
 function normalizeTrafficSource(value) {
   const source = cleanString(value).toLowerCase()
   if (!source) return ''
-  if (['ig', 'instagram', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
-  if (['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
-  if (['meta', 'facebook-instagram', 'fbig'].includes(source)) return 'meta'
+  if (
+    ['ig', 'instagram', 'instagram.com', 'l.instagram.com', 'lm.instagram.com'].includes(source) ||
+    source.includes('instagram')
+  ) {
+    return 'instagram'
+  }
+  if (
+    ['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com', 'lm.facebook.com'].includes(source) ||
+    source.includes('facebook')
+  ) {
+    return 'facebook'
+  }
+  if (
+    ['meta', 'facebook-instagram', 'fbig', 'metaads', 'meta-ads'].includes(source) ||
+    source.includes('threads.net')
+  ) {
+    return 'meta'
+  }
   if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x'
   return source
 }
@@ -1402,6 +1442,14 @@ function firstTrackingId(trackingIds, key) {
 
 function lastTrackingId(trackingIds, key) {
   return cleanString(trackingIds?.[key]?.last)
+}
+
+function firstMetaTrackingId(trackingIds) {
+  return firstTrackingId(trackingIds, 'fbclid') || firstTrackingId(trackingIds, 'igshid')
+}
+
+function lastMetaTrackingId(trackingIds) {
+  return lastTrackingId(trackingIds, 'fbclid') || lastTrackingId(trackingIds, 'igshid')
 }
 
 function inferMediumFromReferrer(referrer) {

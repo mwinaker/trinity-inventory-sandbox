@@ -4,13 +4,16 @@
 
 const TRINITY_COLLECTOR_URL =
   'https://trinity-analytics-collector.onrender.com/api/analytics/events';
-const TRINITY_PIXEL_VERSION = '4';
+const TRINITY_PIXEL_VERSION = '5';
 const TRINITY_ATTRIBUTION_KEY = 'trinity_attribution_v1';
 const TRINITY_SESSION_KEY = 'trinity_session_v1';
 const TRINITY_VISITOR_KEY = 'trinity_visitor_v1';
 const TRINITY_TRACKING_IDS_KEY = 'trinity_tracking_ids_v1';
+const TRINITY_EVENT_QUEUE_KEY = 'trinity_event_queue_v1';
 const TRINITY_PATH_LIMIT = 50;
+const TRINITY_EVENT_QUEUE_LIMIT = 20;
 const TRINITY_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+const TRINITY_EVENT_RETRY_DELAYS_MS = [300, 1000, 2500];
 const TRINITY_TRACKING_PARAM_NAMES = [
   'utm_source',
   'utm_medium',
@@ -39,8 +42,8 @@ const TRINITY_TRACKING_COOKIE_NAMES = [
   '_orig_referrer',
 ];
 const TRINITY_META_INTEGRATION = {
-  shopifyPixelName: 'Trinity Attribution',
-  shopifyPixelId: '149749999',
+  shopifyPixelName: 'Trinity Attribution v5',
+  shopifyPixelId: '153813231',
   shopifyPixelVersion: TRINITY_PIXEL_VERSION,
   collector: 'trinity-analytics-collector',
   collectorHost: 'trinity-analytics-collector.onrender.com',
@@ -89,17 +92,72 @@ async function trackTrinityEvent(event) {
       data: safeEventData(event),
     };
 
-    await fetch(TRINITY_COLLECTOR_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      keepalive: true,
-    });
+    await flushQueuedEvents();
+    const delivered = await postPayloadWithRetry(payload);
+    if (!delivered) await queuePayload(payload);
   } catch (error) {
     console.warn('Trinity analytics pixel failed', error);
   }
+}
+
+async function postPayloadWithRetry(payload) {
+  for (let attempt = 0; attempt <= TRINITY_EVENT_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      const response = await fetch(TRINITY_COLLECTOR_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      });
+      if (response && response.ok) return true;
+
+      const status = response ? Number(response.status) : 0;
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429) return false;
+    } catch {
+      // Retry below. The pixel sandbox intentionally avoids noisy logging for transient network loss.
+    }
+
+    const delay = TRINITY_EVENT_RETRY_DELAYS_MS[attempt];
+    if (delay) await sleep(delay);
+  }
+
+  return false;
+}
+
+async function flushQueuedEvents() {
+  const queued = await readQueuedPayloads();
+  if (queued.length === 0) return;
+
+  const remaining = [];
+  for (const payload of queued.slice(-TRINITY_EVENT_QUEUE_LIMIT)) {
+    const delivered = await postPayloadWithRetry(payload);
+    if (!delivered) remaining.push(payload);
+  }
+
+  await browser.localStorage.setItem(
+    TRINITY_EVENT_QUEUE_KEY,
+    JSON.stringify(remaining.slice(-TRINITY_EVENT_QUEUE_LIMIT)),
+  );
+}
+
+async function queuePayload(payload) {
+  const queued = await readQueuedPayloads();
+  queued.push(payload);
+  await browser.localStorage.setItem(
+    TRINITY_EVENT_QUEUE_KEY,
+    JSON.stringify(queued.slice(-TRINITY_EVENT_QUEUE_LIMIT)),
+  );
+}
+
+async function readQueuedPayloads() {
+  const queued = await readJson(TRINITY_EVENT_QUEUE_KEY, []);
+  return Array.isArray(queued) ? queued.filter((item) => item && typeof item === 'object') : [];
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function buildTrinityAttribution(event) {
@@ -219,9 +277,24 @@ function buildTouchpoint(href, referrer, capturedAt) {
 function normalizeSource(value) {
   const source = asString(value).trim().toLowerCase();
   if (!source) return '';
-  if (['ig', 'instagram', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram';
-  if (['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook';
-  if (['meta', 'facebook-instagram', 'fbig'].includes(source)) return 'meta';
+  if (
+    ['ig', 'instagram', 'instagram.com', 'l.instagram.com', 'lm.instagram.com'].includes(source) ||
+    source.includes('instagram')
+  ) {
+    return 'instagram';
+  }
+  if (
+    ['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com', 'lm.facebook.com'].includes(source) ||
+    source.includes('facebook')
+  ) {
+    return 'facebook';
+  }
+  if (
+    ['meta', 'facebook-instagram', 'fbig', 'metaads', 'meta-ads'].includes(source) ||
+    source.includes('threads.net')
+  ) {
+    return 'meta';
+  }
   if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x';
   return source;
 }
@@ -364,6 +437,7 @@ function sourceFromReferrer(referrer) {
   if (!host || host.includes('trinitybatco.com')) return '';
   if (host.includes('instagram')) return 'instagram';
   if (host.includes('facebook')) return 'facebook';
+  if (host.includes('threads.net')) return 'meta';
   if (host.includes('google')) return 'google';
   if (host.includes('bing')) return 'bing';
   if (host.includes('duckduckgo')) return 'duckduckgo';
@@ -374,7 +448,7 @@ function sourceFromReferrer(referrer) {
 function mediumFromReferrer(referrer) {
   const host = hostFromUrl(referrer);
   if (!host || host.includes('trinitybatco.com')) return '';
-  if (/(instagram|facebook|tiktok|pinterest|x\.com|twitter)/i.test(host)) return 'social';
+  if (/(instagram|facebook|threads\.net|tiktok|pinterest|x\.com|twitter)/i.test(host)) return 'social';
   if (/(google|bing|duckduckgo|yahoo)/i.test(host)) return 'organic';
   return 'referral';
 }
