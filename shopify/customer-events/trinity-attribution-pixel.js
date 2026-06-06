@@ -42,8 +42,8 @@ const TRINITY_TRACKING_COOKIE_NAMES = [
   '_orig_referrer',
 ];
 const TRINITY_META_INTEGRATION = {
-  shopifyPixelName: 'Trinity Attribution',
-  shopifyPixelId: '149749999',
+  shopifyPixelName: 'Trinity Attribution v5',
+  shopifyPixelId: '153813231',
   shopifyPixelVersion: TRINITY_PIXEL_VERSION,
   collector: 'trinity-analytics-collector',
   collectorHost: 'trinity-analytics-collector.onrender.com',
