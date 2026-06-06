@@ -11,7 +11,8 @@
     "serve": "node server/index.mjs",
     "start": "node server/index.mjs",
     "analytics:export": "node scripts/export-customer-sessions.mjs",
-    "analytics:report": "node scripts/export-customer-sessions.mjs --days=30"
+    "analytics:report": "node scripts/export-customer-sessions.mjs --days=30",
+    "analytics:orders": "node scripts/export-order-attribution.mjs --days=14"
   },
   "engines": {
     "node": ">=24"

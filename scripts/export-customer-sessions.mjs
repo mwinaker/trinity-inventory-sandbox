@@ -13,7 +13,17 @@ dotenv.config({ path: envPath })
 
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
 const shopDomain = process.env.SHOPIFY_SHOP
-const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
+const analyticsAdminToken =
+  process.env.TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN ??
+  process.env.SHOPIFY_ANALYTICS_ADMIN_ACCESS_TOKEN ??
+  ''
+const sharedAdminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN ?? ''
+const adminToken = analyticsAdminToken || sharedAdminToken
+const adminTokenSource = analyticsAdminToken
+  ? 'dedicated_analytics_token'
+  : sharedAdminToken
+    ? 'shared_fallback_token'
+    : 'missing'
 const sessionType = '$app:trinity_customer_session'
 const outputDir = path.resolve(
   rootDir,
@@ -26,13 +36,28 @@ const reportDate = now.toISOString().slice(0, 10)
 const since = resolveSinceDate(options)
 
 if (!shopDomain || !adminToken) {
-  throw new Error(`Missing SHOPIFY_SHOP or SHOPIFY_ADMIN_ACCESS_TOKEN in ${envPath}`)
+  throw new Error(
+    `Missing SHOPIFY_SHOP and analytics Shopify token in ${envPath}. Set TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN, SHOPIFY_ANALYTICS_ADMIN_ACCESS_TOKEN, or SHOPIFY_ADMIN_ACCESS_TOKEN.`,
+  )
 }
 
 await fs.mkdir(outputDir, { recursive: true })
 
-const resolvedType = await resolveCustomerSessionType()
-const sessions = await listCustomerSessions(resolvedType)
+const resolvedTypes = await resolveCustomerSessionTypes()
+const sessionGroups = await Promise.all(
+  resolvedTypes.map(async (type) => ({
+    type,
+    sessions: await listCustomerSessions(type),
+  })),
+)
+const sessions = dedupeSessions(
+  sessionGroups.flatMap(({ type, sessions }) =>
+    sessions.map((session) => ({
+      sessionRecordType: type,
+      ...session,
+    })),
+  ),
+)
 const filteredSessions = since
   ? sessions.filter((session) => {
       const activeAt = parseDate(session.updatedAt || session.lastEventAt || lastEventAt(session))
@@ -52,6 +77,8 @@ await fs.writeFile(csvPath, toCsv(rows))
 await fs.writeFile(markdownPath, toMarkdown(summary, rows, { generatedAt: now, since }))
 
 console.log(`Exported ${rows.length} customer sessions`)
+console.log(`Token source: ${adminTokenSource}`)
+console.log(`Session type(s): ${resolvedTypes.join(', ')}`)
 console.log(`JSON: ${path.relative(rootDir, jsonPath)}`)
 console.log(`CSV: ${path.relative(rootDir, csvPath)}`)
 console.log(`Report: ${path.relative(rootDir, markdownPath)}`)
@@ -59,7 +86,9 @@ console.log(
   `Funnel: ${summary.totalSessions} sessions, ${summary.productViewSessions} product views, ${summary.addToCartSessions} add-to-cart, ${summary.checkoutStartedSessions} checkout starts, ${summary.purchaseSessions} purchases`,
 )
 
-async function resolveCustomerSessionType() {
+async function resolveCustomerSessionTypes() {
+  if (options.type) return [String(options.type)]
+
   const result = await shopifyGraphQL(`
     query MetaobjectDefinitions {
       metaobjectDefinitions(first: 250) {
@@ -70,11 +99,15 @@ async function resolveCustomerSessionType() {
     }
   `)
   const types = result?.data?.metaobjectDefinitions?.nodes?.map((node) => node.type) ?? []
-  return (
-    types.find((type) => type === sessionType) ||
-    types.find((type) => type.endsWith('--trinity_customer_session')) ||
-    sessionType
+  const matchedTypes = unique(
+    [
+      ...types.filter((type) => type === sessionType),
+      ...types.filter((type) => type.endsWith('--trinity_customer_session')),
+      ...types.filter((type) => type.includes('trinity_customer_session')),
+    ].filter(Boolean),
   )
+
+  return matchedTypes.length > 0 ? matchedTypes : [sessionType]
 }
 
 async function listCustomerSessions(type) {
@@ -173,6 +206,7 @@ function buildSessionRow(session) {
 
   return {
     sessionId: clean(session.sessionId),
+    sessionRecordType: clean(session.sessionRecordType),
     visitorId: clean(session.visitorId),
     firstSource: normalizeTrafficSource(session.firstSource) || 'direct',
     firstMedium: clean(session.firstMedium) || 'direct',
@@ -196,6 +230,25 @@ function buildSessionRow(session) {
     lastEventAt: clean(session.lastEventAt),
     orderName: clean(session.orderName),
     customerEmailHash: clean(session.customerEmailHash),
+    metaDatasetId: clean(session.metaDatasetId || session.integration?.metaDatasetId),
+    metaBusinessId: clean(session.metaBusinessId || session.integration?.metaBusinessId),
+    facebookPageId: clean(session.facebookPageId || session.integration?.facebookPageId),
+    instagramHandle: clean(session.instagramHandle || session.integration?.instagramHandle),
+    dataSharingPreference: clean(
+      session.dataSharingPreference || session.integration?.dataSharingPreference,
+    ),
+    sourcePixel: clean(session.integration?.shopifyPixelName),
+    sourcePixelVersion: clean(session.integration?.shopifyPixelVersion),
+    lastShopifyClientId: clean(session.lastShopifyClientId),
+    firstMetaClickId: clean(session.firstMetaClickId),
+    lastMetaClickId: clean(session.lastMetaClickId),
+    firstInstagramClickId: clean(session.firstInstagramClickId),
+    lastInstagramClickId: clean(session.lastInstagramClickId),
+    lastMetaBrowserId: clean(session.lastMetaBrowserId),
+    lastMetaClickCookie: clean(session.lastMetaClickCookie),
+    trackingIds: compactJson(session.trackingIds),
+    browserCookies: compactJson(session.browserCookies),
+    consent: compactJson(session.consent),
     createdAt: clean(session.createdAt),
     updatedAt: clean(session.updatedAt || session.shopifyUpdatedAt),
     eventCount: events.length,
@@ -231,6 +284,15 @@ function buildSummary(rows) {
     addToCartSessions,
     checkoutStartedSessions,
     purchaseSessions,
+    metaClickSessions: rows.filter((row) => row.lastMetaClickId || row.firstMetaClickId).length,
+    instagramClickSessions: rows.filter(
+      (row) => row.lastInstagramClickId || row.firstInstagramClickId,
+    ).length,
+    metaBrowserIdSessions: rows.filter((row) => row.lastMetaBrowserId).length,
+    fbcCookieSessions: rows.filter((row) => row.lastMetaClickCookie).length,
+    facebookInstagramSourceSessions: rows.filter((row) =>
+      ['facebook', 'instagram', 'meta'].includes(row.lastSource),
+    ).length,
     addToCartRate: rate(addToCartSessions, totalSessions),
     checkoutStartRate: rate(checkoutStartedSessions, totalSessions),
     purchaseRate: rate(purchaseSessions, totalSessions),
@@ -247,6 +309,7 @@ function buildSummary(rows) {
 function toCsv(rows) {
   const columns = [
     'sessionId',
+    'sessionRecordType',
     'visitorId',
     'firstSource',
     'firstMedium',
@@ -266,6 +329,23 @@ function toCsv(rows) {
     'lastEventName',
     'lastEventAt',
     'orderName',
+    'metaDatasetId',
+    'metaBusinessId',
+    'facebookPageId',
+    'instagramHandle',
+    'dataSharingPreference',
+    'sourcePixel',
+    'sourcePixelVersion',
+    'lastShopifyClientId',
+    'firstMetaClickId',
+    'lastMetaClickId',
+    'firstInstagramClickId',
+    'lastInstagramClickId',
+    'lastMetaBrowserId',
+    'lastMetaClickCookie',
+    'trackingIds',
+    'browserCookies',
+    'consent',
     'createdAt',
     'updatedAt',
     'eventCount',
@@ -306,6 +386,16 @@ Window: ${context.since ? `${context.since.toISOString().slice(0, 10)} through $
 | Checkout starts | ${summary.checkoutStartedSessions} | ${formatPercent(summary.checkoutStartRate)} |
 | Purchases | ${summary.purchaseSessions} | ${formatPercent(summary.purchaseRate)} |
 | Checkout completion | ${summary.purchaseSessions} / ${summary.checkoutStartedSessions} | ${formatPercent(summary.checkoutCompletionRate)} |
+
+## Meta, Facebook, and Instagram Signals
+
+| Signal | Sessions |
+| --- | ---: |
+| Facebook/Instagram/Meta last-touch source | ${summary.facebookInstagramSourceSessions} |
+| Meta click ID captured \`fbclid\` or \`igshid\` | ${summary.metaClickSessions} |
+| Instagram click ID captured \`igshid\` | ${summary.instagramClickSessions} |
+| Meta browser ID captured \`_fbp\` | ${summary.metaBrowserIdSessions} |
+| Meta click cookie captured \`_fbc\` | ${summary.fbcCookieSessions} |
 
 ## Top Last-Touch Sources
 
@@ -400,6 +490,31 @@ function lastEventAt(session) {
   return events.at(-1)?.at || ''
 }
 
+function dedupeSessions(sessions) {
+  const byKey = new Map()
+  for (const session of sessions) {
+    const key = clean(session.sessionId) || clean(session.handle) || clean(session.metaobjectId)
+    if (!key) continue
+
+    const existing = byKey.get(key)
+    const sessionDate =
+      parseDate(session.updatedAt || session.shopifyUpdatedAt || session.lastEventAt || lastEventAt(session)) ??
+      new Date(0)
+    const existingDate = existing
+      ? parseDate(
+          existing.updatedAt ||
+            existing.shopifyUpdatedAt ||
+            existing.lastEventAt ||
+            lastEventAt(existing),
+        ) ?? new Date(0)
+      : new Date(0)
+
+    if (!existing || sessionDate >= existingDate) byKey.set(key, session)
+  }
+
+  return [...byKey.values()]
+}
+
 function parseDate(value) {
   const date = value ? new Date(value) : null
   return date && !Number.isNaN(date.getTime()) ? date : null
@@ -443,11 +558,36 @@ function clean(value) {
   return value === undefined || value === null ? '' : String(value).trim()
 }
 
+function compactJson(value) {
+  if (!value || typeof value !== 'object') return ''
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return ''
+  }
+}
+
 function normalizeTrafficSource(value) {
   const source = clean(value).toLowerCase()
   if (!source) return ''
-  if (['ig', 'instagram.com', 'l.instagram.com'].includes(source)) return 'instagram'
-  if (['fb', 'facebook.com', 'm.facebook.com', 'l.facebook.com'].includes(source)) return 'facebook'
+  if (
+    ['ig', 'instagram', 'instagram.com', 'l.instagram.com', 'lm.instagram.com'].includes(source) ||
+    source.includes('instagram')
+  ) {
+    return 'instagram'
+  }
+  if (
+    ['fb', 'facebook', 'facebook.com', 'm.facebook.com', 'l.facebook.com', 'lm.facebook.com'].includes(source) ||
+    source.includes('facebook')
+  ) {
+    return 'facebook'
+  }
+  if (
+    ['meta', 'facebook-instagram', 'fbig', 'metaads', 'meta-ads'].includes(source) ||
+    source.includes('threads.net')
+  ) {
+    return 'meta'
+  }
   if (['x', 'twitter', 'twitter.com', 't.co'].includes(source)) return 'x'
   return source
 }
