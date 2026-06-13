@@ -13,7 +13,8 @@
     "analytics:export": "node scripts/export-customer-sessions.mjs",
     "analytics:report": "node scripts/export-customer-sessions.mjs --days=30",
     "analytics:orders": "node scripts/export-order-attribution.mjs --days=14",
-    "analytics:check": "node scripts/check-analytics-pipeline.mjs"
+    "analytics:check": "node scripts/check-analytics-pipeline.mjs",
+    "analytics:backfill": "node scripts/backfill-analytics-gaps.mjs"
   },
   "engines": {
     "node": ">=24"
