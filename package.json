@@ -12,7 +12,8 @@
     "start": "node server/index.mjs",
     "analytics:export": "node scripts/export-customer-sessions.mjs",
     "analytics:report": "node scripts/export-customer-sessions.mjs --days=30",
-    "analytics:orders": "node scripts/export-order-attribution.mjs --days=14"
+    "analytics:orders": "node scripts/export-order-attribution.mjs --days=14",
+    "analytics:check": "node scripts/check-analytics-pipeline.mjs"
   },
   "engines": {
     "node": ">=24"
