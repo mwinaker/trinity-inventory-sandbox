@@ -22,10 +22,6 @@ const collectorUrl =
 const sessionType =
   process.env.TRINITY_ANALYTICS_SESSION_TYPE ?? 'app--351830966273--trinity_customer_session'
 
-if (!shopDomain || !adminToken) {
-  throw new Error(`Missing SHOPIFY_SHOP or Shopify Admin token in ${envPath}`)
-}
-
 const now = new Date()
 const isoNow = now.toISOString()
 const day = isoNow.slice(0, 10)
@@ -101,6 +97,7 @@ const collectorResponse = await fetch(collectorUrl, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
+    'X-Trinity-Analytics-Verify': '1',
     Origin: 'https://www.trinitybatco.com',
   },
   body: JSON.stringify(payload),
@@ -115,32 +112,13 @@ if (!collectorResponse.ok || !collectorBody.ok) {
   )
 }
 
-const readback = await shopifyGraphQL(
-  `
-    query MetaobjectByHandle($handle: MetaobjectHandleInput!) {
-      metaobjectByHandle(handle: $handle) {
-        id
-        handle
-        updatedAt
-        payload: field(key: "payload") {
-          jsonValue
-        }
-      }
-    }
-  `,
-  {
-    handle: {
-      type: sessionType,
-      handle: sanitizeHandle(sessionId),
-    },
-  },
-)
-
-const metaobject = readback?.data?.metaobjectByHandle
-const stored = metaobject?.payload?.jsonValue
-if (!stored || stored.sessionId !== sessionId) {
-  throw new Error(`Shopify readback failed for ${sessionType}/${sanitizeHandle(sessionId)}`)
+if (Number(collectorBody.sessionWritesVerified ?? 0) < 1) {
+  throw new Error(`Collector did not verify Shopify write: ${JSON.stringify(collectorBody)}`)
 }
+
+const shopifyReadback = await readShopifySession().catch((error) => ({
+  warning: error instanceof Error ? error.message : String(error),
+}))
 
 console.log(
   JSON.stringify(
@@ -148,20 +126,60 @@ console.log(
       ok: true,
       collectorUrl,
       collector: collectorBody,
-      shopify: {
-        id: metaobject.id,
-        handle: metaobject.handle,
-        updatedAt: metaobject.updatedAt,
-        sessionId: stored.sessionId,
-        lastEventName: stored.lastEventName,
-        lastEventAt: stored.lastEventAt,
-        eventCount: Array.isArray(stored.events) ? stored.events.length : 0,
-      },
+      shopify: shopifyReadback,
     },
     null,
     2,
   ),
 )
+
+async function readShopifySession() {
+  if (!shopDomain || !adminToken) {
+    return {
+      skipped: true,
+      reason: `Missing SHOPIFY_SHOP or Shopify Admin token in ${envPath}`,
+    }
+  }
+
+  const readback = await shopifyGraphQL(
+    `
+      query MetaobjectByHandle($handle: MetaobjectHandleInput!) {
+        metaobjectByHandle(handle: $handle) {
+          id
+          handle
+          updatedAt
+          payload: field(key: "payload") {
+            jsonValue
+          }
+        }
+      }
+    `,
+    {
+      handle: {
+        type: sessionType,
+        handle: sanitizeHandle(sessionId),
+      },
+    },
+  )
+
+  const metaobject = readback?.data?.metaobjectByHandle
+  const stored = metaobject?.payload?.jsonValue
+  if (!stored || stored.sessionId !== sessionId) {
+    return {
+      warning: `Local Shopify readback did not find ${sessionType}/${sanitizeHandle(sessionId)}. The collector-side verification already passed; this usually means the local token is scoped to a different $app metaobject namespace than production.`,
+    }
+  }
+
+  return {
+    id: metaobject.id,
+    handle: metaobject.handle,
+    updatedAt: metaobject.updatedAt,
+    sessionId: stored.sessionId,
+    lastEventName: stored.lastEventName,
+    lastEventAt: stored.lastEventAt,
+    eventCount: Array.isArray(stored.events) ? stored.events.length : 0,
+  }
+}
 
 function healthTouchpoint(capturedAt) {
   return {

@@ -204,6 +204,7 @@ app.post('/api/analytics/events', async (request, response) => {
     const sessions = new Map()
     const orderAttributionUpdates = []
     const ga4Results = []
+    const verifySessionWrites = shouldVerifySessionWrites(request)
 
     for (const event of acceptedEvents) {
       const session = await upsertCustomerSessionFromEvent(event, sessions)
@@ -224,11 +225,15 @@ app.post('/api/analytics/events', async (request, response) => {
     const forwardedGa4Events = ga4SettledResults.filter(
       (item) => item.status === 'fulfilled' && item.value?.ok,
     ).length
+    const verifiedSessionWrites = verifySessionWrites
+      ? await verifyCustomerSessionWrites([...sessions.values()])
+      : 0
 
     response.json({
       ok: true,
       accepted: acceptedEvents.length,
       sessionsUpdated: sessions.size,
+      sessionWritesVerified: verifySessionWrites ? verifiedSessionWrites : undefined,
       orderAttributionUpdated: attributionResults.length - failedAttributionUpdates.length,
       ga4Forwarded: forwardedGa4Events,
       ga4Configured: Boolean(ga4MeasurementId && ga4ApiSecret),
@@ -270,6 +275,13 @@ function isAllowedOrigin(request) {
   const origin = request.get('origin')
   if (!origin) return true
   return allowedOrigins.length === 0 || allowedOrigins.includes('*') || allowedOrigins.includes(origin)
+}
+
+function shouldVerifySessionWrites(request) {
+  return (
+    request.get('x-trinity-analytics-verify') === '1' ||
+    String(request.query?.verify ?? '') === '1'
+  )
 }
 
 function parseOriginList(value) {
@@ -497,6 +509,45 @@ async function upsertRecord(config, item) {
   }
 
   return handle
+}
+
+async function verifyCustomerSessionWrites(sessions) {
+  let verified = 0
+
+  for (const session of sessions) {
+    if (await verifyCustomerSessionWrite(session)) {
+      verified += 1
+    }
+  }
+
+  if (verified !== sessions.length) {
+    throw new Error('Session write verification failed after Shopify accepted the upsert.')
+  }
+
+  return verified
+}
+
+async function verifyCustomerSessionWrite(session) {
+  const expectedEvent = Array.isArray(session.events) ? session.events.at(-1) : null
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const stored = await getRecordByHandle(customerSessionConfig, session.sessionId)
+
+    if (
+      stored?.sessionId === session.sessionId &&
+      stored?.updatedAt === session.updatedAt &&
+      stored?.lastEventAt === session.lastEventAt &&
+      (!expectedEvent?.id ||
+        (Array.isArray(stored.events) &&
+          stored.events.some((event) => event?.id === expectedEvent.id)))
+    ) {
+      return true
+    }
+
+    await sleep(500 * (attempt + 1))
+  }
+
+  return false
 }
 
 async function shopifyGraphQL(query, variables = {}, attempt = 0) {
