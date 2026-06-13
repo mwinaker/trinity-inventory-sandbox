@@ -170,6 +170,22 @@ async function readShopifySession() {
     }
   }
 
+  const hasCurrentEvent = Array.isArray(stored.events)
+    ? stored.events.some((event) => event?.id === eventId)
+    : false
+  if (stored.lastEventAt !== isoNow || !hasCurrentEvent) {
+    return {
+      warning: `Local Shopify readback found ${sessionType}/${sanitizeHandle(sessionId)}, but not the event just verified by the production collector. The local token is probably reading a different $app metaobject namespace.`,
+      id: metaobject.id,
+      handle: metaobject.handle,
+      updatedAt: metaobject.updatedAt,
+      sessionId: stored.sessionId,
+      lastEventName: stored.lastEventName,
+      lastEventAt: stored.lastEventAt,
+      eventCount: Array.isArray(stored.events) ? stored.events.length : 0,
+    }
+  }
+
   return {
     id: metaobject.id,
     handle: metaobject.handle,
