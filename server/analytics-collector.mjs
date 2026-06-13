@@ -37,6 +37,7 @@ const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const allowedOrigins = parseOriginList(
   process.env.TRINITY_ANALYTICS_ALLOWED_ORIGINS ?? '*',
 )
+const metaobjectDefinitionFieldLimit = 40
 
 if (!shopDomain || !adminToken) {
   console.warn(
@@ -316,11 +317,7 @@ async function ensureDefinitionsInternal() {
             storefront: 'NONE',
           },
           displayNameKey: 'label',
-          fieldDefinitions: [
-            definitionField('label', 'Label', 'single_line_text_field'),
-            definitionField('payload', 'Payload', 'json'),
-            ...customerSessionConfig.fieldDefinitions,
-          ],
+          fieldDefinitions: fieldDefinitionsForCreate(customerSessionConfig),
         },
       },
     )
@@ -356,8 +353,19 @@ async function ensureDefinitionFields(definitionId, config) {
   const existing = await getDefinitionByType(config.type)
   const existingKeys = new Set(existing?.fieldDefinitions?.map((item) => item.key) ?? [])
   const missingFields = config.fieldDefinitions.filter((field) => !existingKeys.has(field.key))
+  const availableSlots = Math.max(0, metaobjectDefinitionFieldLimit - existingKeys.size)
+  const fieldsToCreate = missingFields.slice(0, availableSlots)
 
-  if (missingFields.length === 0) return
+  if (missingFields.length > fieldsToCreate.length) {
+    console.warn(
+      `Skipping ${missingFields.length - fieldsToCreate.length} direct field definition(s) for ${config.type}; Shopify allows ${metaobjectDefinitionFieldLimit} fields and the payload JSON field remains authoritative.`,
+    )
+  }
+
+  if (fieldsToCreate.length === 0) {
+    config.definitionFieldKeys = existingKeys
+    return
+  }
 
   const result = await shopifyGraphQL(
     `
@@ -377,7 +385,7 @@ async function ensureDefinitionFields(definitionId, config) {
     {
       id: definitionId,
       definition: {
-        fieldDefinitions: missingFields.map((field) => ({
+        fieldDefinitions: fieldsToCreate.map((field) => ({
           create: field,
         })),
       },
@@ -390,6 +398,9 @@ async function ensureDefinitionFields(definitionId, config) {
       `Definition update error for ${config.type}: ${errors.map((item) => item.message).join(', ')}`,
     )
   }
+
+  for (const field of fieldsToCreate) existingKeys.add(field.key)
+  config.definitionFieldKeys = existingKeys
 }
 
 async function getDefinitionByType(type) {
@@ -461,7 +472,7 @@ async function upsertRecord(config, item) {
         handle,
       },
       metaobject: {
-        fields: [
+        fields: filterDefinedMetaobjectFields(config, [
           {
             key: 'label',
             value: config.labelFor(item),
@@ -471,7 +482,7 @@ async function upsertRecord(config, item) {
             value: JSON.stringify(item),
           },
           ...config.fieldsFor(item),
-        ],
+        ]),
       },
     },
   )
@@ -577,6 +588,26 @@ function getRetryDelayMs(attempt) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function fieldDefinitionsForCreate(config) {
+  const fields = [
+    definitionField('label', 'Label', 'single_line_text_field'),
+    definitionField('payload', 'Payload', 'json'),
+    ...config.fieldDefinitions,
+  ]
+
+  if (fields.length <= metaobjectDefinitionFieldLimit) return fields
+
+  console.warn(
+    `Creating ${config.type} with the first ${metaobjectDefinitionFieldLimit} direct field definitions; ${fields.length - metaobjectDefinitionFieldLimit} overflow field(s) stay in payload JSON.`,
+  )
+  return fields.slice(0, metaobjectDefinitionFieldLimit)
+}
+
+function filterDefinedMetaobjectFields(config, fields) {
+  if (!config.definitionFieldKeys) return fields
+  return fields.filter((field) => config.definitionFieldKeys.has(field.key))
 }
 
 function normalizeAnalyticsEvent(rawEvent, request) {
