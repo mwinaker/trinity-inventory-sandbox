@@ -18,7 +18,7 @@ if (fs.existsSync(envPath)) {
 const app = express()
 const port = Number(process.env.PORT ?? 4178)
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
-const analyticsCollectorVersion = '2026-06-06-meta-instagram-visibility'
+const analyticsCollectorVersion = '2026-06-12-schema-cap-guard'
 const shopDomain = process.env.SHOPIFY_SHOP
 const analyticsAdminToken =
   process.env.TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN ??
