@@ -3787,10 +3787,13 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
+  const salesRep = cleanString(payload.salesRep)
+  const salesRepMessage = formatSalesRepNotificationMessage(salesRep)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const billingCompany = cleanString(payload.billingCompany)
   const customMessage = [
     'A Trinity Bat Company invoice has been created from an internal sales order.',
+    salesRepMessage,
     hasProOrder ? 'Order type: Pro Order' : '',
     isZeroDollarOrder ? '$0 sample order: no payment is due; invoice sent for documentation.' : '',
     playerName ? `Player: ${playerName}` : '',
@@ -3820,11 +3823,14 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
   const invoiceUrl = normalizeDraftInvoiceUrl(primaryJob.shopifyDraftInvoiceUrl)
   const draftOrderName = cleanString(primaryJob.shopifyDraftOrderName) || 'Trinity order'
   const recipientEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail)
+  const salesRep = cleanString(primaryJob.salesRep)
+  const salesRepMessage = formatSalesRepNotificationMessage(salesRep)
   const playerName = cleanString(primaryJob.playerName)
   const billingCompany = cleanString(primaryJob.billingCompany)
   const notes = cleanString(primaryJob.internalNotes || primaryJob.notes)
   const customMessage = [
     'A Trinity Sports Group invoice has been created from an internal sales order.',
+    salesRepMessage,
     invoiceUrl
       ? `If the payment button does not open correctly, use this secure invoice link: ${invoiceUrl}`
       : '',
@@ -3848,6 +3854,11 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
   }
 
   return emailInput
+}
+
+function formatSalesRepNotificationMessage(salesRep) {
+  const name = cleanString(salesRep)
+  return name ? `Order submitted by sales rep: ${name}` : ''
 }
 
 function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
