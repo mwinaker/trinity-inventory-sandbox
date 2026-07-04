@@ -1313,6 +1313,22 @@ function getSalesDashboardOrderKey(job: OrderJob) {
   )
 }
 
+function getSalesDashboardRowKey(job: OrderJob, orderKey: string, isPaid: boolean) {
+  return (
+    job.id ||
+    job.lineItemId ||
+    [
+      orderKey,
+      isPaid ? 'paid' : 'draft',
+      job.productTitle,
+      job.variantTitle,
+      job.quantity,
+      job.totalPrice,
+      job.invoiceStatus,
+    ].join('|')
+  )
+}
+
 function getSalesRepSummaryKey(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
   const email = sale.salesRepEmail.trim().toLowerCase()
   if (email) return email
@@ -1333,6 +1349,7 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
       draftProductTitles: Set<string>
       draftQuantity: number
       draftTotal: number
+      countedRowKeys: Set<string>
       paidLineCount: number
       paidProductTitles: Set<string>
       paidQuantity: number
@@ -1369,6 +1386,7 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
         draftProductTitles: new Set<string>(),
         draftQuantity: 0,
         draftTotal: 0,
+        countedRowKeys: new Set<string>(),
         paidLineCount: 0,
         paidProductTitles: new Set<string>(),
         paidQuantity: 0,
@@ -1378,11 +1396,16 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
         draftProductTitles: Set<string>
         draftQuantity: number
         draftTotal: number
+        countedRowKeys: Set<string>
         paidLineCount: number
         paidProductTitles: Set<string>
         paidQuantity: number
         paidTotal: number
       })
+
+    const rowKey = getSalesDashboardRowKey(job, key, jobIsPaid)
+    if (existing.countedRowKeys.has(rowKey)) continue
+    existing.countedRowKeys.add(rowKey)
 
     existing.draftOrderName ||= job.shopifyDraftOrderName
     existing.paidOrderName ||= job.shopifyOrderName
@@ -1426,19 +1449,22 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
         draftProductTitles,
         draftQuantity,
         draftTotal,
+        countedRowKeys,
         paidLineCount,
         paidProductTitles,
         paidQuantity,
         paidTotal,
         ...sale
       }) => {
-        const productTitles = paidLineCount > 0 ? paidProductTitles : draftProductTitles
+        void countedRowKeys
+        const hasDraftBasis = draftLineCount > 0
+        const productTitles = hasDraftBasis ? draftProductTitles : paidProductTitles
         return {
           ...sale,
-          lineCount: paidLineCount > 0 ? paidLineCount : draftLineCount,
+          lineCount: hasDraftBasis ? draftLineCount : paidLineCount,
           productSummary: Array.from(productTitles).join(', ') || 'Custom bat order',
-          quantity: paidLineCount > 0 ? paidQuantity : draftQuantity,
-          total: paidLineCount > 0 ? paidTotal : draftTotal,
+          quantity: hasDraftBasis ? draftQuantity : paidQuantity,
+          total: hasDraftBasis ? draftTotal : paidTotal,
         }
       },
     )

@@ -1537,7 +1537,9 @@ function salesRepPaidNotificationContextJobs(notificationJobs, existingJobs) {
     notificationJobs.map((job) => cleanString(job.shopifyOrderId)).filter(Boolean),
   )
 
-  const existingContextJobs = salesRepNotificationJobs(existingJobs).filter((job) => {
+  const existingContextJobs = existingJobs.filter((job) => {
+    if (job.origin !== 'internal_sales') return false
+
     const intakeId = cleanString(job.intakeId)
     const draftOrderId = cleanString(job.shopifyDraftOrderId)
     const orderId = cleanString(job.shopifyOrderId)
@@ -1588,11 +1590,7 @@ function hasExistingSalesRepPaidNotification(existingJobs, notificationJobs) {
 
     if (!isMatch) return false
 
-    return (
-      cleanString(job.salesRepPaidNotificationSentAt) ||
-      cleanString(job.invoiceStatus).toLowerCase() === 'paid' ||
-      cleanString(job.financialStatus).toLowerCase() === 'paid'
-    )
+    return Boolean(cleanString(job.salesRepPaidNotificationSentAt))
   })
 }
 
@@ -2659,6 +2657,30 @@ async function createPendingOrder(order, options = {}) {
                 id
                 title
                 quantity
+                originalUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                originalTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
                 variant {
                   id
                   title
@@ -2740,6 +2762,30 @@ async function completeDraftOrderAsPending(draftOrderId) {
                   id
                   title
                   quantity
+                  originalUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  discountedUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  originalTotalSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  discountedTotalSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
                   variant {
                     id
                     title
@@ -2861,6 +2907,30 @@ async function listRecentOrders(first) {
                 id
                 title
                 quantity
+                originalUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                originalTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
                 variant {
                   id
                   title
@@ -4099,7 +4169,9 @@ function buildSalesRepDraftSubmissionEmailInput(payload, draftOrder) {
 }
 
 function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
-  const relevantJobs = salesRepNotificationJobs(jobs)
+  const relevantJobs = (Array.isArray(jobs) ? jobs : []).filter(
+    (job) => job.origin === 'internal_sales',
+  )
   const primaryJob =
     relevantJobs.find((job) => cleanString(job.shopifyOrderName)) ?? relevantJobs[0] ?? {}
   const originalDraftInvoiceName = cleanString(
@@ -4823,7 +4895,7 @@ function mapGraphQLOrderToJobs(order) {
       linkedProducedBatId: '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
       salesRepEmail: normalizeEmail(orderAttributes.trinity_sales_rep_email),
-      totalPrice: money.amount ?? '',
+      totalPrice: getGraphQLLineUnitPrice(line, money.amount),
       currency: money.currencyCode ?? '',
       specs,
       lineItems: [
@@ -4840,6 +4912,28 @@ function mapGraphQLOrderToJobs(order) {
       updatedAt: order.updatedAt ?? new Date().toISOString(),
     }
   })
+}
+
+function getGraphQLLineUnitPrice(line, fallbackAmount = '') {
+  const unitAmount =
+    getGraphQLMoneyAmount(line?.discountedUnitPriceSet) ||
+    getGraphQLMoneyAmount(line?.originalUnitPriceSet)
+  if (unitAmount) return unitAmount
+
+  const quantity = Number(line?.quantity || 1)
+  const totalAmount =
+    getGraphQLMoneyAmount(line?.discountedTotalSet) ||
+    getGraphQLMoneyAmount(line?.originalTotalSet)
+  const total = Number(totalAmount)
+  if (Number.isFinite(total) && Number.isFinite(quantity) && quantity > 0) {
+    return String(total / quantity)
+  }
+
+  return cleanString(fallbackAmount)
+}
+
+function getGraphQLMoneyAmount(moneySet) {
+  return cleanString(moneySet?.shopMoney?.amount)
 }
 
 function mapOrderWebhookToJobs(order, topic) {
