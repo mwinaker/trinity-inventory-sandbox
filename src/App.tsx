@@ -218,6 +218,9 @@ type OrderJob = {
   assignedBilletId: string
   linkedProducedBatId: string
   salesRep: string
+  salesRepEmail: string
+  salesRepSubmissionNotificationSentAt: string
+  salesRepPaidNotificationSentAt: string
   totalPrice: string
   currency: string
   specs: OrderSpecs
@@ -283,6 +286,7 @@ type SalesOrderDraft = {
   billingCompany: string
   billingRelationship: string
   salesRep: string
+  salesRepEmail: string
   notes: string
   createDraftOrder: boolean
   sendInvoice: boolean
@@ -788,6 +792,7 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   billingCompany: '',
   billingRelationship: '',
   salesRep: '',
+  salesRepEmail: '',
   notes: '',
   createDraftOrder: true,
   sendInvoice: false,
@@ -1038,6 +1043,9 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     assignedBilletId: record.assignedBilletId ?? '',
     linkedProducedBatId: record.linkedProducedBatId ?? '',
     salesRep: record.salesRep ?? '',
+    salesRepEmail: record.salesRepEmail ?? '',
+    salesRepSubmissionNotificationSentAt: record.salesRepSubmissionNotificationSentAt ?? '',
+    salesRepPaidNotificationSentAt: record.salesRepPaidNotificationSentAt ?? '',
     totalPrice: record.totalPrice ?? '',
     currency: record.currency ?? '',
     specs: {
@@ -1202,6 +1210,13 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
       orderSubmittedAt: job.orderSubmittedAt || existing?.orderSubmittedAt || job.createdAt,
       internalNotes: job.internalNotes || existing?.internalNotes || '',
       salesRep: job.salesRep || existing?.salesRep || '',
+      salesRepEmail: job.salesRepEmail || existing?.salesRepEmail || '',
+      salesRepSubmissionNotificationSentAt:
+        job.salesRepSubmissionNotificationSentAt ||
+        existing?.salesRepSubmissionNotificationSentAt ||
+        '',
+      salesRepPaidNotificationSentAt:
+        job.salesRepPaidNotificationSentAt || existing?.salesRepPaidNotificationSentAt || '',
       playerName: job.playerName || existing?.playerName || '',
       playerEmail: job.playerEmail || existing?.playerEmail || '',
       billingDifferent: job.billingDifferent || existing?.billingDifferent || false,
@@ -1757,6 +1772,8 @@ type SalesOrderApiResponse = {
   invoiceSendTokenExpiresAt?: string
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
+  salesRepSubmissionNotificationSent?: boolean
+  salesRepSubmissionNotificationError?: string
   orderJobs?: OrderJob[]
   players?: PlayerProfile[]
   billingContacts?: BillingContact[]
@@ -1849,9 +1866,11 @@ function getSalesOrderSuccessMessage(
     draft.createDraftOrder && payload.draftInvoiceReadyForReview
       ? ' and the draft invoice is ready for review'
       : ''
-  const notificationNames = payload.internalNotificationRecipients?.length
-    ? ' and Jeremy, Stefan, and Keith copied through Shopify'
-    : ''
+  const notificationNames = payload.salesRepSubmissionNotificationSent
+    ? ' and sales rep notified'
+    : payload.internalNotificationRecipients?.length
+      ? ' and staff copied through Shopify'
+      : ''
 
   return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${notificationNames}.`
 }
@@ -2649,6 +2668,16 @@ function PublicSalesOrderForm() {
               value={salesOrderDraft.salesRep}
               placeholder="Example: Matt"
               onChange={(event) => updateSalesDraftField('salesRep', event.target.value)}
+            />
+          </label>
+
+          <label>
+            Sales rep email
+            <input
+              type="email"
+              value={salesOrderDraft.salesRepEmail}
+              placeholder="rep@trinitybats.com"
+              onChange={(event) => updateSalesDraftField('salesRepEmail', event.target.value)}
             />
           </label>
 
@@ -3547,6 +3576,7 @@ function InternalApp() {
       job.invoiceStatus,
       job.productionStatus,
       job.salesRep,
+      job.salesRepEmail,
       job.orderSubmittedAt,
       job.assignedBilletId
         ? billets.find((billet) => billet.id === job.assignedBilletId)?.barcode ?? job.assignedBilletId
@@ -3819,9 +3849,11 @@ function InternalApp() {
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
-      const notificationNames = payload.internalNotificationRecipients?.length
-        ? ' and Jeremy, Stefan, and Keith copied through Shopify'
-        : ''
+      const notificationNames = payload.salesRepSubmissionNotificationSent
+        ? ' and sales rep notified'
+        : payload.internalNotificationRecipients?.length
+          ? ' and staff copied through Shopify'
+          : ''
       const emailMessage = payload.invoiceSent
         ? payload.emailNotificationMethod === 'order_receipt'
           ? ' and documentation email sent'
@@ -5283,6 +5315,16 @@ function InternalApp() {
                   />
                 </label>
 
+                <label>
+                  Sales rep email
+                  <input
+                    type="email"
+                    value={salesOrderDraft.salesRepEmail}
+                    placeholder="rep@trinitybats.com"
+                    onChange={(event) => updateSalesDraftField('salesRepEmail', event.target.value)}
+                  />
+                </label>
+
                 <div className="sales-line-list">
                   {salesOrderDraft.lines.map((line, index) => {
                     const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
@@ -5720,6 +5762,8 @@ function InternalApp() {
                             {job.billingRelationship ? (
                               <p>Relationship: {job.billingRelationship}</p>
                             ) : null}
+                            {job.salesRep ? <p>Sales rep: {job.salesRep}</p> : null}
+                            {job.salesRepEmail ? <p>Sales rep email: {job.salesRepEmail}</p> : null}
                           </div>
 
                           <div className="compatible-list">
@@ -5800,6 +5844,17 @@ function InternalApp() {
                                 value={job.salesRep}
                                 onChange={(event) =>
                                   updateOrderJob(job.id, { salesRep: event.target.value })
+                                }
+                              />
+                            </label>
+
+                            <label>
+                              Sales rep email
+                              <input
+                                type="email"
+                                value={job.salesRepEmail}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { salesRepEmail: event.target.value })
                                 }
                               />
                             </label>

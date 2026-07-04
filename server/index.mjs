@@ -266,6 +266,12 @@ const resourceConfigs = {
         fieldValue('production_status', item.productionStatus),
         fieldValue('assigned_billet_id', item.assignedBilletId),
         fieldValue('sales_rep', item.salesRep),
+        fieldValue('sales_rep_email', item.salesRepEmail),
+        fieldValue(
+          'sales_rep_submission_notification_sent_at',
+          item.salesRepSubmissionNotificationSentAt,
+        ),
+        fieldValue('sales_rep_paid_notification_sent_at', item.salesRepPaidNotificationSentAt),
         fieldValue('total_price', item.totalPrice),
         fieldValue('specs_json', JSON.stringify(item.specs ?? {})),
         fieldValue('line_items_json', JSON.stringify(item.lineItems ?? [])),
@@ -306,6 +312,17 @@ const resourceConfigs = {
       definitionField('production_status', 'Production Status', 'single_line_text_field'),
       definitionField('assigned_billet_id', 'Assigned Billet ID', 'single_line_text_field'),
       definitionField('sales_rep', 'Sales Rep', 'single_line_text_field'),
+      definitionField('sales_rep_email', 'Sales Rep Email', 'single_line_text_field'),
+      definitionField(
+        'sales_rep_submission_notification_sent_at',
+        'Sales Rep Submission Notification Sent At',
+        'single_line_text_field',
+      ),
+      definitionField(
+        'sales_rep_paid_notification_sent_at',
+        'Sales Rep Paid Notification Sent At',
+        'single_line_text_field',
+      ),
       definitionField('total_price', 'Total Price', 'single_line_text_field'),
       definitionField('specs_json', 'Specs JSON', 'json'),
       definitionField('line_items_json', 'Line Items JSON', 'json'),
@@ -460,9 +477,25 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
           job,
         ),
       )
+      const paidNotification = await trySendSalesRepPaidNotification({
+        order: payload,
+        topic,
+        jobs: mergedJobs,
+        existingJobs,
+      })
+      const jobsToSave = paidNotification.sentAt
+        ? mergedJobs.map((job) =>
+            shouldMarkSalesRepPaidNotification(job)
+              ? {
+                  ...job,
+                  salesRepPaidNotificationSentAt: paidNotification.sentAt,
+                }
+              : job,
+          )
+        : mergedJobs
       await Promise.all([
-        Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
-        rememberOrderJobContacts(mergedJobs),
+        Promise.all(jobsToSave.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+        rememberOrderJobContacts(jobsToSave),
       ])
     }
 
@@ -800,7 +833,19 @@ app.post('/api/sales-orders', async (request, response) => {
     if (shouldCreateDraftOrder) {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
-      const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt)
+      const salesRepSubmissionNotification = await trySendSalesRepDraftSubmissionNotification(
+        draftOrder,
+        payload,
+      )
+      const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt).map(
+        (job) =>
+          salesRepSubmissionNotification.sentAt
+            ? {
+                ...job,
+                salesRepSubmissionNotificationSentAt: salesRepSubmissionNotification.sentAt,
+              }
+            : job,
+      )
       const [rememberedContacts] = await Promise.all([
         rememberOrderJobContacts(jobs),
         Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
@@ -815,7 +860,9 @@ app.post('/api/sales-orders', async (request, response) => {
         invoiceSent: false,
         emailNotificationMethod: 'none',
         draftInvoiceReadyForReview: Boolean(draftOrder?.invoiceUrl),
-        internalNotificationRecipients: [],
+        internalNotificationRecipients: salesRepSubmissionNotification.recipients,
+        salesRepSubmissionNotificationSent: Boolean(salesRepSubmissionNotification.sentAt),
+        salesRepSubmissionNotificationError: salesRepSubmissionNotification.error,
         staffNotificationFlow: 'shopify_draft_order_review',
         orderJobs: jobs,
         players: rememberedContacts.players,
@@ -1406,6 +1453,105 @@ async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice =
   await syncOrderJobMetafields(updatedJobs)
 
   return updatedJobs
+}
+
+async function trySendSalesRepDraftSubmissionNotification(draftOrder, payload) {
+  const emailInput = buildSalesRepDraftSubmissionEmailInput(payload, draftOrder)
+  if (!emailInput) return { sentAt: '', recipients: [], error: '' }
+
+  try {
+    await sendDraftOrderInvoice(draftOrder.id, emailInput)
+    return {
+      sentAt: new Date().toISOString(),
+      recipients: uniqueEmails([emailInput.to].concat(emailInput.bcc ?? [])),
+      error: '',
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown sales rep submission notification error.'
+    console.error(`Sales rep submission notification error: ${message}`)
+    return {
+      sentAt: '',
+      recipients: [],
+      error: message,
+    }
+  }
+}
+
+async function trySendSalesRepPaidNotification({ order, topic, jobs, existingJobs }) {
+  if (!isPaidOrderWebhook(order, topic)) return { sentAt: '', recipients: [], error: '' }
+
+  const notificationJobs = salesRepNotificationJobs(jobs)
+  if (notificationJobs.length === 0) return { sentAt: '', recipients: [], error: '' }
+  if (hasExistingSalesRepPaidNotification(existingJobs, notificationJobs)) {
+    return { sentAt: '', recipients: [], error: '' }
+  }
+
+  const salesRepEmail = normalizeEmail(
+    notificationJobs.find((job) => normalizeEmail(job.salesRepEmail))?.salesRepEmail,
+  )
+  if (!salesRepEmail) return { sentAt: '', recipients: [], error: '' }
+
+  try {
+    await sendOrderInvoice(
+      order.admin_graphql_api_id ?? toShopifyGid('Order', order.id),
+      buildSalesRepPaidOrderEmailInput(order, notificationJobs, salesRepEmail),
+    )
+    return {
+      sentAt: new Date().toISOString(),
+      recipients: [salesRepEmail],
+      error: '',
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown paid notification error.'
+    console.error(`Sales rep paid notification error: ${message}`)
+    return {
+      sentAt: '',
+      recipients: [],
+      error: message,
+    }
+  }
+}
+
+function isPaidOrderWebhook(order, topic) {
+  return (
+    String(topic).toLowerCase() === 'orders/paid' ||
+    String(order?.financial_status ?? '').toLowerCase() === 'paid' ||
+    String(order?.displayFinancialStatus ?? '').toLowerCase() === 'paid'
+  )
+}
+
+function salesRepNotificationJobs(jobs) {
+  return jobs.filter(
+    (job) => job.origin === 'internal_sales' && normalizeEmail(job.salesRepEmail),
+  )
+}
+
+function shouldMarkSalesRepPaidNotification(job) {
+  return job.origin === 'internal_sales' && normalizeEmail(job.salesRepEmail)
+}
+
+function hasExistingSalesRepPaidNotification(existingJobs, notificationJobs) {
+  const matchingIds = new Set(notificationJobs.map((job) => job.id).filter(Boolean))
+  const matchingLineIds = new Set(notificationJobs.map((job) => job.lineItemId).filter(Boolean))
+  const matchingOrderIds = new Set(notificationJobs.map((job) => job.shopifyOrderId).filter(Boolean))
+  const matchingIntakeIds = new Set(notificationJobs.map((job) => job.intakeId).filter(Boolean))
+
+  return existingJobs.some((job) => {
+    const isMatch =
+      matchingIds.has(job.id) ||
+      matchingLineIds.has(job.lineItemId) ||
+      matchingOrderIds.has(job.shopifyOrderId) ||
+      matchingIntakeIds.has(job.intakeId)
+
+    if (!isMatch) return false
+
+    return (
+      cleanString(job.salesRepPaidNotificationSentAt) ||
+      cleanString(job.invoiceStatus).toLowerCase() === 'paid' ||
+      cleanString(job.financialStatus).toLowerCase() === 'paid'
+    )
+  })
 }
 
 function isMissingDraftInvoiceError(error) {
@@ -2757,6 +2903,17 @@ async function syncOrderJobMetafields(orderJobs) {
       orderMetafield(ownerId, 'assigned_billet', job.assignedBilletId),
       orderMetafield(ownerId, 'order_submitted_at', job.orderSubmittedAt),
       orderMetafield(ownerId, 'sales_rep', job.salesRep),
+      orderMetafield(ownerId, 'sales_rep_email', job.salesRepEmail),
+      orderMetafield(
+        ownerId,
+        'sales_rep_submission_notification_sent_at',
+        job.salesRepSubmissionNotificationSentAt,
+      ),
+      orderMetafield(
+        ownerId,
+        'sales_rep_paid_notification_sent_at',
+        job.salesRepPaidNotificationSentAt,
+      ),
       orderMetafield(ownerId, 'player_name', job.playerName),
       orderMetafield(ownerId, 'player_email', job.playerEmail),
       orderMetafield(ownerId, 'billing_name', job.billingName),
@@ -3511,6 +3668,7 @@ function formatMailingAddress(address) {
 
 function validateSalesOrderPayload(payload) {
   const playerName = cleanString(payload?.playerName || payload?.customerName)
+  const salesRepEmail = normalizeEmail(payload?.salesRepEmail)
   const billingDifferent = isTruthy(payload?.billingDifferent)
   const payer = resolvePayer(payload ?? {})
   const requiresShipping = requiresShippingForOrder(payload ?? {})
@@ -3519,6 +3677,9 @@ function validateSalesOrderPayload(payload) {
   if (!playerName) return 'Player name is required.'
   if (!payer.email) return 'Payer email is required.'
   if (!isPlausibleEmail(payer.email)) return 'Payer email must be a valid email address.'
+  if (cleanString(payload?.salesRepEmail) && !salesRepEmail) {
+    return 'Sales rep email must be a valid email address.'
+  }
 
   if (!billingDifferent && !payer.phone) {
     return 'Player phone is required for direct-bill orders.'
@@ -3788,7 +3949,8 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const salesRep = cleanString(payload.salesRep)
-  const salesRepMessage = formatSalesRepNotificationMessage(salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
+  const salesRepMessage = formatSalesRepNotificationMessage(salesRep, salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const billingCompany = cleanString(payload.billingCompany)
   const customMessage = [
@@ -3807,12 +3969,13 @@ function buildOrderInvoiceEmailInput(payload, order) {
     to: payer.email,
     subject: isZeroDollarOrder
       ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Bat Company`
-      : `${order?.name ?? 'Shopify order'} invoice from Trinity Bat Company`,
+      : `${order?.name ?? 'Shopify order'} Draft Order Submitted`,
     customMessage,
   }
 
-  if (internalOrderNotificationEmails.length > 0) {
-    emailInput.bcc = internalOrderNotificationEmails
+  const bcc = salesRepNotificationRecipients(salesRepEmail)
+  if (bcc.length > 0) {
+    emailInput.bcc = bcc
   }
 
   return emailInput
@@ -3824,7 +3987,8 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
   const draftOrderName = cleanString(primaryJob.shopifyDraftOrderName) || 'Trinity order'
   const recipientEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail)
   const salesRep = cleanString(primaryJob.salesRep)
-  const salesRepMessage = formatSalesRepNotificationMessage(salesRep)
+  const salesRepEmail = normalizeEmail(primaryJob.salesRepEmail)
+  const salesRepMessage = formatSalesRepNotificationMessage(salesRep, salesRepEmail)
   const playerName = cleanString(primaryJob.playerName)
   const billingCompany = cleanString(primaryJob.billingCompany)
   const notes = cleanString(primaryJob.internalNotes || primaryJob.notes)
@@ -3842,28 +4006,131 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
     .join('\n')
 
   const emailInput = {
-    subject: `${draftOrderName} invoice from Trinity Sports Group`,
+    subject: `${draftOrderName} Draft Order Submitted`,
     customMessage,
   }
 
   if (recipientEmail) {
     emailInput.to = recipientEmail
   }
-  if (internalOrderNotificationEmails.length > 0) {
-    emailInput.bcc = internalOrderNotificationEmails
+  const bcc = salesRepNotificationRecipients(salesRepEmail)
+  if (bcc.length > 0) {
+    emailInput.bcc = bcc
   }
 
   return emailInput
 }
 
-function formatSalesRepNotificationMessage(salesRep) {
+function buildSalesRepDraftSubmissionEmailInput(payload, draftOrder) {
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
+  if (!salesRepEmail) return null
+
+  const salesRep = cleanString(payload.salesRep)
+  const draftOrderName = cleanString(draftOrder?.name) || 'Trinity draft order'
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const payer = resolvePayer(payload)
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const lineSummary = summarizeSalesOrderLines(lines)
+  const customMessage = [
+    'A Trinity Bat Company draft order has been submitted from the manual sales form.',
+    formatSalesRepNotificationMessage(salesRep, salesRepEmail),
+    playerName ? `Player: ${playerName}` : '',
+    payer.name ? `Bill to: ${payer.name}` : '',
+    payer.email ? `Payer email: ${payer.email}` : '',
+    lineSummary ? `Order lines: ${lineSummary}` : '',
+    draftOrder?.invoiceUrl
+      ? `Draft invoice preview: ${normalizeDraftInvoiceUrl(draftOrder.invoiceUrl)}`
+      : '',
+    cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return {
+    to: salesRepEmail,
+    subject: `${draftOrderName} Draft Order Submitted`,
+    customMessage,
+    ...(internalOrderNotificationEmails.length > 0
+      ? { bcc: internalOrderNotificationEmails }
+      : {}),
+  }
+}
+
+function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
+  const relevantJobs = salesRepNotificationJobs(jobs)
+  const primaryJob = relevantJobs[0] ?? {}
+  const orderName = cleanString(
+    primaryJob.shopifyDraftOrderName || primaryJob.shopifyOrderName || order?.name,
+  )
+  const salesRep = cleanString(primaryJob.salesRep)
+  const customerName = cleanString(
+    [order?.customer?.first_name, order?.customer?.last_name].filter(Boolean).join(' '),
+  )
+  const playerName =
+    cleanString(primaryJob.playerName || primaryJob.customerName) || customerName
+  const payerName = cleanString(primaryJob.billingName || primaryJob.customerName)
+  const payerEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail || order?.email)
+  const lineSummary = summarizeOrderJobs(relevantJobs)
+  const paidAt = cleanString(order?.processed_at || order?.updated_at || new Date().toISOString())
+  const customMessage = [
+    'A Trinity Bat Company draft order you submitted has been paid by the customer.',
+    formatSalesRepNotificationMessage(salesRep, salesRepEmail),
+    orderName ? `Order: ${orderName}` : '',
+    playerName ? `Player: ${playerName}` : '',
+    payerName ? `Bill to: ${payerName}` : '',
+    payerEmail ? `Payer email: ${payerEmail}` : '',
+    lineSummary ? `Order lines: ${lineSummary}` : '',
+    paidAt ? `Paid notification received: ${paidAt}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return {
+    to: salesRepEmail,
+    subject: `${orderName || 'Trinity draft order'} Draft Order Paid`,
+    customMessage,
+  }
+}
+
+function formatSalesRepNotificationMessage(salesRep, salesRepEmail = '') {
   const name = cleanString(salesRep)
-  return name ? `Order submitted by sales rep: ${name}` : ''
+  const email = normalizeEmail(salesRepEmail)
+  if (name && email) return `Order submitted by sales rep: ${name} <${email}>`
+  if (name) return `Order submitted by sales rep: ${name}`
+  if (email) return `Order submitted by sales rep: ${email}`
+  return ''
+}
+
+function salesRepNotificationRecipients(salesRepEmail) {
+  return uniqueEmails(internalOrderNotificationEmails.concat(normalizeEmail(salesRepEmail)))
+}
+
+function summarizeSalesOrderLines(lines) {
+  return lines
+    .map((line) => {
+      const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+      const quantity = Number(line?.quantity || 1)
+      return `${quantity} x ${title}`
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
+function summarizeOrderJobs(jobs) {
+  return jobs
+    .map((job) => {
+      const title = cleanString(job.productTitle) || 'Custom Trinity bat'
+      const quantity = Number(job.quantity || 1)
+      return `${quantity} x ${title}`
+    })
+    .filter(Boolean)
+    .join(', ')
 }
 
 function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const salesRep = cleanString(payload.salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
@@ -3909,6 +4176,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
+    salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
   ]
     .filter(Boolean)
@@ -3953,6 +4221,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         : '',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
+      trinity_sales_rep_email: salesRepEmail,
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
@@ -4009,6 +4278,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
 function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const salesRep = cleanString(payload.salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
@@ -4051,6 +4321,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
+    salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
   ]
     .filter(Boolean)
@@ -4088,6 +4359,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         : '',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
+      trinity_sales_rep_email: salesRepEmail,
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
@@ -4351,6 +4623,7 @@ function mapDraftOrderToJobs(
       assignedBilletId: '',
       linkedProducedBatId: '',
       salesRep: cleanString(payload.salesRep),
+      salesRepEmail: normalizeEmail(payload.salesRepEmail),
       totalPrice: cleanString(line.unitPrice),
       currency: draftOrder?.totalPriceSet?.shopMoney?.currencyCode ?? '',
       specs,
@@ -4392,6 +4665,8 @@ function mapCompletedDraftOrderToJobs(
       shopifyDraftInvoiceUrl: normalizeDraftInvoiceUrl(draftOrder.invoiceUrl),
       orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
+      salesRep: job.salesRep || cleanString(payload.salesRep),
+      salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
@@ -4418,6 +4693,8 @@ function mapCreatedOrderToJobs(
       intakeId,
       orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
+      salesRep: job.salesRep || cleanString(payload.salesRep),
+      salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
@@ -4484,6 +4761,7 @@ function mapGraphQLOrderToJobs(order) {
       assignedBilletId: '',
       linkedProducedBatId: '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
+      salesRepEmail: normalizeEmail(orderAttributes.trinity_sales_rep_email),
       totalPrice: money.amount ?? '',
       currency: money.currencyCode ?? '',
       specs,
@@ -4568,6 +4846,7 @@ function mapOrderWebhookToJobs(order, topic) {
       assignedBilletId: '',
       linkedProducedBatId: '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
+      salesRepEmail: normalizeEmail(orderAttributes.trinity_sales_rep_email),
       totalPrice: cleanString(line.price),
       currency: order.currency ?? '',
       specs,
@@ -4597,6 +4876,9 @@ function mergeOrderJob(existing, incoming) {
       incoming.productionStatus === 'cancelled'
         ? 'cancelled'
         : existing.productionStatus || incoming.productionStatus,
+    shopifyDraftOrderId: existing.shopifyDraftOrderId || incoming.shopifyDraftOrderId,
+    shopifyDraftOrderName: existing.shopifyDraftOrderName || incoming.shopifyDraftOrderName,
+    shopifyDraftInvoiceUrl: existing.shopifyDraftInvoiceUrl || incoming.shopifyDraftInvoiceUrl,
     assignedBilletId: existing.assignedBilletId || incoming.assignedBilletId,
     linkedProducedBatId: existing.linkedProducedBatId || incoming.linkedProducedBatId,
     orderSubmittedAt:
@@ -4605,6 +4887,12 @@ function mergeOrderJob(existing, incoming) {
       existing.createdAt ||
       incoming.createdAt,
     salesRep: existing.salesRep || incoming.salesRep,
+    salesRepEmail: existing.salesRepEmail || incoming.salesRepEmail,
+    salesRepSubmissionNotificationSentAt:
+      existing.salesRepSubmissionNotificationSentAt ||
+      incoming.salesRepSubmissionNotificationSentAt,
+    salesRepPaidNotificationSentAt:
+      existing.salesRepPaidNotificationSentAt || incoming.salesRepPaidNotificationSentAt,
     playerName: existing.playerName || incoming.playerName,
     playerEmail: existing.playerEmail || incoming.playerEmail,
     billingDifferent: existing.billingDifferent || incoming.billingDifferent,
@@ -4947,17 +5235,20 @@ function createPlainId(prefix) {
 function parseEmailList(value, fallback = [], required = []) {
   const configuredEmails = cleanString(value)
     .split(/[\s,;]+/)
-    .map((email) => email.trim().toLowerCase())
+    .map((email) => normalizeEmail(email))
     .filter(Boolean)
   const emails = (configuredEmails.length > 0 ? configuredEmails : fallback).concat(required)
 
-  return Array.from(
-    new Set(
-      emails
-        .map((email) => cleanString(email).toLowerCase())
-        .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
-    ),
-  )
+  return uniqueEmails(emails)
+}
+
+function uniqueEmails(emails) {
+  return Array.from(new Set(emails.map((email) => normalizeEmail(email)).filter(Boolean)))
+}
+
+function normalizeEmail(email) {
+  const normalized = cleanString(email).toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : ''
 }
 
 function toMoneyInput(value) {
