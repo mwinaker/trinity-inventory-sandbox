@@ -4059,9 +4059,9 @@ function buildSalesRepDraftSubmissionEmailInput(payload, draftOrder) {
 function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
   const relevantJobs = salesRepNotificationJobs(jobs)
   const primaryJob = relevantJobs[0] ?? {}
-  const orderName = cleanString(
-    primaryJob.shopifyDraftOrderName || primaryJob.shopifyOrderName || order?.name,
-  )
+  const originalDraftInvoiceName = cleanString(primaryJob.shopifyDraftOrderName)
+  const paidOrderName = cleanString(primaryJob.shopifyOrderName || order?.name)
+  const emailReferenceName = originalDraftInvoiceName || paidOrderName
   const salesRep = cleanString(primaryJob.salesRep)
   const customerName = cleanString(
     [order?.customer?.first_name, order?.customer?.last_name].filter(Boolean).join(' '),
@@ -4073,9 +4073,14 @@ function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
   const lineSummary = summarizeOrderJobs(relevantJobs)
   const paidAt = cleanString(order?.processed_at || order?.updated_at || new Date().toISOString())
   const customMessage = [
-    'A Trinity Bat Company draft order you submitted has been paid by the customer.',
+    'Payment received for a Trinity Bat Company draft order.',
+    originalDraftInvoiceName
+      ? `Original draft invoice: ${originalDraftInvoiceName}`
+      : '',
+    paidOrderName && paidOrderName !== originalDraftInvoiceName
+      ? `Paid Shopify order: ${paidOrderName}`
+      : '',
     formatSalesRepNotificationMessage(salesRep, salesRepEmail),
-    orderName ? `Order: ${orderName}` : '',
     playerName ? `Player: ${playerName}` : '',
     payerName ? `Bill to: ${payerName}` : '',
     payerEmail ? `Payer email: ${payerEmail}` : '',
@@ -4087,7 +4092,7 @@ function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
 
   return {
     to: salesRepEmail,
-    subject: `${orderName || 'Trinity draft order'} Draft Order Paid`,
+    subject: `${emailReferenceName || 'Trinity draft order'} Draft Order Paid`,
     customMessage,
   }
 }
