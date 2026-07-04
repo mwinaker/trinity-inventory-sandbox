@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -3861,136 +3861,204 @@ function InternalApp() {
     getBillingContactSearchOptions(contact),
   )
 
-  const shopifyBatModels: BatModelProduct[] = shopifyCatalog.map((product) => ({
-    id: product.id,
-    name: product.name,
-    category: product.category,
-    url: product.url,
-    source: 'shopify',
-    status: product.status,
-    handle: product.handle,
-    tags: product.tags,
-    variantCount: product.variants.length,
-    inventoryOnHand: product.variants.reduce(
-      (total, variant) => total + variant.inventoryQuantity,
-      0,
-    ),
-  }))
+  const shopifyBatModels: BatModelProduct[] = useMemo(
+    () =>
+      shopifyCatalog.map((product) => ({
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        url: product.url,
+        source: 'shopify',
+        status: product.status,
+        handle: product.handle,
+        tags: product.tags,
+        variantCount: product.variants.length,
+        inventoryOnHand: product.variants.reduce(
+          (total, variant) => total + variant.inventoryQuantity,
+          0,
+        ),
+      })),
+    [shopifyCatalog],
+  )
 
-  const batModelMap = new Map<string, BatModelProduct>()
-  ;[...seedBatModels, ...shopifyBatModels, ...customBatModels].forEach((model) => {
-    const key = model.source === 'shopify' ? model.id : model.name.toLowerCase()
-    if (!batModelMap.has(key) || model.source === 'shopify' || model.source === 'custom') {
-      batModelMap.set(key, model)
+  const allBatModels = useMemo(() => {
+    const batModelMap = new Map<string, BatModelProduct>()
+    ;[...seedBatModels, ...shopifyBatModels, ...customBatModels].forEach((model) => {
+      const key = model.source === 'shopify' ? model.id : model.name.toLowerCase()
+      if (!batModelMap.has(key) || model.source === 'shopify' || model.source === 'custom') {
+        batModelMap.set(key, model)
+      }
+    })
+    return Array.from(batModelMap.values())
+  }, [customBatModels, shopifyBatModels])
+  const trainerBatModels = useMemo(
+    () => allBatModels.filter((model) => isTrainerModel(model)),
+    [allBatModels],
+  )
+  const nonTrainerBatModels = useMemo(
+    () => allBatModels.filter((model) => !isTrainerModel(model)),
+    [allBatModels],
+  )
+  const billetById = useMemo(
+    () => new Map(billets.map((billet) => [billet.id, billet])),
+    [billets],
+  )
+  const selectableBillets = useMemo(() => {
+    const selectedBilletIds = new Set(producedBatDraft.billetIds)
+    return billets.filter(
+      (billet) => billet.status === 'storage' || selectedBilletIds.has(billet.id),
+    )
+  }, [billets, producedBatDraft.billetIds])
+  const selectedShopifyProduct = useMemo(
+    () =>
+      shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null,
+    [producedBatDraft.shopifyProductId, shopifyCatalog],
+  )
+  const selectedShopifyVariant = useMemo(
+    () =>
+      selectedShopifyProduct?.variants.find(
+        (variant) => variant.id === producedBatDraft.shopifyVariantId,
+      ) ?? null,
+    [producedBatDraft.shopifyVariantId, selectedShopifyProduct],
+  )
+  const openOrderJobs = useMemo(
+    () =>
+      orderJobs.filter(
+        (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
+      ),
+    [orderJobs],
+  )
+  const readyOrderJobs = useMemo(
+    () =>
+      orderJobs.filter(
+        (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
+      ),
+    [orderJobs],
+  )
+  const normalizedOrderQuery = orderQuery.toLowerCase()
+  const filteredOrderJobs = useMemo(
+    () =>
+      orderJobs.filter((job) => {
+        const matchesStatus =
+          orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
+        if (!matchesStatus) return false
+        if (!normalizedOrderQuery) return true
+
+        const assignedBillet = job.assignedBilletId
+          ? billetById.get(job.assignedBilletId)?.barcode ?? job.assignedBilletId
+          : ''
+        const searchable = [
+          job.shopifyOrderName,
+          job.shopifyDraftOrderName,
+          job.customerName,
+          job.customerEmail,
+          job.playerName,
+          job.playerEmail,
+          job.billingName,
+          job.billingEmail,
+          job.billingPhone,
+          job.billingCompany,
+          job.billingRelationship,
+          job.productTitle,
+          job.variantTitle,
+          job.origin,
+          job.financialStatus,
+          job.fulfillmentStatus,
+          job.invoiceStatus,
+          job.productionStatus,
+          job.salesRep,
+          job.salesRepEmail,
+          job.orderSubmittedAt,
+          assignedBillet,
+          job.specs.model,
+          job.specs.length,
+          job.specs.targetWeight,
+          job.specs.wood,
+          job.specs.handleColor,
+          job.specs.barrelColor,
+          job.specs.bandColor,
+          job.specs.logoColor,
+          job.specs.engraving,
+          job.specs.cupped,
+          job.specs.notes,
+          job.notes,
+          job.internalNotes,
+        ]
+          .join(' ')
+          .toLowerCase()
+
+        return searchable.includes(normalizedOrderQuery)
+      }),
+    [billetById, normalizedOrderQuery, orderJobs, orderStatusFilter],
+  )
+  const salesDashboardAllSales = useMemo(() => buildSalesDashboardSales(orderJobs), [orderJobs])
+  const salesDashboardRepOptions = useMemo(
+    () => buildSalesRepSummaries(salesDashboardAllSales),
+    [salesDashboardAllSales],
+  )
+  const salesDashboardSales = useMemo(
+    () =>
+      salesDashboardAllSales.filter((sale) => {
+        const matchesRange = isSaleInsideDashboardRange(sale, salesDashboardRange)
+        const matchesRep =
+          salesDashboardRepFilter === 'all' ||
+          getSalesRepSummaryKey(sale) === salesDashboardRepFilter
+
+        return matchesRange && matchesRep
+      }),
+    [salesDashboardAllSales, salesDashboardRange, salesDashboardRepFilter],
+  )
+  const salesDashboardSummaries = useMemo(
+    () => buildSalesRepSummaries(salesDashboardSales),
+    [salesDashboardSales],
+  )
+  const {
+    paidSales: salesDashboardPaidSales,
+    openSales: salesDashboardOpenSales,
+    submittedValue: salesDashboardSubmittedValue,
+    paidValue: salesDashboardPaidValue,
+    openValue: salesDashboardOpenValue,
+  } = useMemo(() => {
+    const paidSales: SalesDashboardSale[] = []
+    const openSales: SalesDashboardSale[] = []
+    let submittedValue = 0
+    let paidValue = 0
+    let openValue = 0
+
+    for (const sale of salesDashboardSales) {
+      submittedValue += sale.total
+      if (sale.isPaid) {
+        paidSales.push(sale)
+        paidValue += sale.total
+      } else {
+        openSales.push(sale)
+        openValue += sale.total
+      }
     }
-  })
-  const allBatModels = Array.from(batModelMap.values())
-  const trainerBatModels = allBatModels.filter((model) => isTrainerModel(model))
-  const nonTrainerBatModels = allBatModels.filter((model) => !isTrainerModel(model))
-  const selectableBillets = billets.filter(
-    (billet) =>
-      billet.status === 'storage' ||
-      producedBatDraft.billetIds.includes(billet.id),
-  )
-  const selectedShopifyProduct =
-    shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null
-  const selectedShopifyVariant =
-    selectedShopifyProduct?.variants.find(
-      (variant) => variant.id === producedBatDraft.shopifyVariantId,
-    ) ?? null
-  const openOrderJobs = orderJobs.filter(
-    (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
-  )
-  const readyOrderJobs = orderJobs.filter(
-    (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
-  )
-  const filteredOrderJobs = orderJobs.filter((job) => {
-    const searchable = [
-      job.shopifyOrderName,
-      job.shopifyDraftOrderName,
-      job.customerName,
-      job.customerEmail,
-      job.playerName,
-      job.playerEmail,
-      job.billingName,
-      job.billingEmail,
-      job.billingPhone,
-      job.billingCompany,
-      job.billingRelationship,
-      job.productTitle,
-      job.variantTitle,
-      job.origin,
-      job.financialStatus,
-      job.fulfillmentStatus,
-      job.invoiceStatus,
-      job.productionStatus,
-      job.salesRep,
-      job.salesRepEmail,
-      job.orderSubmittedAt,
-      job.assignedBilletId
-        ? billets.find((billet) => billet.id === job.assignedBilletId)?.barcode ?? job.assignedBilletId
-        : '',
-      job.specs.model,
-      job.specs.length,
-      job.specs.targetWeight,
-      job.specs.wood,
-      job.specs.handleColor,
-      job.specs.barrelColor,
-      job.specs.bandColor,
-      job.specs.logoColor,
-      job.specs.engraving,
-      job.specs.cupped,
-      job.specs.notes,
-      job.notes,
-      job.internalNotes,
-    ]
-      .join(' ')
-      .toLowerCase()
 
-    const matchesQuery = searchable.includes(orderQuery.toLowerCase())
-    const matchesStatus =
-      orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
-
-    return matchesQuery && matchesStatus
-  })
-  const salesDashboardAllSales = buildSalesDashboardSales(orderJobs)
-  const salesDashboardRepOptions = buildSalesRepSummaries(salesDashboardAllSales)
-  const salesDashboardSales = salesDashboardAllSales.filter((sale) => {
-    const matchesRange = isSaleInsideDashboardRange(sale, salesDashboardRange)
-    const matchesRep =
-      salesDashboardRepFilter === 'all' ||
-      getSalesRepSummaryKey(sale) === salesDashboardRepFilter
-
-    return matchesRange && matchesRep
-  })
-  const salesDashboardSummaries = buildSalesRepSummaries(salesDashboardSales)
-  const salesDashboardPaidSales = salesDashboardSales.filter((sale) => sale.isPaid)
-  const salesDashboardOpenSales = salesDashboardSales.filter((sale) => !sale.isPaid)
-  const salesDashboardSubmittedValue = salesDashboardSales.reduce(
-    (total, sale) => total + sale.total,
-    0,
+    return { paidSales, openSales, submittedValue, paidValue, openValue }
+  }, [salesDashboardSales])
+  const salesDashboardRecentSales = useMemo(
+    () =>
+      [...salesDashboardSales]
+        .sort(
+          (first, second) =>
+            getDateTimestamp(second.paidAt || second.submittedAt) -
+            getDateTimestamp(first.paidAt || first.submittedAt),
+        )
+        .slice(0, 8),
+    [salesDashboardSales],
   )
-  const salesDashboardPaidValue = salesDashboardPaidSales.reduce(
-    (total, sale) => total + sale.total,
-    0,
+  const salesDashboardAwaitingPayment = useMemo(
+    () =>
+      [...salesDashboardOpenSales]
+        .sort(
+          (first, second) =>
+            getDateTimestamp(first.submittedAt) - getDateTimestamp(second.submittedAt),
+        )
+        .slice(0, 8),
+    [salesDashboardOpenSales],
   )
-  const salesDashboardOpenValue = salesDashboardOpenSales.reduce(
-    (total, sale) => total + sale.total,
-    0,
-  )
-  const salesDashboardRecentSales = [...salesDashboardSales]
-    .sort(
-      (first, second) =>
-        getDateTimestamp(second.paidAt || second.submittedAt) -
-        getDateTimestamp(first.paidAt || first.submittedAt),
-    )
-    .slice(0, 8)
-  const salesDashboardAwaitingPayment = [...salesDashboardOpenSales]
-    .sort(
-      (first, second) =>
-        getDateTimestamp(first.submittedAt) - getDateTimestamp(second.submittedAt),
-    )
-    .slice(0, 8)
 
   const filteredBatModels = allBatModels.filter((model) => {
     const modelText = [

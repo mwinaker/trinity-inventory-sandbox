@@ -471,12 +471,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     if (incomingJobs.length > 0) {
       await ensureDefinitions()
       const existingJobs = await listRecords(resourceConfigs.orderJobs)
-      const mergedJobs = incomingJobs.map((job) =>
-        mergeOrderJob(
-          findMatchingOrderJob(existingJobs, job),
-          job,
-        ),
-      )
+      const mergedJobs = mergeIncomingOrderJobs(existingJobs, incomingJobs)
       const paidNotification = await trySendSalesRepPaidNotification({
         order: payload,
         topic,
@@ -995,7 +990,7 @@ app.post('/api/orders/import', requireInternalAccess, async (request, response) 
     const orders = await listRecentOrders(first)
     const existingJobs = await listRecords(resourceConfigs.orderJobs)
     const jobs = orders.flatMap((order) => mapGraphQLOrderToJobs(order))
-    const mergedJobs = jobs.map((job) => mergeOrderJob(findMatchingOrderJob(existingJobs, job), job))
+    const mergedJobs = mergeIncomingOrderJobs(existingJobs, jobs)
 
     const [rememberedContacts] = await Promise.all([
       rememberOrderJobContacts(mergedJobs),
@@ -5063,17 +5058,50 @@ function mergeOrderJob(existing, incoming) {
   }
 }
 
-function findMatchingOrderJob(existingJobs, incomingJob) {
-  return existingJobs.find((job) => {
-    if (job.id === incomingJob.id) return true
-    if (job.lineItemId && job.lineItemId === incomingJob.lineItemId) return true
-    return Boolean(
-      job.intakeId &&
-        incomingJob.intakeId &&
-        job.intakeId === incomingJob.intakeId &&
-        job.productTitle === incomingJob.productTitle,
-    )
-  })
+function mergeIncomingOrderJobs(existingJobs, incomingJobs) {
+  const matchIndex = createOrderJobMatchIndex(existingJobs)
+  return incomingJobs.map((job) => mergeOrderJob(findMatchingOrderJob(matchIndex, job), job))
+}
+
+function createOrderJobMatchIndex(existingJobs) {
+  const byId = new Map()
+  const byLineItemId = new Map()
+  const byIntakeProduct = new Map()
+
+  for (const job of existingJobs) {
+    rememberFirstOrderJob(byId, cleanString(job.id), job)
+    rememberFirstOrderJob(byLineItemId, cleanString(job.lineItemId), job)
+    rememberFirstOrderJob(byIntakeProduct, orderJobIntakeProductKey(job), job)
+  }
+
+  return { byId, byLineItemId, byIntakeProduct }
+}
+
+function rememberFirstOrderJob(index, key, job) {
+  if (key && !index.has(key)) index.set(key, job)
+}
+
+function findMatchingOrderJob(matchIndex, incomingJob) {
+  const id = cleanString(incomingJob.id)
+  if (id && matchIndex.byId.has(id)) return matchIndex.byId.get(id)
+
+  const lineItemId = cleanString(incomingJob.lineItemId)
+  if (lineItemId && matchIndex.byLineItemId.has(lineItemId)) {
+    return matchIndex.byLineItemId.get(lineItemId)
+  }
+
+  const intakeProductKey = orderJobIntakeProductKey(incomingJob)
+  if (intakeProductKey && matchIndex.byIntakeProduct.has(intakeProductKey)) {
+    return matchIndex.byIntakeProduct.get(intakeProductKey)
+  }
+
+  return null
+}
+
+function orderJobIntakeProductKey(job) {
+  const intakeId = cleanString(job.intakeId)
+  const productTitle = cleanString(job.productTitle)
+  return intakeId && productTitle ? `${intakeId}::${productTitle}` : ''
 }
 
 function extractSpecs(orderAttributes, lineAttributes) {
