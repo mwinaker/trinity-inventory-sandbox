@@ -40,7 +40,7 @@ declare global {
   }
 }
 
-type ActiveSection = 'inventory' | 'orders' | 'players' | 'models' | 'costs'
+type ActiveSection = 'inventory' | 'orders' | 'sales' | 'players' | 'models' | 'costs'
 type BilletStatus = 'storage' | 'production'
 type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
@@ -335,6 +335,39 @@ type RemoteStatePatch = Partial<RemoteState> & {
   deletes?: RemoteStateDeletes
 }
 
+type SalesDashboardRange = '30' | '90' | 'all'
+
+type SalesDashboardSale = {
+  key: string
+  draftOrderName: string
+  paidOrderName: string
+  salesRep: string
+  salesRepEmail: string
+  customerName: string
+  payerName: string
+  submittedAt: string
+  paidAt: string
+  invoiceStatus: InvoiceStatus
+  isPaid: boolean
+  total: number
+  quantity: number
+  lineCount: number
+  productSummary: string
+}
+
+type SalesRepSummary = {
+  key: string
+  label: string
+  email: string
+  submittedCount: number
+  submittedValue: number
+  paidCount: number
+  paidValue: number
+  openCount: number
+  openValue: number
+  averageDaysToPay: number | null
+}
+
 const billetStorageKey = 'trinity-billet-sandbox-v5'
 const playerStorageKey = 'trinity-player-profiles-v3'
 const producedBatStorageKey = 'trinity-produced-bats-v1'
@@ -382,6 +415,11 @@ const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label:
     value: 'rush',
     label: `Rush production (+${formatSalesOrderMoney(rushProductionSurchargeUnitAmount)}/bat)`,
   },
+]
+const salesDashboardRangeOptions: Array<{ value: SalesDashboardRange; label: string }> = [
+  { value: '30', label: 'Last 30 days' },
+  { value: '90', label: 'Last 90 days' },
+  { value: 'all', label: 'All time' },
 ]
 const handleColorOptions = [
   'Natural',
@@ -1190,6 +1228,231 @@ function formatOrderDateTime(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function getDateTimestamp(value: string) {
+  if (!value) return 0
+  const time = new Date(value).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+function getEarlierDate(first: string, second: string) {
+  if (!first) return second
+  if (!second) return first
+  return getDateTimestamp(second) < getDateTimestamp(first) ? second : first
+}
+
+function getLaterDate(first: string, second: string) {
+  if (!first) return second
+  if (!second) return first
+  return getDateTimestamp(second) > getDateTimestamp(first) ? second : first
+}
+
+function formatSalesDashboardDate(value: string) {
+  if (!value) return 'Not recorded'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function formatSalesDashboardSyncTime(value: string) {
+  if (!value) return 'Not synced'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatSalesDashboardPercent(value: number, total: number) {
+  if (!total) return '0%'
+  return `${Math.round((value / total) * 100)}%`
+}
+
+function parseSalesDashboardAmount(value: string) {
+  const normalized = String(value ?? '').replace(/[^0-9.-]/g, '')
+  const amount = Number(normalized)
+  return Number.isFinite(amount) ? amount : 0
+}
+
+function getSalesDashboardLineValue(job: OrderJob) {
+  const unitAmount = parseSalesDashboardAmount(job.totalPrice)
+  const quantity = Number.isFinite(job.quantity) && job.quantity > 0 ? job.quantity : 1
+  return unitAmount * quantity
+}
+
+function isSalesDashboardPaid(job: OrderJob) {
+  return (
+    job.invoiceStatus === 'paid' ||
+    job.financialStatus.toLowerCase().includes('paid') ||
+    Boolean(job.salesRepPaidNotificationSentAt)
+  )
+}
+
+function getInvoiceStatusPriority(status: InvoiceStatus) {
+  if (status === 'paid') return 3
+  if (status === 'sent') return 2
+  if (status === 'draft') return 1
+  return 0
+}
+
+function getSalesDashboardOrderKey(job: OrderJob) {
+  return (
+    job.shopifyDraftOrderId ||
+    job.intakeId ||
+    job.shopifyOrderId ||
+    job.shopifyDraftOrderName ||
+    job.shopifyOrderName ||
+    job.id
+  )
+}
+
+function getSalesRepSummaryKey(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
+  const email = sale.salesRepEmail.trim().toLowerCase()
+  if (email) return email
+
+  const name = sale.salesRep.trim().toLowerCase()
+  return name || 'unassigned'
+}
+
+function getSalesRepSummaryLabel(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
+  return sale.salesRep.trim() || sale.salesRepEmail.trim() || 'Unassigned'
+}
+
+function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
+  const sales = new Map<string, SalesDashboardSale & { productTitles: Set<string> }>()
+
+  for (const job of orderJobs) {
+    if (job.origin !== 'internal_sales') continue
+
+    const key = getSalesDashboardOrderKey(job)
+    const existing =
+      sales.get(key) ??
+      ({
+        key,
+        draftOrderName: '',
+        paidOrderName: '',
+        salesRep: '',
+        salesRepEmail: '',
+        customerName: '',
+        payerName: '',
+        submittedAt: '',
+        paidAt: '',
+        invoiceStatus: 'draft',
+        isPaid: false,
+        total: 0,
+        quantity: 0,
+        lineCount: 0,
+        productSummary: '',
+        productTitles: new Set<string>(),
+      } satisfies SalesDashboardSale & { productTitles: Set<string> })
+
+    existing.draftOrderName ||= job.shopifyDraftOrderName
+    existing.paidOrderName ||= job.shopifyOrderName
+    existing.salesRep ||= job.salesRep
+    existing.salesRepEmail ||= job.salesRepEmail
+    existing.customerName ||= job.playerName || job.customerName
+    existing.payerName ||= job.billingName || job.customerName
+    existing.submittedAt = getEarlierDate(existing.submittedAt, job.orderSubmittedAt || job.createdAt)
+    existing.total += getSalesDashboardLineValue(job)
+    existing.quantity += Number.isFinite(job.quantity) && job.quantity > 0 ? job.quantity : 1
+    existing.lineCount += 1
+
+    if (job.productTitle) existing.productTitles.add(job.productTitle)
+    if (getInvoiceStatusPriority(job.invoiceStatus) > getInvoiceStatusPriority(existing.invoiceStatus)) {
+      existing.invoiceStatus = job.invoiceStatus
+    }
+
+    if (isSalesDashboardPaid(job)) {
+      existing.isPaid = true
+      existing.invoiceStatus = 'paid'
+      existing.paidAt = getLaterDate(
+        existing.paidAt,
+        job.salesRepPaidNotificationSentAt || job.updatedAt || job.createdAt,
+      )
+    }
+
+    sales.set(key, existing)
+  }
+
+  return Array.from(sales.values())
+    .map(({ productTitles, ...sale }) => ({
+      ...sale,
+      productSummary: Array.from(productTitles).join(', ') || 'Custom bat order',
+    }))
+    .sort((a, b) => {
+      const first = getDateTimestamp(a.paidAt || a.submittedAt)
+      const second = getDateTimestamp(b.paidAt || b.submittedAt)
+      return second - first
+    })
+}
+
+function buildSalesRepSummaries(sales: SalesDashboardSale[]): SalesRepSummary[] {
+  const summaries = new Map<string, SalesRepSummary & { daysToPay: number[] }>()
+
+  for (const sale of sales) {
+    const key = getSalesRepSummaryKey(sale)
+    const existing =
+      summaries.get(key) ??
+      ({
+        key,
+        label: getSalesRepSummaryLabel(sale),
+        email: sale.salesRepEmail,
+        submittedCount: 0,
+        submittedValue: 0,
+        paidCount: 0,
+        paidValue: 0,
+        openCount: 0,
+        openValue: 0,
+        averageDaysToPay: null,
+        daysToPay: [],
+      } satisfies SalesRepSummary & { daysToPay: number[] })
+
+    existing.submittedCount += 1
+    existing.submittedValue += sale.total
+
+    if (sale.isPaid) {
+      existing.paidCount += 1
+      existing.paidValue += sale.total
+
+      const submittedAt = getDateTimestamp(sale.submittedAt)
+      const paidAt = getDateTimestamp(sale.paidAt)
+      if (submittedAt && paidAt && paidAt >= submittedAt) {
+        existing.daysToPay.push((paidAt - submittedAt) / (1000 * 60 * 60 * 24))
+      }
+    } else {
+      existing.openCount += 1
+      existing.openValue += sale.total
+    }
+
+    summaries.set(key, existing)
+  }
+
+  return Array.from(summaries.values())
+    .map(({ daysToPay, ...summary }) => ({
+      ...summary,
+      averageDaysToPay:
+        daysToPay.length > 0
+          ? daysToPay.reduce((total, days) => total + days, 0) / daysToPay.length
+          : null,
+    }))
+    .sort((a, b) => b.paidValue - a.paidValue || b.submittedValue - a.submittedValue)
+}
+
+function isSaleInsideDashboardRange(sale: SalesDashboardSale, range: SalesDashboardRange) {
+  if (range === 'all') return true
+
+  const days = Number(range)
+  const submittedAt = getDateTimestamp(sale.submittedAt)
+  if (!submittedAt) return true
+
+  return submittedAt >= Date.now() - days * 24 * 60 * 60 * 1000
 }
 
 function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
@@ -3059,6 +3322,8 @@ function InternalApp() {
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
   )
+  const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
+  const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState('all')
   const [orderQuery, setOrderQuery] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
@@ -3102,6 +3367,7 @@ function InternalApp() {
   const [syncRetryNonce, setSyncRetryNonce] = useState(0)
   const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(true)
   const [syncMessage, setSyncMessage] = useState('Connecting to Shopify backend...')
+  const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState('')
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const hasLoadedRemoteState = useRef(false)
@@ -3286,6 +3552,7 @@ function InternalApp() {
       setCustomBatModels(remoteState.customBatModels)
       setOrderJobs(remoteState.orderJobs)
       setBillingContacts(remoteState.billingContacts)
+      setLastLiveRefreshAt(new Date().toISOString())
 
       setBackendStatus('connected')
       if (!options?.quiet) {
@@ -3604,6 +3871,44 @@ function InternalApp() {
 
     return matchesQuery && matchesStatus
   })
+  const salesDashboardAllSales = buildSalesDashboardSales(orderJobs)
+  const salesDashboardRepOptions = buildSalesRepSummaries(salesDashboardAllSales)
+  const salesDashboardSales = salesDashboardAllSales.filter((sale) => {
+    const matchesRange = isSaleInsideDashboardRange(sale, salesDashboardRange)
+    const matchesRep =
+      salesDashboardRepFilter === 'all' ||
+      getSalesRepSummaryKey(sale) === salesDashboardRepFilter
+
+    return matchesRange && matchesRep
+  })
+  const salesDashboardSummaries = buildSalesRepSummaries(salesDashboardSales)
+  const salesDashboardPaidSales = salesDashboardSales.filter((sale) => sale.isPaid)
+  const salesDashboardOpenSales = salesDashboardSales.filter((sale) => !sale.isPaid)
+  const salesDashboardSubmittedValue = salesDashboardSales.reduce(
+    (total, sale) => total + sale.total,
+    0,
+  )
+  const salesDashboardPaidValue = salesDashboardPaidSales.reduce(
+    (total, sale) => total + sale.total,
+    0,
+  )
+  const salesDashboardOpenValue = salesDashboardOpenSales.reduce(
+    (total, sale) => total + sale.total,
+    0,
+  )
+  const salesDashboardRecentSales = [...salesDashboardSales]
+    .sort(
+      (first, second) =>
+        getDateTimestamp(second.paidAt || second.submittedAt) -
+        getDateTimestamp(first.paidAt || first.submittedAt),
+    )
+    .slice(0, 8)
+  const salesDashboardAwaitingPayment = [...salesDashboardOpenSales]
+    .sort(
+      (first, second) =>
+        getDateTimestamp(first.submittedAt) - getDateTimestamp(second.submittedAt),
+    )
+    .slice(0, 8)
 
   const filteredBatModels = allBatModels.filter((model) => {
     const modelText = [
@@ -4289,6 +4594,13 @@ function InternalApp() {
               onClick={() => setActiveSection('orders')}
             >
               Orders
+            </button>
+            <button
+              type="button"
+              className={activeSection === 'sales' ? 'active' : ''}
+              onClick={() => setActiveSection('sales')}
+            >
+              Sales Dashboard
             </button>
             <button
               type="button"
@@ -5911,6 +6223,206 @@ function InternalApp() {
                 )}
               </div>
             </section>
+          </section>
+        </section>
+      ) : activeSection === 'sales' ? (
+        <section className="sales-dashboard-page">
+          <section className="panel sales-dashboard-toolbar">
+            <div className="section-heading">
+              <p className="eyebrow">Sales performance</p>
+              <h2>Team dashboard</h2>
+            </div>
+            <div className="dashboard-controls">
+              <label>
+                Period
+                <select
+                  value={salesDashboardRange}
+                  onChange={(event) =>
+                    setSalesDashboardRange(event.target.value as SalesDashboardRange)
+                  }
+                >
+                  {salesDashboardRangeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Sales rep
+                <select
+                  value={salesDashboardRepFilter}
+                  onChange={(event) => setSalesDashboardRepFilter(event.target.value)}
+                >
+                  <option value="all">Whole team</option>
+                  {salesDashboardRepOptions.map((summary) => (
+                    <option key={summary.key} value={summary.key}>
+                      {summary.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="live-sync-stamp">
+                <span>Last updated</span>
+                <strong>{formatSalesDashboardSyncTime(lastLiveRefreshAt)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="metrics-grid sales-dashboard-metrics" aria-label="Sales summary">
+            <article>
+              <span>Submitted sales</span>
+              <strong>{salesDashboardSales.length}</strong>
+            </article>
+            <article>
+              <span>Submitted value</span>
+              <strong>{formatSalesOrderMoney(salesDashboardSubmittedValue)}</strong>
+            </article>
+            <article>
+              <span>Paid value</span>
+              <strong>{formatSalesOrderMoney(salesDashboardPaidValue)}</strong>
+            </article>
+            <article>
+              <span>Paid rate</span>
+              <strong>
+                {formatSalesDashboardPercent(
+                  salesDashboardPaidSales.length,
+                  salesDashboardSales.length,
+                )}
+              </strong>
+            </article>
+          </section>
+
+          <section className="sales-dashboard-grid">
+            <section className="panel sales-rep-panel">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">By sales rep</p>
+                  <h2>Performance</h2>
+                </div>
+                <div className="dashboard-total-chip">
+                  <span>Awaiting</span>
+                  <strong>{formatSalesOrderMoney(salesDashboardOpenValue)}</strong>
+                </div>
+              </div>
+
+              {salesDashboardSummaries.length === 0 ? (
+                <p className="empty-state">No internal sales orders match this view yet.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="sales-rep-table">
+                    <thead>
+                      <tr>
+                        <th>Sales rep</th>
+                        <th>Submitted</th>
+                        <th>Paid</th>
+                        <th>Awaiting payment</th>
+                        <th>Avg. days to pay</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salesDashboardSummaries.map((summary) => (
+                        <tr key={summary.key}>
+                          <td>
+                            <strong>{summary.label}</strong>
+                            {summary.email ? <span>{summary.email}</span> : null}
+                          </td>
+                          <td>
+                            {formatSalesOrderMoney(summary.submittedValue)}
+                            <span>{summary.submittedCount} sale(s)</span>
+                          </td>
+                          <td>
+                            {formatSalesOrderMoney(summary.paidValue)}
+                            <span>{summary.paidCount} paid</span>
+                          </td>
+                          <td>
+                            {formatSalesOrderMoney(summary.openValue)}
+                            <span>{summary.openCount} open</span>
+                          </td>
+                          <td>
+                            {summary.averageDaysToPay === null
+                              ? 'N/A'
+                              : `${summary.averageDaysToPay.toFixed(1)} days`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="panel sales-aging-panel">
+              <div className="section-heading">
+                <p className="eyebrow">Open invoices</p>
+                <h2>Awaiting payment</h2>
+              </div>
+
+              <div className="sales-dashboard-list">
+                {salesDashboardAwaitingPayment.length === 0 ? (
+                  <p className="empty-state">No draft invoices are waiting on payment.</p>
+                ) : (
+                  salesDashboardAwaitingPayment.map((sale) => (
+                    <article className="sales-dashboard-card" key={sale.key}>
+                      <div>
+                        <span className="profile-type-pill">
+                          {sale.draftOrderName || 'Draft pending'}
+                        </span>
+                        <h3>{sale.payerName || sale.customerName || 'No payer saved'}</h3>
+                        <p>{sale.productSummary}</p>
+                      </div>
+                      <div className="sales-card-values">
+                        <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                        <span>{formatSalesDashboardDate(sale.submittedAt)}</span>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          </section>
+
+          <section className="panel sales-activity-panel">
+            <div className="section-heading">
+              <p className="eyebrow">Sales activity</p>
+              <h2>Submitted and paid orders</h2>
+            </div>
+
+            <div className="sales-dashboard-list activity-list">
+              {salesDashboardRecentSales.length === 0 ? (
+                <p className="empty-state">No sales activity matches this view yet.</p>
+              ) : (
+                salesDashboardRecentSales.map((sale) => (
+                  <article className="sales-dashboard-card activity-card" key={sale.key}>
+                    <div>
+                      <span className={`pill ${sale.isPaid ? 'yes' : ''}`}>
+                        {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
+                      </span>
+                      <h3>{sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}</h3>
+                      <p>
+                        {sale.salesRep || sale.salesRepEmail || 'Unassigned'} ·{' '}
+                        {sale.payerName || sale.customerName || 'No payer saved'}
+                      </p>
+                    </div>
+                    <div className="activity-reference-list">
+                      <span>Original draft invoice: {sale.draftOrderName || 'N/A'}</span>
+                      <span>Paid Shopify order: {sale.paidOrderName || 'N/A'}</span>
+                      <span>
+                        {sale.isPaid
+                          ? `Paid ${formatSalesDashboardDate(sale.paidAt)}`
+                          : `Submitted ${formatSalesDashboardDate(sale.submittedAt)}`}
+                      </span>
+                    </div>
+                    <div className="sales-card-values">
+                      <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                      <span>
+                        {sale.quantity} bat{sale.quantity === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
           </section>
         </section>
       ) : activeSection === 'players' ? (

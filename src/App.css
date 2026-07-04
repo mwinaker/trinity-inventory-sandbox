@@ -590,6 +590,136 @@ button:hover {
   font-size: 0.9rem;
 }
 
+.sales-dashboard-page {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.sales-dashboard-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 0.92fr);
+  gap: 20px;
+  align-items: end;
+}
+
+.sales-dashboard-toolbar .section-heading {
+  margin-bottom: 0;
+}
+
+.dashboard-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1fr) minmax(116px, auto);
+  gap: 12px;
+  align-items: end;
+}
+
+.live-sync-stamp,
+.dashboard-total-chip {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(47, 76, 50, 0.14);
+  border-radius: 16px;
+  padding: 10px 12px;
+  background: rgba(47, 76, 50, 0.08);
+}
+
+.live-sync-stamp span,
+.dashboard-total-chip span,
+.activity-reference-list span,
+.sales-card-values span {
+  color: #746353;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.live-sync-stamp strong,
+.dashboard-total-chip strong {
+  color: #253f2a;
+  font-size: 0.98rem;
+}
+
+.sales-dashboard-metrics strong {
+  font-size: clamp(1.45rem, 2.5vw, 2.2rem);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.sales-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 18px;
+}
+
+.sales-rep-panel,
+.sales-aging-panel,
+.sales-activity-panel {
+  align-content: start;
+  min-width: 0;
+}
+
+.sales-dashboard-list {
+  display: grid;
+  gap: 12px;
+}
+
+.sales-dashboard-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid rgba(72, 50, 31, 0.12);
+  border-radius: 18px;
+  padding: 16px;
+  background: #fffaf0;
+}
+
+.sales-dashboard-card h3 {
+  margin: 8px 0 0;
+  color: #26190f;
+  font-size: 1.22rem;
+  line-height: 1.08;
+}
+
+.sales-dashboard-card p {
+  margin: 6px 0 0;
+  color: #5d4b3c;
+}
+
+.sales-card-values {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  text-align: right;
+}
+
+.sales-card-values strong {
+  color: #253f2a;
+  font-size: 1.15rem;
+}
+
+.activity-list {
+  gap: 10px;
+}
+
+.activity-card {
+  grid-template-columns: minmax(220px, 0.8fr) minmax(220px, 1fr) auto;
+}
+
+.activity-reference-list {
+  display: grid;
+  gap: 5px;
+}
+
+.sales-rep-table td {
+  vertical-align: top;
+}
+
+.sales-dashboard-page .panel,
+.sales-dashboard-page .table-wrap {
+  min-width: 0;
+}
+
 .public-order-shell {
   width: min(1120px, calc(100% - 40px));
   min-height: 100vh;
@@ -1166,8 +1296,18 @@ td select {
   .invoice-review-line,
   .profile-toolbar,
   .inventory-toolbar,
+  .sales-dashboard-toolbar,
+  .dashboard-controls,
+  .sales-dashboard-grid,
+  .sales-dashboard-card,
+  .activity-card,
   .metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sales-card-values {
+    justify-items: start;
+    text-align: left;
   }
 
   .public-order-heading h1,
