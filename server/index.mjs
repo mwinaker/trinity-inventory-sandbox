@@ -1487,15 +1487,16 @@ async function trySendSalesRepPaidNotification({ order, topic, jobs, existingJob
     return { sentAt: '', recipients: [], error: '' }
   }
 
+  const emailJobs = salesRepPaidNotificationContextJobs(notificationJobs, existingJobs)
   const salesRepEmail = normalizeEmail(
-    notificationJobs.find((job) => normalizeEmail(job.salesRepEmail))?.salesRepEmail,
+    emailJobs.find((job) => normalizeEmail(job.salesRepEmail))?.salesRepEmail,
   )
   if (!salesRepEmail) return { sentAt: '', recipients: [], error: '' }
 
   try {
     await sendOrderInvoice(
       order.admin_graphql_api_id ?? toShopifyGid('Order', order.id),
-      buildSalesRepPaidOrderEmailInput(order, notificationJobs, salesRepEmail),
+      buildSalesRepPaidOrderEmailInput(order, emailJobs, salesRepEmail),
     )
     return {
       sentAt: new Date().toISOString(),
@@ -1525,6 +1526,47 @@ function salesRepNotificationJobs(jobs) {
   return jobs.filter(
     (job) => job.origin === 'internal_sales' && normalizeEmail(job.salesRepEmail),
   )
+}
+
+function salesRepPaidNotificationContextJobs(notificationJobs, existingJobs) {
+  const intakeIds = new Set(notificationJobs.map((job) => cleanString(job.intakeId)).filter(Boolean))
+  const draftOrderIds = new Set(
+    notificationJobs.map((job) => cleanString(job.shopifyDraftOrderId)).filter(Boolean),
+  )
+  const orderIds = new Set(
+    notificationJobs.map((job) => cleanString(job.shopifyOrderId)).filter(Boolean),
+  )
+
+  const existingContextJobs = salesRepNotificationJobs(existingJobs).filter((job) => {
+    const intakeId = cleanString(job.intakeId)
+    const draftOrderId = cleanString(job.shopifyDraftOrderId)
+    const orderId = cleanString(job.shopifyOrderId)
+    return (
+      (intakeId && intakeIds.has(intakeId)) ||
+      (draftOrderId && draftOrderIds.has(draftOrderId)) ||
+      (orderId && orderIds.has(orderId))
+    )
+  })
+
+  return uniqueOrderJobs(notificationJobs.concat(existingContextJobs))
+}
+
+function uniqueOrderJobs(jobs) {
+  const seen = new Set()
+  return jobs.filter((job) => {
+    const key =
+      cleanString(job.id) ||
+      cleanString(job.lineItemId) ||
+      [
+        cleanString(job.intakeId),
+        cleanString(job.shopifyDraftOrderId),
+        cleanString(job.shopifyOrderId),
+        cleanString(job.productTitle),
+      ].join('|')
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function shouldMarkSalesRepPaidNotification(job) {
@@ -4058,11 +4100,18 @@ function buildSalesRepDraftSubmissionEmailInput(payload, draftOrder) {
 
 function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
   const relevantJobs = salesRepNotificationJobs(jobs)
-  const primaryJob = relevantJobs[0] ?? {}
-  const originalDraftInvoiceName = cleanString(primaryJob.shopifyDraftOrderName)
-  const paidOrderName = cleanString(primaryJob.shopifyOrderName || order?.name)
+  const primaryJob =
+    relevantJobs.find((job) => cleanString(job.shopifyOrderName)) ?? relevantJobs[0] ?? {}
+  const originalDraftInvoiceName = cleanString(
+    relevantJobs.find((job) => cleanString(job.shopifyDraftOrderName))?.shopifyDraftOrderName,
+  )
+  const paidOrderName = cleanString(
+    relevantJobs.find((job) => cleanString(job.shopifyOrderName))?.shopifyOrderName || order?.name,
+  )
   const emailReferenceName = originalDraftInvoiceName || paidOrderName
-  const salesRep = cleanString(primaryJob.salesRep)
+  const salesRep = cleanString(
+    relevantJobs.find((job) => cleanString(job.salesRep))?.salesRep || primaryJob.salesRep,
+  )
   const customerName = cleanString(
     [order?.customer?.first_name, order?.customer?.last_name].filter(Boolean).join(' '),
   )
@@ -4070,7 +4119,8 @@ function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
     cleanString(primaryJob.playerName || primaryJob.customerName) || customerName
   const payerName = cleanString(primaryJob.billingName || primaryJob.customerName)
   const payerEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail || order?.email)
-  const lineSummary = summarizeOrderJobs(relevantJobs)
+  const paidJobs = relevantJobs.filter(isPaidOrderJob)
+  const lineSummary = summarizeOrderJobs(paidJobs.length > 0 ? paidJobs : relevantJobs)
   const paidAt = cleanString(order?.processed_at || order?.updated_at || new Date().toISOString())
   const customMessage = [
     'Payment received for a Trinity Bat Company draft order.',
@@ -4093,6 +4143,14 @@ function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
     subject: `${emailReferenceName || 'Trinity draft order'} Draft Order Paid`,
     customMessage,
   }
+}
+
+function isPaidOrderJob(job) {
+  return (
+    cleanString(job.invoiceStatus).toLowerCase() === 'paid' ||
+    cleanString(job.financialStatus).toLowerCase().includes('paid') ||
+    Boolean(cleanString(job.salesRepPaidNotificationSentAt))
+  )
 }
 
 function formatSalesRepNotificationMessage(salesRep, salesRepEmail = '') {

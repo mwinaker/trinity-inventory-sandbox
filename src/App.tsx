@@ -1304,8 +1304,8 @@ function getInvoiceStatusPriority(status: InvoiceStatus) {
 
 function getSalesDashboardOrderKey(job: OrderJob) {
   return (
-    job.shopifyDraftOrderId ||
     job.intakeId ||
+    job.shopifyDraftOrderId ||
     job.shopifyOrderId ||
     job.shopifyDraftOrderName ||
     job.shopifyOrderName ||
@@ -1326,12 +1326,27 @@ function getSalesRepSummaryLabel(sale: Pick<SalesDashboardSale, 'salesRep' | 'sa
 }
 
 function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
-  const sales = new Map<string, SalesDashboardSale & { productTitles: Set<string> }>()
+  const sales = new Map<
+    string,
+    SalesDashboardSale & {
+      draftLineCount: number
+      draftProductTitles: Set<string>
+      draftQuantity: number
+      draftTotal: number
+      paidLineCount: number
+      paidProductTitles: Set<string>
+      paidQuantity: number
+      paidTotal: number
+    }
+  >()
 
   for (const job of orderJobs) {
     if (job.origin !== 'internal_sales') continue
 
     const key = getSalesDashboardOrderKey(job)
+    const jobIsPaid = isSalesDashboardPaid(job)
+    const jobQuantity = Number.isFinite(job.quantity) && job.quantity > 0 ? job.quantity : 1
+    const jobValue = getSalesDashboardLineValue(job)
     const existing =
       sales.get(key) ??
       ({
@@ -1350,8 +1365,24 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
         quantity: 0,
         lineCount: 0,
         productSummary: '',
-        productTitles: new Set<string>(),
-      } satisfies SalesDashboardSale & { productTitles: Set<string> })
+        draftLineCount: 0,
+        draftProductTitles: new Set<string>(),
+        draftQuantity: 0,
+        draftTotal: 0,
+        paidLineCount: 0,
+        paidProductTitles: new Set<string>(),
+        paidQuantity: 0,
+        paidTotal: 0,
+      } satisfies SalesDashboardSale & {
+        draftLineCount: number
+        draftProductTitles: Set<string>
+        draftQuantity: number
+        draftTotal: number
+        paidLineCount: number
+        paidProductTitles: Set<string>
+        paidQuantity: number
+        paidTotal: number
+      })
 
     existing.draftOrderName ||= job.shopifyDraftOrderName
     existing.paidOrderName ||= job.shopifyOrderName
@@ -1360,16 +1391,23 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
     existing.customerName ||= job.playerName || job.customerName
     existing.payerName ||= job.billingName || job.customerName
     existing.submittedAt = getEarlierDate(existing.submittedAt, job.orderSubmittedAt || job.createdAt)
-    existing.total += getSalesDashboardLineValue(job)
-    existing.quantity += Number.isFinite(job.quantity) && job.quantity > 0 ? job.quantity : 1
-    existing.lineCount += 1
+    if (jobIsPaid) {
+      existing.paidTotal += jobValue
+      existing.paidQuantity += jobQuantity
+      existing.paidLineCount += 1
+      if (job.productTitle) existing.paidProductTitles.add(job.productTitle)
+    } else {
+      existing.draftTotal += jobValue
+      existing.draftQuantity += jobQuantity
+      existing.draftLineCount += 1
+      if (job.productTitle) existing.draftProductTitles.add(job.productTitle)
+    }
 
-    if (job.productTitle) existing.productTitles.add(job.productTitle)
     if (getInvoiceStatusPriority(job.invoiceStatus) > getInvoiceStatusPriority(existing.invoiceStatus)) {
       existing.invoiceStatus = job.invoiceStatus
     }
 
-    if (isSalesDashboardPaid(job)) {
+    if (jobIsPaid) {
       existing.isPaid = true
       existing.invoiceStatus = 'paid'
       existing.paidAt = getLaterDate(
@@ -1382,10 +1420,28 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
   }
 
   return Array.from(sales.values())
-    .map(({ productTitles, ...sale }) => ({
-      ...sale,
-      productSummary: Array.from(productTitles).join(', ') || 'Custom bat order',
-    }))
+    .map(
+      ({
+        draftLineCount,
+        draftProductTitles,
+        draftQuantity,
+        draftTotal,
+        paidLineCount,
+        paidProductTitles,
+        paidQuantity,
+        paidTotal,
+        ...sale
+      }) => {
+        const productTitles = paidLineCount > 0 ? paidProductTitles : draftProductTitles
+        return {
+          ...sale,
+          lineCount: paidLineCount > 0 ? paidLineCount : draftLineCount,
+          productSummary: Array.from(productTitles).join(', ') || 'Custom bat order',
+          quantity: paidLineCount > 0 ? paidQuantity : draftQuantity,
+          total: paidLineCount > 0 ? paidTotal : draftTotal,
+        }
+      },
+    )
     .sort((a, b) => {
       const first = getDateTimestamp(a.paidAt || a.submittedAt)
       const second = getDateTimestamp(b.paidAt || b.submittedAt)
