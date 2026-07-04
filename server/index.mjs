@@ -4077,9 +4077,7 @@ function buildSalesRepPaidOrderEmailInput(order, jobs, salesRepEmail) {
     originalDraftInvoiceName
       ? `Original draft invoice: ${originalDraftInvoiceName}`
       : '',
-    paidOrderName && paidOrderName !== originalDraftInvoiceName
-      ? `Paid Shopify order: ${paidOrderName}`
-      : '',
+    paidOrderName ? `Paid Shopify order: ${paidOrderName}` : '',
     formatSalesRepNotificationMessage(salesRep, salesRepEmail),
     playerName ? `Player: ${playerName}` : '',
     payerName ? `Bill to: ${payerName}` : '',
