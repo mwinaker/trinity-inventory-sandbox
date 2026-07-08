@@ -4308,23 +4308,7 @@ function InternalApp() {
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
-      const internalCopyMessage = payload.internalOrderNotificationError
-        ? `, but internal order-copy emails failed: ${payload.internalOrderNotificationError}`
-        : payload.internalOrderNotificationSent
-          ? ' and internal order-copy emails sent'
-          : ''
-      const emailMessage = payload.invoiceSent
-        ? payload.emailNotificationMethod === 'order_receipt'
-          ? ' and documentation email sent'
-          : ` and invoice sent${payload.payerNotificationRecipient ? ` to ${payload.payerNotificationRecipient}` : ''}`
-        : ''
-      const draftReviewMessage =
-        salesOrderDraft.createDraftOrder && payload.draftInvoiceReadyForReview
-          ? ' and the draft invoice is ready for review'
-          : ''
-      setOrderActionMessage(
-        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`,
-      )
+      setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
     } finally {
