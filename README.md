@@ -38,7 +38,7 @@ Required environment variables:
 - `SHOPIFY_ADMIN_ACCESS_TOKEN` (inventory app only)
 - `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN` (analytics collector only; use a token from a separate Shopify custom app so analytics writes do not drain the inventory app's Admin API throttle bucket)
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
-- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
+- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff contact list stored on internal manual orders; invoice emails are sent only to the payer/customer recipient)
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
 - `TRINITY_DRAFT_SHIPPING_TITLE` / `TRINITY_DRAFT_SHIPPING_AMOUNT` (optional standard shipping fallback; defaults to `Standard Shipping` / `15.00`)
 - `TRINITY_DRAFT_SHIPPING_FAST_TITLE` / `TRINITY_DRAFT_SHIPPING_FAST_AMOUNT` (optional, defaults to `Fast Shipping` / `50.00`)

@@ -2117,6 +2117,7 @@ type SalesOrderApiResponse = {
   invoiceSendTokenExpiresAt?: string
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
+  payerNotificationRecipient?: string
   salesRepSubmissionNotificationSent?: boolean
   salesRepSubmissionNotificationError?: string
   orderJobs?: OrderJob[]
@@ -2205,7 +2206,7 @@ function getSalesOrderSuccessMessage(
   const emailMessage = payload.invoiceSent
     ? payload.emailNotificationMethod === 'order_receipt'
       ? ' and documentation email sent'
-      : ' and invoice sent'
+      : ` and invoice sent${payload.payerNotificationRecipient ? ` to ${payload.payerNotificationRecipient}` : ''}`
     : ''
   const draftReviewMessage =
     draft.createDraftOrder && payload.draftInvoiceReadyForReview
@@ -4312,7 +4313,7 @@ function InternalApp() {
       const emailMessage = payload.invoiceSent
         ? payload.emailNotificationMethod === 'order_receipt'
           ? ' and documentation email sent'
-          : ' and invoice sent'
+          : ` and invoice sent${payload.payerNotificationRecipient ? ` to ${payload.payerNotificationRecipient}` : ''}`
         : ''
       const draftReviewMessage =
         salesOrderDraft.createDraftOrder && payload.draftInvoiceReadyForReview
