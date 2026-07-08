@@ -38,7 +38,7 @@ Required environment variables:
 - `SHOPIFY_ADMIN_ACCESS_TOKEN` (inventory app only)
 - `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN` (analytics collector only; use a token from a separate Shopify custom app so analytics writes do not drain the inventory app's Admin API throttle bucket)
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
-- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff contact list for internal manual-order copies; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
+- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated additional staff contact list for internal manual-order copies; Matt, Jeremy, Stefan, and Keith at `trinitybats.com` are always included)
 - `RESEND_API_KEY` / `TRINITY_RESEND_API_KEY` (optional, preferred provider for internal manual-order copy emails to staff and sales reps; without it, the app sends individual Shopify email copies with no BCC)
 - `TRINITY_INTERNAL_EMAIL_FROM` (required when using Resend, for example `Trinity Orders <orders@trinitybats.com>`)
 - `TRINITY_INTERNAL_EMAIL_REPLY_TO` (optional reply-to address when using Resend)

@@ -111,7 +111,7 @@ const defaultInternalOrderNotificationEmails = [
   'stefan@trinitybats.com',
   'keith@trinitybats.com',
 ]
-const requiredInternalOrderNotificationEmails = ['matt@trinitybats.com']
+const requiredInternalOrderNotificationEmails = defaultInternalOrderNotificationEmails
 const internalOrderNotificationEmails = parseEmailList(
   process.env.TRINITY_ORDER_NOTIFICATION_EMAILS ??
     process.env.SHOPIFY_STAFF_NOTIFICATION_BCC ??
