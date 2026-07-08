@@ -966,17 +966,25 @@ function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)
   const source = sourceOptions.includes(billet.source as Source)
     ? (billet.source as Source)
     : "RJ's Tree Farms"
+  const weight = normalizeBilletWeight(billet.weight)
 
   return {
     ...emptyBillet,
     ...billet,
     source,
+    weight,
     grade: normalizeGradeForSource(source, billet.grade),
     trophyEligible: normalizeTrophyEligible(billet),
     hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
     deliveryDate: billet.deliveryDate ?? '',
     status: normalizeBilletStatus(billet.status),
   }
+}
+
+function normalizeBilletWeight(value: Billet['weight'] | string | null | undefined): Billet['weight'] {
+  if (value === '' || value === null || value === undefined) return ''
+  const weight = Number(value)
+  return Number.isFinite(weight) && weight >= 0 ? weight : ''
 }
 
 function getGradeOptionsForSource(source: Source) {
@@ -4250,6 +4258,14 @@ function InternalApp() {
     )
   }
 
+  function updateBilletWeight(id: string, weight: Billet['weight']) {
+    setBillets((current) =>
+      current.map((billet) =>
+        billet.id === id ? { ...billet, weight: normalizeBilletWeight(weight) } : billet,
+      ),
+    )
+  }
+
   function updateSalesDraftField<K extends keyof SalesOrderDraft>(
     key: K,
     value: SalesOrderDraft[K],
@@ -5580,9 +5596,24 @@ function InternalApp() {
                       </td>
                       <td>
                         {standardBilletLength} in x {getBilletDiameter(billet.source)} in round
-                        <span>
-                          {billet.weight || 'No weight recorded'} oz
-                        </span>
+                        <label className="billet-weight-field">
+                          Weight (oz)
+                          <input
+                            aria-label={`Weight for billet ${billet.barcode}`}
+                            inputMode="decimal"
+                            min="0"
+                            step="0.1"
+                            type="number"
+                            value={billet.weight}
+                            placeholder="No weight"
+                            onChange={(event) =>
+                              updateBilletWeight(
+                                billet.id,
+                                event.target.value === '' ? '' : Number(event.target.value),
+                              )
+                            }
+                          />
+                        </label>
                       </td>
                       <td>{billet.location}</td>
                       <td>

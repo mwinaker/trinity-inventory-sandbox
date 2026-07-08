@@ -147,6 +147,26 @@ td span {
   font-size: 0.85rem;
 }
 
+.billet-weight-field {
+  display: grid;
+  max-width: 130px;
+  gap: 5px;
+  margin-top: 8px;
+  color: #786a5b;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.billet-weight-field input {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 0.95rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .metrics-grid strong {
   display: block;
   margin-top: 8px;
