@@ -42,6 +42,7 @@ Required environment variables:
 - `RESEND_API_KEY` / `TRINITY_RESEND_API_KEY` (optional, preferred provider for internal manual-order copy emails to staff and sales reps; without it, the app sends individual Shopify email copies with no BCC)
 - `TRINITY_INTERNAL_EMAIL_FROM` (required when using Resend, for example `Trinity Orders <orders@trinitybats.com>`)
 - `TRINITY_INTERNAL_EMAIL_REPLY_TO` (optional reply-to address when using Resend)
+- Manual-order attachments are uploaded to Shopify Files and linked from the order, production job, and internal order-copy email. Attachments must be 20 MB or smaller.
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
 - `TRINITY_DRAFT_SHIPPING_TITLE` / `TRINITY_DRAFT_SHIPPING_AMOUNT` (optional standard shipping fallback; defaults to `Standard Shipping` / `15.00`)
 - `TRINITY_DRAFT_SHIPPING_FAST_TITLE` / `TRINITY_DRAFT_SHIPPING_FAST_AMOUNT` (optional, defaults to `Fast Shipping` / `50.00`)

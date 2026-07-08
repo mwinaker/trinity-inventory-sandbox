@@ -100,6 +100,7 @@ const stateCacheFilePath =
   process.env.TRINITY_STATE_CACHE_PATH ?? path.join('/tmp', 'trinity-inventory-state-cache.json')
 const catalogCacheTtlMs = 10 * 60 * 1000
 const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
+const maxOrderAttachmentBytes = 20 * 1024 * 1024
 const billetDiameterWeightCorrectionOz = 1.75
 const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
 const billetSourceOptions = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
@@ -282,6 +283,7 @@ const resourceConfigs = {
         fieldValue('total_price', item.totalPrice),
         fieldValue('specs_json', JSON.stringify(item.specs ?? {})),
         fieldValue('line_items_json', JSON.stringify(item.lineItems ?? [])),
+        fieldValue('internal_attachment_json', JSON.stringify(item.internalAttachment ?? null)),
         fieldValue('internal_notes', item.internalNotes),
         fieldValue('created_at', item.createdAt),
         fieldValue('updated_at', item.updatedAt),
@@ -333,6 +335,7 @@ const resourceConfigs = {
       definitionField('total_price', 'Total Price', 'single_line_text_field'),
       definitionField('specs_json', 'Specs JSON', 'json'),
       definitionField('line_items_json', 'Line Items JSON', 'json'),
+      definitionField('internal_attachment_json', 'Internal Attachment JSON', 'json'),
       definitionField('internal_notes', 'Internal Notes', 'multi_line_text_field'),
       definitionField('created_at', 'Created At', 'single_line_text_field'),
       definitionField('updated_at', 'Updated At', 'single_line_text_field'),
@@ -493,6 +496,49 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     })
   }
 })
+
+app.post(
+  '/api/order-attachments',
+  express.raw({ type: '*/*', limit: maxOrderAttachmentBytes }),
+  async (request, response) => {
+    try {
+      if (!shopDomain || !adminToken) {
+        response.status(503).json({
+          ok: false,
+          message: 'Shopify credentials are not configured on this server.',
+        })
+        return
+      }
+
+      const fileBuffer = Buffer.isBuffer(request.body) ? request.body : Buffer.from([])
+      if (fileBuffer.length === 0) {
+        response.status(400).json({ ok: false, message: 'Attachment file is required.' })
+        return
+      }
+      if (fileBuffer.length > maxOrderAttachmentBytes) {
+        response.status(413).json({ ok: false, message: 'Attachment must be 20 MB or smaller.' })
+        return
+      }
+
+      const filename =
+        decodeAttachmentHeader(request.get('x-trinity-attachment-name')) || 'attachment'
+      const contentType =
+        cleanString(request.get('x-trinity-attachment-type')) || 'application/octet-stream'
+      const attachment = await uploadOrderAttachmentToShopifyFiles({
+        filename,
+        contentType,
+        buffer: fileBuffer,
+      })
+
+      response.json({ ok: true, attachment })
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Unknown attachment upload error.',
+      })
+    }
+  },
+)
 
 app.use(express.json({ limit: '5mb' }))
 app.use(establishInternalSession)
@@ -1573,6 +1619,7 @@ function buildInternalOrderCopyMessage({
   const playerName = cleanString(payload.playerName || payload.customerName)
   const salesRep = cleanString(payload.salesRep)
   const salesRepEmail = normalizeEmail(payload.salesRepEmail)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const shippingOption = resolveShippingOption(payload, requiresShippingForOrder(payload))
   const orderName = cleanString(draftOrder?.name || order?.name)
   const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
@@ -1603,6 +1650,7 @@ function buildInternalOrderCopyMessage({
     payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Relationship: ${payer.relationship}` : '',
+    internalAttachment ? `Attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     shippingOption
       ? `Shipping: ${shippingOption.label} (${shippingOption.title})`
       : 'Shipping: Local delivery / no shipping required',
@@ -1724,6 +1772,202 @@ async function sendShopifyInternalOrderCopies({ sendInvoice, recipients, subject
 
   if (failures.length > 0) {
     throw new Error(`Internal Shopify copy email failures: ${failures.join('; ')}`)
+  }
+}
+
+async function uploadOrderAttachmentToShopifyFiles({ filename, contentType, buffer }) {
+  const cleanFilename = sanitizeAttachmentFilename(filename)
+  const cleanContentType = cleanString(contentType) || 'application/octet-stream'
+  const stagedTarget = await createShopifyStagedUploadTarget({
+    filename: cleanFilename,
+    contentType: cleanContentType,
+    bytes: buffer.length,
+  })
+  await uploadBufferToShopifyStagedTarget({
+    target: stagedTarget,
+    filename: cleanFilename,
+    contentType: cleanContentType,
+    buffer,
+  })
+  const shopifyFile = await createShopifyGenericFile({
+    filename: cleanFilename,
+    originalSource: stagedTarget.resourceUrl,
+  })
+
+  return normalizeOrderAttachment({
+    id: createPlainId('attachment'),
+    shopifyFileId: shopifyFile.id,
+    filename: cleanFilename,
+    downloadUrl: shopifyFile.url,
+    contentType: cleanContentType,
+    bytes: buffer.length,
+    uploadedAt: shopifyFile.createdAt || new Date().toISOString(),
+    fileStatus: shopifyFile.fileStatus,
+  })
+}
+
+async function createShopifyStagedUploadTarget({ filename, contentType, bytes }) {
+  const result = await shopifyGraphQL(
+    `
+      mutation CreateAttachmentUploadTarget($input: [StagedUploadInput!]!) {
+        stagedUploadsCreate(input: $input) {
+          stagedTargets {
+            url
+            resourceUrl
+            parameters {
+              name
+              value
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      input: [
+        {
+          filename,
+          mimeType: contentType,
+          httpMethod: 'POST',
+          resource: 'FILE',
+          fileSize: String(bytes),
+        },
+      ],
+    },
+  )
+
+  const errors = result?.data?.stagedUploadsCreate?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Attachment upload target error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+
+  const target = result?.data?.stagedUploadsCreate?.stagedTargets?.[0]
+  if (!target?.url || !target?.resourceUrl) {
+    throw new Error('Shopify did not return an attachment upload target.')
+  }
+
+  return target
+}
+
+async function uploadBufferToShopifyStagedTarget({ target, filename, contentType, buffer }) {
+  const formData = new FormData()
+  for (const parameter of target.parameters ?? []) {
+    formData.append(parameter.name, parameter.value)
+  }
+  formData.append('file', new Blob([buffer], { type: contentType }), filename)
+
+  const response = await fetch(target.url, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`Attachment upload failed (${response.status}): ${body.slice(0, 500)}`)
+  }
+}
+
+async function createShopifyGenericFile({ filename, originalSource }) {
+  const result = await shopifyGraphQL(
+    `
+      mutation CreateAttachmentFile($files: [FileCreateInput!]!) {
+        fileCreate(files: $files) {
+          files {
+            id
+            fileStatus
+            alt
+            createdAt
+            ... on GenericFile {
+              url
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      files: [
+        {
+          alt: `Trinity manual order attachment: ${filename}`,
+          contentType: 'FILE',
+          originalSource,
+          filename,
+        },
+      ],
+    },
+  )
+
+  const errors = result?.data?.fileCreate?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Attachment file create error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+
+  const file = result?.data?.fileCreate?.files?.[0]
+  if (!file?.id || !file?.url) {
+    throw new Error('Shopify did not return an attachment file URL.')
+  }
+
+  return file
+}
+
+function normalizeOrderAttachment(attachment) {
+  if (!attachment || typeof attachment !== 'object') return null
+
+  const filename = sanitizeAttachmentFilename(attachment.filename)
+  const downloadUrl = cleanString(attachment.downloadUrl || attachment.url)
+  const shopifyFileId = cleanString(attachment.shopifyFileId || attachment.fileId)
+  if (!filename || !downloadUrl) return null
+
+  return {
+    id: cleanString(attachment.id) || createPlainId('attachment'),
+    shopifyFileId,
+    filename,
+    downloadUrl,
+    contentType: cleanString(attachment.contentType),
+    bytes: Number(attachment.bytes) || 0,
+    uploadedAt: cleanString(attachment.uploadedAt),
+    fileStatus: cleanString(attachment.fileStatus),
+  }
+}
+
+function normalizeOrderAttachmentFromAttributes(attributes) {
+  return normalizeOrderAttachment({
+    id: attributes.trinity_internal_attachment_id,
+    shopifyFileId: attributes.trinity_internal_attachment_file_id,
+    filename: attributes.trinity_internal_attachment_name,
+    downloadUrl: attributes.trinity_internal_attachment_url,
+    contentType: attributes.trinity_internal_attachment_type,
+    bytes: attributes.trinity_internal_attachment_bytes,
+  })
+}
+
+function formatAttachmentLine(attachment) {
+  const normalized = normalizeOrderAttachment(attachment)
+  if (!normalized) return ''
+  return `${normalized.filename}: ${normalized.downloadUrl}`
+}
+
+function sanitizeAttachmentFilename(filename) {
+  const parsed = path.parse(cleanString(filename) || 'attachment')
+  const basename = parsed.name.replace(/[^a-z0-9._ -]+/gi, ' ').replace(/\s+/g, ' ').trim()
+  const extension = parsed.ext.replace(/[^a-z0-9.]+/gi, '').slice(0, 16)
+  return `${basename || 'attachment'}${extension}`.slice(0, 140)
+}
+
+function decodeAttachmentHeader(value) {
+  const rawValue = cleanString(value)
+  if (!rawValue) return ''
+
+  try {
+    return decodeURIComponent(rawValue)
+  } catch {
+    return rawValue
   }
 }
 
@@ -3166,6 +3410,15 @@ async function syncOrderJobMetafields(orderJobs) {
       orderMetafield(ownerId, 'billing_phone', job.billingPhone),
       orderMetafield(ownerId, 'billing_company', job.billingCompany),
       orderMetafield(ownerId, 'billing_relationship', job.billingRelationship),
+      job.internalAttachment
+        ? {
+            namespace: 'trinity',
+            key: 'internal_attachment',
+            ownerId,
+            type: 'json',
+            value: JSON.stringify(job.internalAttachment),
+          }
+        : null,
       {
         namespace: 'trinity',
         key: 'specs',
@@ -3173,7 +3426,7 @@ async function syncOrderJobMetafields(orderJobs) {
         type: 'json',
         value: JSON.stringify(job.specs ?? {}),
       },
-    ].filter((field) => field.value !== undefined && field.value !== null && field.value !== '')
+    ].filter((field) => field && field.value !== undefined && field.value !== null && field.value !== '')
 
     if (metafields.length === 0) continue
 
@@ -4302,6 +4555,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const proOrderNotificationLabel = hasProOrder
     ? buildProOrderNotificationLabel(payload, payer)
     : ''
@@ -4334,6 +4588,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
+    internalAttachment ? `Internal attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
     salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
@@ -4393,6 +4648,14 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_billing_phone: payer.phone,
       trinity_billing_company: payer.company,
       trinity_billing_relationship: payer.relationship,
+      trinity_internal_attachment_id: internalAttachment?.id ?? '',
+      trinity_internal_attachment_file_id: internalAttachment?.shopifyFileId ?? '',
+      trinity_internal_attachment_name: internalAttachment?.filename ?? '',
+      trinity_internal_attachment_url: internalAttachment?.downloadUrl ?? '',
+      trinity_internal_attachment_type: internalAttachment?.contentType ?? '',
+      trinity_internal_attachment_bytes: internalAttachment?.bytes
+        ? String(internalAttachment.bytes)
+        : '',
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines
@@ -4450,6 +4713,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
   const billingAddress = directAddresses.billingAddress
@@ -4479,6 +4743,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
+    internalAttachment ? `Internal attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
     salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
@@ -4531,6 +4796,14 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_billing_phone: payer.phone,
       trinity_billing_company: payer.company,
       trinity_billing_relationship: payer.relationship,
+      trinity_internal_attachment_id: internalAttachment?.id ?? '',
+      trinity_internal_attachment_file_id: internalAttachment?.shopifyFileId ?? '',
+      trinity_internal_attachment_name: internalAttachment?.filename ?? '',
+      trinity_internal_attachment_url: internalAttachment?.downloadUrl ?? '',
+      trinity_internal_attachment_type: internalAttachment?.contentType ?? '',
+      trinity_internal_attachment_bytes: internalAttachment?.bytes
+        ? String(internalAttachment.bytes)
+        : '',
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines
@@ -4742,6 +5015,7 @@ function mapDraftOrderToJobs(
   const billingDifferent = isTruthy(payload.billingDifferent)
   const payer = resolvePayer(payload)
   const draftInvoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
 
   return lines.map((line, index) => {
     const draftLine = draftLines[index] ?? {}
@@ -4794,6 +5068,7 @@ function mapDraftOrderToJobs(
           productId: product?.id ?? '',
         },
       ],
+      internalAttachment,
       notes: cleanString(line.notes),
       internalNotes: cleanString(payload.notes),
       createdAt: draftOrder.createdAt ?? now,
@@ -4827,6 +5102,7 @@ function mapCompletedDraftOrderToJobs(
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
       specs: mergeSpecs(job.specs, fallbackSpecs),
+      internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
@@ -4855,6 +5131,7 @@ function mapCreatedOrderToJobs(
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
       specs: mergeSpecs(job.specs, fallbackSpecs),
+      internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
@@ -4883,6 +5160,7 @@ function mapGraphQLOrderToJobs(order) {
       order.customer?.displayName ?? '',
       order.email ?? order.customer?.email ?? '',
     )
+    const internalAttachment = normalizeOrderAttachmentFromAttributes(orderAttributes)
 
     return {
       id: `order-${extractNumericId(order.id)}-line-${extractNumericId(line.id)}`,
@@ -4932,6 +5210,7 @@ function mapGraphQLOrderToJobs(order) {
           productId: product?.id ?? '',
         },
       ],
+      internalAttachment,
       notes: lineAttributes.trinity_notes ?? order.note ?? '',
       internalNotes: '',
       createdAt: order.createdAt,
@@ -5083,6 +5362,7 @@ function mergeOrderJob(existing, incoming) {
     billingCompany: existing.billingCompany || incoming.billingCompany,
     billingRelationship: existing.billingRelationship || incoming.billingRelationship,
     specs: mergeSpecs(existing.specs, incoming.specs),
+    internalAttachment: existing.internalAttachment || incoming.internalAttachment || null,
     internalNotes: existing.internalNotes || incoming.internalNotes,
     createdAt: existing.createdAt || incoming.createdAt,
     updatedAt: incoming.updatedAt || new Date().toISOString(),

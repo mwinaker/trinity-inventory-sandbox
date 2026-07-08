@@ -185,6 +185,17 @@ type OrderSpecs = {
   notes: string
 }
 
+type OrderAttachment = {
+  id: string
+  shopifyFileId: string
+  filename: string
+  downloadUrl: string
+  contentType: string
+  bytes: number
+  uploadedAt: string
+  fileStatus: string
+}
+
 type OrderJob = {
   id: string
   origin: OrderOrigin
@@ -230,6 +241,7 @@ type OrderJob = {
     variantId: string
     productId: string
   }>
+  internalAttachment: OrderAttachment | null
   notes: string
   internalNotes: string
   createdAt: string
@@ -258,6 +270,7 @@ type SalesOrderLineDraft = {
 
 type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast' | 'comped'
 type ProductionTimelineOption = 'normal' | 'rush'
+const maxSalesOrderAttachmentBytes = 20 * 1024 * 1024
 
 type SalesOrderDraft = {
   playerName: string
@@ -287,6 +300,7 @@ type SalesOrderDraft = {
   billingRelationship: string
   salesRep: string
   salesRepEmail: string
+  attachment: OrderAttachment | null
   notes: string
   createDraftOrder: boolean
   sendInvoice: boolean
@@ -831,6 +845,7 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   billingRelationship: '',
   salesRep: '',
   salesRepEmail: '',
+  attachment: null,
   notes: '',
   createDraftOrder: true,
   sendInvoice: false,
@@ -1041,6 +1056,26 @@ function normalizeInvoiceStatus(status: InvoiceStatus | string | null | undefine
   return 'draft'
 }
 
+function normalizeOrderAttachment(
+  attachment: Partial<OrderAttachment> | null | undefined,
+): OrderAttachment | null {
+  if (!attachment || typeof attachment !== 'object') return null
+  const filename = String(attachment.filename ?? '').trim()
+  const downloadUrl = String(attachment.downloadUrl ?? '').trim()
+  if (!filename || !downloadUrl) return null
+
+  return {
+    id: String(attachment.id ?? ''),
+    shopifyFileId: String(attachment.shopifyFileId ?? ''),
+    filename,
+    downloadUrl,
+    contentType: String(attachment.contentType ?? ''),
+    bytes: Number(attachment.bytes ?? 0) || 0,
+    uploadedAt: String(attachment.uploadedAt ?? ''),
+    fileStatus: String(attachment.fileStatus ?? ''),
+  }
+}
+
 function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): OrderJob {
   const specs = (record.specs ?? {}) as Partial<OrderSpecs>
   const billingDifferent =
@@ -1100,6 +1135,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
       notes: specs.notes ?? '',
     },
     lineItems: record.lineItems ?? [],
+    internalAttachment: normalizeOrderAttachment(record.internalAttachment),
     notes: record.notes ?? '',
     internalNotes: record.internalNotes ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
@@ -2461,8 +2497,36 @@ function getTypedBatModelPatch(
 function cloneSalesOrderDraft(draft: SalesOrderDraft): SalesOrderDraft {
   return {
     ...draft,
+    attachment: draft.attachment ? { ...draft.attachment } : null,
     lines: draft.lines.map((line) => ({ ...line })),
   }
+}
+
+async function uploadSalesOrderAttachment(file: File): Promise<OrderAttachment> {
+  if (file.size > maxSalesOrderAttachmentBytes) {
+    throw new Error('Attachment must be 20 MB or smaller.')
+  }
+
+  const response = await fetch(getApiPath('/api/order-attachments'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'x-trinity-attachment-name': encodeURIComponent(file.name),
+      'x-trinity-attachment-type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  })
+  const payload = (await response.json()) as {
+    ok?: boolean
+    message?: string
+    attachment?: Partial<OrderAttachment>
+  }
+  const attachment = normalizeOrderAttachment(payload.attachment)
+  if (!response.ok || !payload.ok || !attachment) {
+    throw new Error(payload.message ?? 'Could not upload attachment.')
+  }
+
+  return attachment
 }
 
 function getPublicDraftPayerName(draft: SalesOrderDraft) {
@@ -2552,6 +2616,7 @@ function PublicSalesOrderForm() {
     emptySalesOrderDraft(),
   )
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
+  const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSendingInvoice, setIsSendingInvoice] = useState(false)
@@ -2637,16 +2702,26 @@ function PublicSalesOrderForm() {
       setIsSubmitting(true)
       setMessage(
         salesOrderDraft.createDraftOrder
-          ? 'Creating Shopify draft invoice...'
-          : 'Creating Shopify order...',
+          ? salesOrderAttachmentFile
+            ? 'Uploading attachment and creating Shopify draft invoice...'
+            : 'Creating Shopify draft invoice...'
+          : salesOrderAttachmentFile
+            ? 'Uploading attachment and creating Shopify order...'
+            : 'Creating Shopify order...',
       )
-      const submittedDraft = cloneSalesOrderDraft(salesOrderDraft)
+      const attachment = salesOrderAttachmentFile
+        ? await uploadSalesOrderAttachment(salesOrderAttachmentFile)
+        : null
+      const submittedDraft = {
+        ...cloneSalesOrderDraft(salesOrderDraft),
+        attachment,
+      }
       const response = await fetch(getApiPath('/api/sales-orders'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(salesOrderDraft),
+        body: JSON.stringify(submittedDraft),
       })
       const payload = (await response.json()) as SalesOrderApiResponse
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
@@ -2669,6 +2744,7 @@ function PublicSalesOrderForm() {
         setMessage(getSalesOrderSuccessMessage(submittedDraft, payload))
       }
       setSalesOrderDraft(emptySalesOrderDraft())
+      setSalesOrderAttachmentFile(null)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not submit the order.')
@@ -2707,7 +2783,9 @@ function PublicSalesOrderForm() {
   return (
     <main className="public-order-shell">
       <section className="public-order-heading">
-        <p className="eyebrow">Trinity Bat Company</p>
+        <div className="public-order-logo" aria-label="Trinity Bat Company">
+          Trinity Bat Company
+        </div>
         <h1>Sales order submission</h1>
         <p>
           Submit phone, team, pro, and custom bat orders into the same Shopify and production
@@ -3316,6 +3394,28 @@ function PublicSalesOrderForm() {
             Add another line
           </button>
 
+          <div className="attachment-field">
+            <label>
+              Internal attachment
+              <input
+                type="file"
+                onChange={(event) => setSalesOrderAttachmentFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+            {salesOrderAttachmentFile ? (
+              <div className="attachment-chip">
+                <span>{salesOrderAttachmentFile.name}</span>
+                <button
+                  type="button"
+                  className="secondary-button compact-button"
+                  onClick={() => setSalesOrderAttachmentFile(null)}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : null}
+          </div>
+
           <label className="notes-field">
             Internal order notes
             <textarea
@@ -3408,6 +3508,7 @@ function InternalApp() {
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
   )
+  const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
   const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
   const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState('all')
   const [orderQuery, setOrderQuery] = useState('')
@@ -4291,15 +4392,26 @@ function InternalApp() {
       setIsCreatingDraftOrder(true)
       setOrderActionMessage(
         salesOrderDraft.createDraftOrder
-          ? 'Creating Shopify draft invoice...'
-          : 'Creating Shopify order...',
+          ? salesOrderAttachmentFile
+            ? 'Uploading attachment and creating Shopify draft invoice...'
+            : 'Creating Shopify draft invoice...'
+          : salesOrderAttachmentFile
+            ? 'Uploading attachment and creating Shopify order...'
+            : 'Creating Shopify order...',
       )
+      const attachment = salesOrderAttachmentFile
+        ? await uploadSalesOrderAttachment(salesOrderAttachmentFile)
+        : null
+      const draftToSubmit = {
+        ...cloneSalesOrderDraft(salesOrderDraft),
+        attachment,
+      }
       const response = await fetch(getApiPath('/api/sales-orders'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(salesOrderDraft),
+        body: JSON.stringify(draftToSubmit),
       })
       const payload = (await response.json()) as SalesOrderApiResponse
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
@@ -4308,6 +4420,7 @@ function InternalApp() {
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
+      setSalesOrderAttachmentFile(null)
       setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
@@ -6059,6 +6172,30 @@ function InternalApp() {
                   Add another line
                 </button>
 
+                <div className="attachment-field">
+                  <label>
+                    Internal attachment
+                    <input
+                      type="file"
+                      onChange={(event) =>
+                        setSalesOrderAttachmentFile(event.target.files?.[0] ?? null)
+                      }
+                    />
+                  </label>
+                  {salesOrderAttachmentFile ? (
+                    <div className="attachment-chip">
+                      <span>{salesOrderAttachmentFile.name}</span>
+                      <button
+                        type="button"
+                        className="secondary-button compact-button"
+                        onClick={() => setSalesOrderAttachmentFile(null)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
                 <label className="notes-field">
                   Internal order notes
                   <textarea
@@ -6214,6 +6351,18 @@ function InternalApp() {
                             ) : null}
                             {job.salesRep ? <p>Sales rep: {job.salesRep}</p> : null}
                             {job.salesRepEmail ? <p>Sales rep email: {job.salesRepEmail}</p> : null}
+                            {job.internalAttachment?.downloadUrl ? (
+                              <p>
+                                Attachment:{' '}
+                                <a
+                                  href={job.internalAttachment.downloadUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {job.internalAttachment.filename}
+                                </a>
+                              </p>
+                            ) : null}
                           </div>
 
                           <div className="compatible-list">
