@@ -2703,8 +2703,8 @@ function PublicSalesOrderForm() {
       setMessage(
         salesOrderDraft.createDraftOrder
           ? salesOrderAttachmentFile
-            ? 'Uploading attachment and creating Shopify draft invoice...'
-            : 'Creating Shopify draft invoice...'
+            ? 'Uploading attachment and creating/sending Shopify draft invoice...'
+            : 'Creating and sending Shopify draft invoice...'
           : salesOrderAttachmentFile
             ? 'Uploading attachment and creating Shopify order...'
             : 'Creating Shopify order...',
@@ -3438,7 +3438,7 @@ function PublicSalesOrderForm() {
                 }))
               }}
             />
-            <span>Create Shopify draft invoice for manual review</span>
+            <span>Create and send Shopify draft invoice</span>
           </label>
 
           {!salesOrderDraft.createDraftOrder ? (
@@ -3458,7 +3458,7 @@ function PublicSalesOrderForm() {
                 ? 'Creating draft...'
                 : 'Creating order...'
               : salesOrderDraft.createDraftOrder
-                ? 'Create Shopify draft invoice'
+              ? 'Create and send Shopify draft invoice'
                 : 'Create Shopify order'}
           </button>
         </form>
@@ -4393,8 +4393,8 @@ function InternalApp() {
       setOrderActionMessage(
         salesOrderDraft.createDraftOrder
           ? salesOrderAttachmentFile
-            ? 'Uploading attachment and creating Shopify draft invoice...'
-            : 'Creating Shopify draft invoice...'
+            ? 'Uploading attachment and creating/sending Shopify draft invoice...'
+            : 'Creating and sending Shopify draft invoice...'
           : salesOrderAttachmentFile
             ? 'Uploading attachment and creating Shopify order...'
             : 'Creating Shopify order...',
@@ -6218,7 +6218,7 @@ function InternalApp() {
                       }))
                     }}
                   />
-                  <span>Create Shopify draft invoice for manual review</span>
+                  <span>Create and send Shopify draft invoice</span>
                 </label>
 
                 {!salesOrderDraft.createDraftOrder ? (
@@ -6240,7 +6240,7 @@ function InternalApp() {
                       ? 'Creating draft...'
                       : 'Creating order...'
                     : salesOrderDraft.createDraftOrder
-                      ? 'Create Shopify draft invoice'
+                      ? 'Create and send Shopify draft invoice'
                       : 'Create Shopify order'}
                 </button>
               </form>
