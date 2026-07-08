@@ -118,6 +118,13 @@ const internalOrderNotificationEmails = parseEmailList(
   defaultInternalOrderNotificationEmails,
   requiredInternalOrderNotificationEmails,
 )
+const internalEmailProviderApiKey =
+  cleanString(process.env.TRINITY_RESEND_API_KEY) || cleanString(process.env.RESEND_API_KEY)
+const internalEmailProviderUrl =
+  cleanString(process.env.TRINITY_RESEND_API_URL) || 'https://api.resend.com/emails'
+const internalEmailFrom =
+  cleanString(process.env.TRINITY_INTERNAL_EMAIL_FROM) || cleanString(process.env.RESEND_FROM_EMAIL)
+const internalEmailReplyTo = normalizeEmail(process.env.TRINITY_INTERNAL_EMAIL_REPLY_TO)
 
 const resourceConfigs = {
   billets: {
@@ -827,6 +834,15 @@ app.post('/api/sales-orders', async (request, response) => {
         Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
       ])
       await syncOrderJobMetafields(jobs)
+      const internalOrderNotification = await trySendInternalOrderCopyNotification({
+        payload,
+        draftOrder,
+        orderSubmittedAt,
+        invoiceSent: Boolean(payerInvoiceNotification.sentAt),
+        invoiceRecipient: payerInvoiceNotification.recipient,
+        invoiceError: payerInvoiceNotification.error,
+      })
+      const salesRepEmail = normalizeEmail(payload.salesRepEmail)
 
       response.json({
         ok: true,
@@ -836,12 +852,19 @@ app.post('/api/sales-orders', async (request, response) => {
         invoiceSent: Boolean(payerInvoiceNotification.sentAt),
         emailNotificationMethod: payerInvoiceNotification.sentAt ? 'order_invoice' : 'none',
         draftInvoiceReadyForReview: Boolean(draftOrder?.invoiceUrl) && !payerInvoiceNotification.sentAt,
-        internalNotificationRecipients: [],
+        internalNotificationRecipients: internalOrderNotification.recipients,
+        internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
+        internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
+        internalOrderNotificationError: internalOrderNotification.error,
         payerNotificationSent: Boolean(payerInvoiceNotification.sentAt),
         payerNotificationRecipient: payerInvoiceNotification.recipient,
         payerNotificationError: payerInvoiceNotification.error,
-        salesRepSubmissionNotificationSent: false,
-        salesRepSubmissionNotificationError: '',
+        salesRepSubmissionNotificationSent: Boolean(
+          salesRepEmail && internalOrderNotification.sentAt,
+        ),
+        salesRepSubmissionNotificationError: salesRepEmail
+          ? internalOrderNotification.error
+          : '',
         staffNotificationFlow: 'shopify_draft_order_review',
         orderJobs: jobs,
         players: rememberedContacts.players,
@@ -868,6 +891,16 @@ app.post('/api/sales-orders', async (request, response) => {
       Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
     ])
     await syncOrderJobMetafields(jobs)
+    const payerEmail = resolvePayer(payload).email
+    const internalOrderNotification = await trySendInternalOrderCopyNotification({
+      payload,
+      order,
+      orderSubmittedAt,
+      invoiceSent,
+      invoiceRecipient: payerEmail,
+      invoiceError: '',
+    })
+    const salesRepEmail = normalizeEmail(payload.salesRepEmail)
 
     response.json({
       ok: true,
@@ -879,8 +912,17 @@ app.post('/api/sales-orders', async (request, response) => {
           ? 'order_receipt'
           : 'order_invoice'
         : 'none',
-      internalNotificationRecipients: [],
-      payerNotificationRecipient: resolvePayer(payload).email,
+      internalNotificationRecipients: internalOrderNotification.recipients,
+      internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
+      internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
+      internalOrderNotificationError: internalOrderNotification.error,
+      payerNotificationRecipient: payerEmail,
+      salesRepSubmissionNotificationSent: Boolean(
+        salesRepEmail && internalOrderNotification.sentAt,
+      ),
+      salesRepSubmissionNotificationError: salesRepEmail
+        ? internalOrderNotification.error
+        : '',
       staffNotificationFlow: 'shopify_new_order',
       orderJobs: jobs,
       players: rememberedContacts.players,
@@ -1456,6 +1498,232 @@ async function trySendDraftOrderPayerInvoice(draftOrder, payload) {
       recipient: emailInput.to,
       error: message,
     }
+  }
+}
+
+async function trySendInternalOrderCopyNotification({
+  payload,
+  draftOrder = null,
+  order = null,
+  orderSubmittedAt = new Date().toISOString(),
+  invoiceSent = false,
+  invoiceRecipient = '',
+  invoiceError = '',
+}) {
+  const recipients = buildInternalOrderCopyRecipients(payload)
+  if (recipients.length === 0) return { sentAt: '', recipients: [], error: '' }
+
+  try {
+    const subject = buildInternalOrderCopySubject({ draftOrder, order })
+    const text = buildInternalOrderCopyMessage({
+      payload,
+      draftOrder,
+      order,
+      orderSubmittedAt,
+      invoiceSent,
+      invoiceRecipient,
+      invoiceError,
+    })
+    const deliveryMethod = await sendInternalOrderCopyEmail({
+      draftOrder,
+      order,
+      recipients,
+      subject,
+      text,
+    })
+
+    return {
+      sentAt: new Date().toISOString(),
+      recipients,
+      deliveryMethod,
+      error: '',
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown internal email error.'
+    console.error(`Internal order copy email error: ${message}`)
+    return {
+      sentAt: '',
+      recipients,
+      deliveryMethod: '',
+      error: message,
+    }
+  }
+}
+
+function buildInternalOrderCopyRecipients(payload) {
+  return uniqueEmails(internalOrderNotificationEmails.concat(normalizeEmail(payload?.salesRepEmail)))
+}
+
+function buildInternalOrderCopySubject({ draftOrder = null, order = null }) {
+  const orderName = cleanString(draftOrder?.name || order?.name) || 'Trinity manual order'
+  return `${orderName} submitted from Trinity order form`
+}
+
+function buildInternalOrderCopyMessage({
+  payload,
+  draftOrder = null,
+  order = null,
+  orderSubmittedAt = '',
+  invoiceSent = false,
+  invoiceRecipient = '',
+  invoiceError = '',
+}) {
+  const payer = resolvePayer(payload)
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const salesRep = cleanString(payload.salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
+  const shippingOption = resolveShippingOption(payload, requiresShippingForOrder(payload))
+  const orderName = cleanString(draftOrder?.name || order?.name)
+  const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
+  const orderLines = lines.map(formatInternalOrderLine).filter(Boolean)
+  const salesRepLine =
+    salesRep && salesRepEmail
+      ? `Sales rep: ${salesRep} <${salesRepEmail}>`
+      : salesRep || salesRepEmail
+        ? `Sales rep: ${salesRep || salesRepEmail}`
+        : ''
+
+  return [
+    'A Trinity manual order was submitted.',
+    orderName ? `Order: ${orderName}` : '',
+    orderSubmittedAt ? `Submitted: ${orderSubmittedAt}` : '',
+    invoiceSent ? `Customer invoice sent to: ${invoiceRecipient || payer.email}` : '',
+    !invoiceSent && invoiceError ? `Customer invoice error: ${invoiceError}` : '',
+    !invoiceSent && !invoiceError ? 'Customer invoice was not sent automatically.' : '',
+    invoiceUrl ? `Draft invoice link: ${invoiceUrl}` : '',
+    salesRepLine,
+    playerName ? `Player: ${playerName}` : '',
+    cleanString(payload.playerEmail) ? `Player email: ${cleanString(payload.playerEmail)}` : '',
+    cleanString(payload.playerPhone || payload.customerPhone)
+      ? `Player phone: ${cleanString(payload.playerPhone || payload.customerPhone)}`
+      : '',
+    payer.name ? `Payer: ${payer.name}` : '',
+    payer.email ? `Payer email: ${payer.email}` : '',
+    payer.phone ? `Payer phone: ${payer.phone}` : '',
+    payer.company ? `Team/agency: ${payer.company}` : '',
+    payer.relationship ? `Relationship: ${payer.relationship}` : '',
+    shippingOption
+      ? `Shipping: ${shippingOption.label} (${shippingOption.title})`
+      : 'Shipping: Local delivery / no shipping required',
+    normalizeProductionTimeline(payload.productionTimeline) === 'rush'
+      ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
+      : 'Production timeline: Normal',
+    cleanString(payload.notes) ? `Internal notes: ${cleanString(payload.notes)}` : '',
+    orderLines.length > 0 ? `Order lines:\n${orderLines.join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function formatInternalOrderLine(line, index) {
+  const quantity = Number(line?.quantity || 1)
+  const details = [
+    cleanString(line?.length) ? `${cleanString(line.length)} in` : '',
+    cleanString(line?.targetWeight) ? `${cleanString(line.targetWeight)} oz` : '',
+    cleanString(line?.wood),
+    cleanString(line?.handleColor) ? `handle ${cleanString(line.handleColor)}` : '',
+    cleanString(line?.barrelColor) ? `barrel ${cleanString(line.barrelColor)}` : '',
+    cleanString(line?.logoColor) ? `logo ${cleanString(line.logoColor)}` : '',
+    cleanString(line?.engraving) ? `engraving ${cleanString(line.engraving)}` : '',
+    cleanString(line?.cupped),
+    cleanString(line?.notes) ? `notes: ${cleanString(line.notes)}` : '',
+  ].filter(Boolean)
+  const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+  const price = cleanString(line?.unitPrice) ? ` @ ${cleanString(line.unitPrice)}` : ''
+  const suffix = details.length > 0 ? ` (${details.join(', ')})` : ''
+  return `${Number.isFinite(index) ? `${index + 1}. ` : '- '}${quantity} x ${title}${price}${suffix}`
+}
+
+async function sendInternalEmail({ to, subject, text }) {
+  const recipients = uniqueEmails(to)
+  if (recipients.length === 0) return
+  if (!internalEmailProviderApiKey) {
+    throw new Error('Internal email provider is not configured. Set RESEND_API_KEY.')
+  }
+  if (!internalEmailFrom) {
+    throw new Error('Internal email sender is not configured. Set TRINITY_INTERNAL_EMAIL_FROM.')
+  }
+
+  const body = {
+    from: internalEmailFrom,
+    to: recipients,
+    subject,
+    text,
+    ...(internalEmailReplyTo ? { reply_to: internalEmailReplyTo } : {}),
+  }
+
+  const response = await fetch(internalEmailProviderUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${internalEmailProviderApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    throw new Error(
+      `Internal email send failed (${response.status}): ${errorBody.slice(0, 500)}`,
+    )
+  }
+}
+
+async function sendInternalOrderCopyEmail({
+  draftOrder = null,
+  order = null,
+  recipients,
+  subject,
+  text,
+}) {
+  if (internalEmailProviderApiKey && internalEmailFrom) {
+    await sendInternalEmail({ to: recipients, subject, text })
+    return 'internal_email_provider'
+  }
+
+  if (draftOrder?.id) {
+    await sendShopifyInternalOrderCopies({
+      sendInvoice: (emailInput) => sendDraftOrderInvoice(draftOrder.id, emailInput),
+      recipients,
+      subject,
+      text,
+    })
+    return 'shopify_draft_order_email'
+  }
+
+  if (order?.id) {
+    await sendShopifyInternalOrderCopies({
+      sendInvoice: (emailInput) => sendOrderInvoice(order.id, emailInput),
+      recipients,
+      subject,
+      text,
+    })
+    return 'shopify_order_email'
+  }
+
+  throw new Error('No order was available for internal order-copy email.')
+}
+
+async function sendShopifyInternalOrderCopies({ sendInvoice, recipients, subject, text }) {
+  const uniqueRecipients = uniqueEmails(recipients)
+  const failures = []
+
+  for (const recipient of uniqueRecipients) {
+    try {
+      await sendInvoice({
+        to: recipient,
+        subject,
+        customMessage: text,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown Shopify email error.'
+      failures.push(`${recipient}: ${message}`)
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Internal Shopify copy email failures: ${failures.join('; ')}`)
   }
 }
 

@@ -2118,6 +2118,9 @@ type SalesOrderApiResponse = {
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
   payerNotificationRecipient?: string
+  internalOrderNotificationSent?: boolean
+  internalOrderNotificationMethod?: string
+  internalOrderNotificationError?: string
   salesRepSubmissionNotificationSent?: boolean
   salesRepSubmissionNotificationError?: string
   orderJobs?: OrderJob[]
@@ -2212,13 +2215,13 @@ function getSalesOrderSuccessMessage(
     draft.createDraftOrder && payload.draftInvoiceReadyForReview
       ? ' and the draft invoice is ready for review'
       : ''
-  const notificationNames = payload.salesRepSubmissionNotificationSent
-    ? ' and sales rep notified'
-    : payload.internalNotificationRecipients?.length
-      ? ' and staff copied through Shopify'
+  const internalCopyMessage = payload.internalOrderNotificationError
+    ? `, but internal order-copy emails failed: ${payload.internalOrderNotificationError}`
+    : payload.internalOrderNotificationSent
+      ? ' and internal order-copy emails sent'
       : ''
 
-  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${notificationNames}.`
+  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`
 }
 
 function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
@@ -4305,10 +4308,10 @@ function InternalApp() {
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
-      const notificationNames = payload.salesRepSubmissionNotificationSent
-        ? ' and sales rep notified'
-        : payload.internalNotificationRecipients?.length
-          ? ' and staff copied through Shopify'
+      const internalCopyMessage = payload.internalOrderNotificationError
+        ? `, but internal order-copy emails failed: ${payload.internalOrderNotificationError}`
+        : payload.internalOrderNotificationSent
+          ? ' and internal order-copy emails sent'
           : ''
       const emailMessage = payload.invoiceSent
         ? payload.emailNotificationMethod === 'order_receipt'
@@ -4320,7 +4323,7 @@ function InternalApp() {
           ? ' and the draft invoice is ready for review'
           : ''
       setOrderActionMessage(
-        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${notificationNames}.`,
+        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`,
       )
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
