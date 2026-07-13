@@ -116,7 +116,13 @@ const publicSalesOrderFormPaths = [
   '/trinity-order-from',
 ]
 const salesPortalPaths = ['/sales-portal', '/sales-crm']
-const publicStaticAssetPaths = ['/favicon.svg', '/icons.svg', '/site.webmanifest', '/sw.js']
+const publicStaticAssetPaths = [
+  '/favicon.svg',
+  '/icons.svg',
+  '/site.webmanifest',
+  '/sw.js',
+  '/trinity-logo-cropped.png',
+]
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
