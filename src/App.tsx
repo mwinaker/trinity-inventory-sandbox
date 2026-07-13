@@ -48,7 +48,7 @@ declare global {
   }
 }
 
-type ActiveSection = 'inventory' | 'orders' | 'sales' | 'players' | 'models' | 'costs'
+type ActiveSection = 'inventory' | 'orders' | 'sales' | 'crm' | 'players' | 'models' | 'costs'
 type BilletStatus = 'storage' | 'production'
 type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
@@ -383,12 +383,132 @@ type SalesRepSummary = {
   averageDaysToPay: number | null
 }
 
+type CrmStage =
+  | 'lead'
+  | 'qualified'
+  | 'quoted'
+  | 'invoice_sent'
+  | 'active_customer'
+  | 'nurture'
+  | 'lost'
+
+type CrmPriority = 'hot' | 'warm' | 'steady' | 'low'
+type CrmWorkspaceView = 'new_contact' | 'contact_list' | 'leads' | 'engagements' | 'assistant'
+type CrmTouchpointType =
+  | 'call'
+  | 'text'
+  | 'email'
+  | 'instagram_dm'
+  | 'in_person'
+  | 'social'
+  | 'quote'
+  | 'invoice'
+  | 'note'
+type SalesPortalView = 'crm' | 'order_form' | 'orders' | 'reports'
+
+type CrmTouchpoint = {
+  id: string
+  type: CrmTouchpointType
+  contactedAt: string
+  salesRep: string
+  summary: string
+  sentiment: string
+  nextStep: string
+  nextFollowUpAt: string
+  relatedOrderId: string
+}
+
+type CrmContact = {
+  id: string
+  name: string
+  company: string
+  role: string
+  email: string
+  phone: string
+  alternateContacts: string
+  playerNames: string[]
+  salesOwner: string
+  ownerEmail: string
+  stage: CrmStage
+  priority: CrmPriority
+  source: string
+  tags: string[]
+  preferredContactMethod: string
+  buyingContext: string
+  batPreferences: string
+  relationshipNotes: string
+  objections: string
+  opportunities: string
+  followUpAt: string
+  lastContactedAt: string
+  createdAt: string
+  updatedAt: string
+  touchpoints: CrmTouchpoint[]
+  sandboxOnly: boolean
+}
+
+type CrmTouchpointDraft = {
+  type: CrmTouchpointType
+  contactedAt: string
+  salesRep: string
+  summary: string
+  sentiment: string
+  nextStep: string
+  nextFollowUpAt: string
+  relatedOrderId: string
+}
+
+type CrmContactSummary = {
+  contact: CrmContact
+  orders: OrderJob[]
+  orderCount: number
+  submittedValue: number
+  paidValue: number
+  openValue: number
+  openInvoiceCount: number
+  lastOrderAt: string
+  lastActivityAt: string
+  followUpDue: boolean
+  derivedFromOrders: boolean
+}
+
+type CrmOwnerOption = {
+  key: string
+  label: string
+  name: string
+  email: string
+}
+
+type SalesPortalSession = {
+  email: string
+  loggedInAt: string
+}
+
+type SalesPortalOrder = {
+  id: string
+  ownerName: string
+  ownerEmail: string
+  submittedAt: string
+  contactId: string
+  playerName: string
+  payerName: string
+  payerEmail: string
+  payerPhone: string
+  total: number
+  status: 'local_saved' | 'submitted'
+  draft: SalesOrderDraft
+}
+
 const billetStorageKey = 'trinity-billet-sandbox-v5'
 const playerStorageKey = 'trinity-player-profiles-v3'
 const producedBatStorageKey = 'trinity-produced-bats-v1'
 const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
 const orderJobStorageKey = 'trinity-order-jobs-v1'
 const billingContactStorageKey = 'trinity-billing-contacts-v1'
+const crmContactStorageKey = 'trinity-crm-sandbox-contacts-v1'
+const crmActiveOwnerStorageKey = 'trinity-crm-sandbox-active-owner-v1'
+const salesPortalSessionStorageKey = 'trinity-sales-portal-session-v1'
+const salesPortalOrderStorageKey = 'trinity-sales-portal-orders-v1'
 const legacyLocalStateBackupKey = 'trinity-local-recovery-backup-v1'
 const legacyLocalStateKeys = [
   billetStorageKey,
@@ -397,6 +517,8 @@ const legacyLocalStateKeys = [
   customBatModelStorageKey,
   orderJobStorageKey,
   billingContactStorageKey,
+  crmContactStorageKey,
+  crmActiveOwnerStorageKey,
 ]
 
 const standardBilletLength = 37
@@ -435,6 +557,71 @@ const salesDashboardRangeOptions: Array<{ value: SalesDashboardRange; label: str
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
   { value: 'all', label: 'All time' },
+]
+const crmStageOptions: Array<{ value: CrmStage; label: string }> = [
+  { value: 'lead', label: 'Lead' },
+  { value: 'qualified', label: 'Qualified' },
+  { value: 'quoted', label: 'Quoted' },
+  { value: 'invoice_sent', label: 'Invoice sent' },
+  { value: 'active_customer', label: 'Active customer' },
+  { value: 'nurture', label: 'Nurture' },
+  { value: 'lost', label: 'Lost' },
+]
+const crmPriorityOptions: Array<{ value: CrmPriority; label: string }> = [
+  { value: 'hot', label: 'Hot' },
+  { value: 'warm', label: 'Warm' },
+  { value: 'steady', label: 'Steady' },
+  { value: 'low', label: 'Low' },
+]
+const crmTouchpointTypeOptions: Array<{ value: CrmTouchpointType; label: string }> = [
+  { value: 'call', label: 'Call' },
+  { value: 'text', label: 'Text' },
+  { value: 'email', label: 'Email' },
+  { value: 'instagram_dm', label: 'IG DM' },
+  { value: 'in_person', label: 'In person' },
+  { value: 'social', label: 'Social' },
+  { value: 'quote', label: 'Quote' },
+  { value: 'invoice', label: 'Invoice' },
+  { value: 'note', label: 'Note' },
+]
+const crmContactMethodOptions = ['Call', 'Text', 'Email', 'In person', 'Instagram', 'Any']
+const crmWorkspaceViews: Array<{ value: CrmWorkspaceView; label: string }> = [
+  { value: 'new_contact', label: 'New contact' },
+  { value: 'contact_list', label: 'Contact list' },
+  { value: 'leads', label: 'Leads' },
+  { value: 'engagements', label: 'Engagements' },
+  { value: 'assistant', label: 'CRM assistant' },
+]
+const seedCrmOwnerOptions: CrmOwnerOption[] = [
+  { key: 'keith@trinitybats.com', label: 'Keith', name: 'Keith', email: 'keith@trinitybats.com' },
+  { key: 'daniel@trinitybats.com', label: 'Daniel', name: 'Daniel', email: 'daniel@trinitybats.com' },
+  { key: 'shane@trinitybats.com', label: 'Shane', name: 'Shane', email: 'shane@trinitybats.com' },
+  { key: 'steve@trinitybats.com', label: 'Steve', name: 'Steve', email: 'steve@trinitybats.com' },
+  { key: 'jeremy-maddox', label: 'Jeremy Maddox', name: 'Jeremy Maddox', email: '' },
+  {
+    key: 'jeremy@trinitybats.com',
+    label: 'Jeremy McKee',
+    name: 'Jeremy McKee',
+    email: 'jeremy@trinitybats.com',
+  },
+  { key: 'matt@trinitybats.com', label: 'Matt', name: 'Matt', email: 'matt@trinitybats.com' },
+  { key: 'stefan@trinitybats.com', label: 'Stefan', name: 'Stefan', email: 'stefan@trinitybats.com' },
+  { key: 'henry@trinitybats.com', label: 'Henry', name: 'Henry', email: 'henry@trinitybats.com' },
+  { key: 'nick@trinitybats.com', label: 'Nick', name: 'Nick', email: 'nick@trinitybats.com' },
+  { key: 'scott@trinitybats.com', label: 'Scott', name: 'Scott', email: 'scott@trinitybats.com' },
+  { key: 'brandon@trinitybats.com', label: 'Brandon', name: 'Brandon', email: 'brandon@trinitybats.com' },
+]
+const salesPortalAdminEmails = new Set([
+  'matt@trinitybats.com',
+  'stefan@trinitybats.com',
+  'jeremy@trinitybats.com',
+  'keith@trinitybats.com',
+])
+const salesPortalViews: Array<{ value: SalesPortalView; label: string; adminOnly?: boolean }> = [
+  { value: 'crm', label: 'CRM' },
+  { value: 'order_form', label: 'Order form' },
+  { value: 'orders', label: 'Orders' },
+  { value: 'reports', label: 'Reports' },
 ]
 const handleColorOptions = [
   'Natural',
@@ -846,6 +1033,50 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   lines: [emptySalesLine()],
 })
 
+const emptyCrmTouchpointDraft = (): CrmTouchpointDraft => ({
+  type: 'call',
+  contactedAt: new Date().toISOString().slice(0, 10),
+  salesRep: '',
+  summary: '',
+  sentiment: '',
+  nextStep: '',
+  nextFollowUpAt: '',
+  relatedOrderId: '',
+})
+
+const emptyCrmContact = (): CrmContact => {
+  const now = new Date().toISOString()
+
+  return {
+    id: createId('crm-contact'),
+    name: '',
+    company: '',
+    role: '',
+    email: '',
+    phone: '',
+    alternateContacts: '',
+    playerNames: [],
+    salesOwner: '',
+    ownerEmail: '',
+    stage: 'lead',
+    priority: 'steady',
+    source: '',
+    tags: [],
+    preferredContactMethod: 'Any',
+    buyingContext: '',
+    batPreferences: '',
+    relationshipNotes: '',
+    objections: '',
+    opportunities: '',
+    followUpAt: '',
+    lastContactedAt: '',
+    createdAt: now,
+    updatedAt: now,
+    touchpoints: [],
+    sandboxOnly: true,
+  }
+}
+
 function normalizeBilletStatus(status: BilletStatus | string | null | undefined): BilletStatus {
   if (status === 'storage' || status === 'production') return status
   if (
@@ -1157,6 +1388,661 @@ function normalizeBillingContact(
     relationship: record.relationship ?? '',
     notes: record.notes ?? '',
   }
+}
+
+function normalizeCrmStage(value: CrmStage | string | null | undefined): CrmStage {
+  if (crmStageOptions.some((option) => option.value === value)) return value as CrmStage
+  return 'lead'
+}
+
+function normalizeCrmPriority(value: CrmPriority | string | null | undefined): CrmPriority {
+  if (crmPriorityOptions.some((option) => option.value === value)) return value as CrmPriority
+  return 'steady'
+}
+
+function normalizeCrmTouchpointType(
+  value: CrmTouchpointType | string | null | undefined,
+): CrmTouchpointType {
+  if (crmTouchpointTypeOptions.some((option) => option.value === value)) {
+    return value as CrmTouchpointType
+  }
+  return 'note'
+}
+
+function normalizeCrmList(values: string[] | string | null | undefined) {
+  const rawValues = Array.isArray(values)
+    ? values
+    : String(values ?? '')
+        .split(/[,;\n]/)
+        .map((value) => value.trim())
+
+  const seen = new Set<string>()
+  return rawValues
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => {
+      const key = value.toLowerCase()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function getCrmStageLabel(stage: CrmStage) {
+  return crmStageOptions.find((option) => option.value === stage)?.label ?? 'Lead'
+}
+
+function getCrmPriorityLabel(priority: CrmPriority) {
+  return crmPriorityOptions.find((option) => option.value === priority)?.label ?? 'Steady'
+}
+
+function getCrmTouchpointTypeLabel(type: CrmTouchpointType) {
+  return crmTouchpointTypeOptions.find((option) => option.value === type)?.label ?? 'Note'
+}
+
+function getCrmOwnerKey(name: string, email: string) {
+  const normalizedEmail = email.trim().toLowerCase()
+  if (normalizedEmail) return normalizedEmail
+
+  const normalizedName = normalizeCrmSearchText(name)
+  return normalizedName || 'unassigned'
+}
+
+function normalizeTrinityEmail(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function isTrinityEmail(value: string) {
+  return /^[^\s@]+@trinitybats\.com$/i.test(value.trim())
+}
+
+function getCrmOwnerByEmail(email: string) {
+  const normalizedEmail = normalizeTrinityEmail(email)
+  return seedCrmOwnerOptions.find((owner) => owner.email.toLowerCase() === normalizedEmail) ?? null
+}
+
+function createCrmOwnerFromEmail(email: string): CrmOwnerOption {
+  const normalizedEmail = normalizeTrinityEmail(email)
+  const firstName = normalizedEmail.split('@')[0] || 'Team member'
+  const name = firstName.charAt(0).toUpperCase() + firstName.slice(1)
+
+  return {
+    key: normalizedEmail,
+    label: name,
+    name,
+    email: normalizedEmail,
+  }
+}
+
+function getSalesPortalOwnerForEmail(email: string) {
+  return getCrmOwnerByEmail(email) ?? createCrmOwnerFromEmail(email)
+}
+
+function createCrmOwnerOption(name: string, email: string): CrmOwnerOption | null {
+  const label = name.trim() || email.trim()
+  const key = getCrmOwnerKey(name, email)
+  if (!label || key === 'unassigned') return null
+  return {
+    key,
+    label,
+    name: name.trim() || label,
+    email: email.trim(),
+  }
+}
+
+function getCrmSummaryOwnerKey(summary: CrmContactSummary) {
+  return getCrmOwnerKey(summary.contact.salesOwner, summary.contact.ownerEmail)
+}
+
+function matchesCrmOwnerFilter(summary: CrmContactSummary, ownerFilter: string) {
+  if (ownerFilter === 'all') return true
+  if (ownerFilter === 'unassigned') return getCrmSummaryOwnerKey(summary) === 'unassigned'
+  return getCrmSummaryOwnerKey(summary) === ownerFilter
+}
+
+function getCrmDateInputValue(value: string) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10)
+  return date.toISOString().slice(0, 10)
+}
+
+function getCrmDateFromInput(value: string) {
+  if (!value) return ''
+  const date = new Date(`${value}T12:00:00`)
+  return Number.isNaN(date.getTime()) ? value : date.toISOString()
+}
+
+function getCrmTodayInputValue() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function extractCrmEmail(value: string) {
+  return value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? ''
+}
+
+function extractCrmPhone(value: string) {
+  const match = value.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)
+  return match?.[0]?.trim() ?? ''
+}
+
+function extractCrmLabeledValue(value: string, labels: string[]) {
+  for (const label of labels) {
+    const pattern = new RegExp(
+      `(?:^|[\\n,.;])\\s*${label}\\s*(?:is|=|:|-)?\\s*([^\\n,.;]+)`,
+      'i',
+    )
+    const match = value.match(pattern)
+    if (match?.[1]) return match[1].trim()
+  }
+
+  return ''
+}
+
+function inferCrmContactNameFromText(value: string) {
+  const labeled = extractCrmLabeledValue(value, ['contact', 'customer', 'name', 'buyer'])
+  if (labeled) return labeled
+
+  const match = value.match(
+    /\b(?:called|texted|emailed|met with|spoke with|talked to|followed up with)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})/,
+  )
+  return match?.[1]?.trim() ?? ''
+}
+
+function inferCrmTouchpointTypeFromText(value: string): CrmTouchpointType {
+  const normalized = value.toLowerCase()
+  if (/\b(text|sms|message)\b/.test(normalized)) return 'text'
+  if (/\b(email|emailed)\b/.test(normalized)) return 'email'
+  if (/\b(call|called|phone|voicemail)\b/.test(normalized)) return 'call'
+  if (/\b(ig|instagram|dm|direct message)\b/.test(normalized)) return 'instagram_dm'
+  if (/\b(met|meeting|visit|in person|showcase|tournament)\b/.test(normalized)) return 'in_person'
+  if (/\b(facebook|x\.com|social)\b/.test(normalized)) return 'social'
+  if (/\b(quote|quoted|estimate)\b/.test(normalized)) return 'quote'
+  if (/\b(invoice|invoiced|payment link)\b/.test(normalized)) return 'invoice'
+  return 'note'
+}
+
+function inferCrmStageFromText(value: string): CrmStage {
+  const normalized = value.toLowerCase()
+  if (/\b(lost|dead|no longer|not interested|passed)\b/.test(normalized)) return 'lost'
+  if (/\b(customer|paid|ordered|closed|won)\b/.test(normalized)) return 'active_customer'
+  if (/\b(invoice|payment link|sent invoice)\b/.test(normalized)) return 'invoice_sent'
+  if (/\b(quote|quoted|estimate|pricing)\b/.test(normalized)) return 'quoted'
+  if (/\b(qualified|real lead|good lead|strong lead|serious|interested)\b/.test(normalized)) {
+    return 'qualified'
+  }
+  if (/\b(nurture|later|next season|not now)\b/.test(normalized)) return 'nurture'
+  return 'lead'
+}
+
+function inferCrmPriorityFromText(value: string): CrmPriority {
+  const normalized = value.toLowerCase()
+  if (/\b(hot|urgent|ready|asap|this week|strong|serious)\b/.test(normalized)) return 'hot'
+  if (/\b(warm|interested|promising|likely|good fit)\b/.test(normalized)) return 'warm'
+  if (/\b(low|cold|maybe|not now|later)\b/.test(normalized)) return 'low'
+  return 'steady'
+}
+
+function inferCrmFollowUpInputFromText(value: string) {
+  const normalized = value.toLowerCase()
+  const explicit = normalized.match(/\b(?:follow(?:-| )?up|follow up|next step|remind)\D{0,20}(\d{4}-\d{2}-\d{2})/)
+  if (explicit?.[1]) return explicit[1]
+
+  const slashDate = normalized.match(
+    /\b(?:follow(?:-| )?up|follow up|next step|remind)\D{0,20}(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/,
+  )
+  if (slashDate?.[1] && slashDate?.[2]) {
+    const now = new Date()
+    const year = slashDate[3]
+      ? Number(slashDate[3].length === 2 ? `20${slashDate[3]}` : slashDate[3])
+      : now.getFullYear()
+    const date = new Date(year, Number(slashDate[1]) - 1, Number(slashDate[2]), 12)
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10)
+  }
+
+  const days = normalized.match(/\b(?:in|after)\s+(\d{1,2})\s+days?\b/)
+  if (days?.[1]) {
+    const date = new Date()
+    date.setDate(date.getDate() + Number(days[1]))
+    return date.toISOString().slice(0, 10)
+  }
+
+  if (/\btomorrow\b/.test(normalized)) {
+    const date = new Date()
+    date.setDate(date.getDate() + 1)
+    return date.toISOString().slice(0, 10)
+  }
+
+  if (/\bnext week\b/.test(normalized)) {
+    const date = new Date()
+    date.setDate(date.getDate() + 7)
+    return date.toISOString().slice(0, 10)
+  }
+
+  return ''
+}
+
+function normalizeCrmTouchpoint(
+  record: Partial<CrmTouchpoint> & Pick<CrmTouchpoint, 'id'>,
+): CrmTouchpoint {
+  return {
+    id: record.id,
+    type: normalizeCrmTouchpointType(record.type),
+    contactedAt: record.contactedAt || new Date().toISOString(),
+    salesRep: record.salesRep ?? '',
+    summary: record.summary ?? '',
+    sentiment: record.sentiment ?? '',
+    nextStep: record.nextStep ?? '',
+    nextFollowUpAt: record.nextFollowUpAt ?? '',
+    relatedOrderId: record.relatedOrderId ?? '',
+  }
+}
+
+function normalizeCrmContact(record: Partial<CrmContact> & Pick<CrmContact, 'id'>): CrmContact {
+  const now = new Date().toISOString()
+
+  return {
+    ...emptyCrmContact(),
+    ...record,
+    id: record.id,
+    name: record.name ?? '',
+    company: record.company ?? '',
+    role: record.role ?? '',
+    email: record.email ?? '',
+    phone: record.phone ?? '',
+    alternateContacts: record.alternateContacts ?? '',
+    playerNames: normalizeCrmList(record.playerNames),
+    salesOwner: record.salesOwner ?? '',
+    ownerEmail: record.ownerEmail ?? '',
+    stage: normalizeCrmStage(record.stage),
+    priority: normalizeCrmPriority(record.priority),
+    source: record.source ?? '',
+    tags: normalizeCrmList(record.tags),
+    preferredContactMethod: record.preferredContactMethod ?? 'Any',
+    buyingContext: record.buyingContext ?? '',
+    batPreferences: record.batPreferences ?? '',
+    relationshipNotes: record.relationshipNotes ?? '',
+    objections: record.objections ?? '',
+    opportunities: record.opportunities ?? '',
+    followUpAt: record.followUpAt ?? '',
+    lastContactedAt: record.lastContactedAt ?? '',
+    createdAt: record.createdAt ?? now,
+    updatedAt: record.updatedAt ?? now,
+    touchpoints: Array.isArray(record.touchpoints)
+      ? record.touchpoints.map((touchpoint) => normalizeCrmTouchpoint(touchpoint))
+      : [],
+    sandboxOnly: record.sandboxOnly ?? true,
+  }
+}
+
+function normalizeCrmSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function normalizeCrmPhone(value: string) {
+  return value.replace(/\D/g, '')
+}
+
+function getCrmStableId(prefix: string, value: string) {
+  const slug = normalizeCrmSearchText(value).replace(/\s+/g, '-')
+  return `${prefix}-${slug || 'unknown'}`
+}
+
+function getCrmIdentityCandidates(contact: Pick<CrmContact, 'email' | 'phone' | 'name' | 'company'>) {
+  const email = contact.email.trim().toLowerCase()
+  const phone = normalizeCrmPhone(contact.phone)
+  const name = normalizeCrmSearchText(contact.name)
+  const company = normalizeCrmSearchText(contact.company)
+  return [
+    email ? `email:${email}` : '',
+    phone ? `phone:${phone}` : '',
+    name && company ? `name-company:${name}:${company}` : '',
+    name ? `name:${name}` : '',
+  ].filter(Boolean)
+}
+
+function hasSharedCrmIdentity(first: CrmContact, second: CrmContact) {
+  const firstCandidates = new Set(getCrmIdentityCandidates(first))
+  return getCrmIdentityCandidates(second).some((candidate) => firstCandidates.has(candidate))
+}
+
+function mergeCrmContacts(base: CrmContact, incoming: CrmContact): CrmContact {
+  const touchpoints = new Map<string, CrmTouchpoint>()
+  for (const touchpoint of incoming.touchpoints) touchpoints.set(touchpoint.id, touchpoint)
+  for (const touchpoint of base.touchpoints) touchpoints.set(touchpoint.id, touchpoint)
+
+  return normalizeCrmContact({
+    ...incoming,
+    ...base,
+    name: base.name || incoming.name,
+    company: base.company || incoming.company,
+    role: base.role || incoming.role,
+    email: base.email || incoming.email,
+    phone: base.phone || incoming.phone,
+    salesOwner: base.salesOwner || incoming.salesOwner,
+    ownerEmail: base.ownerEmail || incoming.ownerEmail,
+    source: base.source || incoming.source,
+    playerNames: normalizeCrmList([...incoming.playerNames, ...base.playerNames]),
+    tags: normalizeCrmList([...incoming.tags, ...base.tags]),
+    lastContactedAt: getLaterDate(base.lastContactedAt, incoming.lastContactedAt),
+    followUpAt: base.followUpAt || incoming.followUpAt,
+    createdAt: getEarlierDate(base.createdAt, incoming.createdAt),
+    updatedAt: getLaterDate(base.updatedAt, incoming.updatedAt),
+    touchpoints: Array.from(touchpoints.values()).sort(
+      (a, b) => getDateTimestamp(b.contactedAt) - getDateTimestamp(a.contactedAt),
+    ),
+  })
+}
+
+function inferCrmStageFromOrder(job: OrderJob): CrmStage {
+  if (isSalesDashboardPaid(job)) return 'active_customer'
+  if (job.invoiceStatus === 'sent') return 'invoice_sent'
+  if (job.invoiceStatus === 'draft') return 'quoted'
+  return 'qualified'
+}
+
+function inferCrmPriorityFromOrder(job: OrderJob): CrmPriority {
+  if (!isSalesDashboardPaid(job) && getSalesDashboardLineValue(job) >= 500) return 'hot'
+  if (job.origin === 'internal_sales') return 'warm'
+  return 'steady'
+}
+
+function createCrmContactFromOrder(job: OrderJob): CrmContact {
+  const name = job.billingName || job.customerName || job.playerName
+  const email = job.billingEmail || job.customerEmail || job.playerEmail
+  const phone = job.billingPhone
+  const company = job.billingCompany
+  const identity = email || phone || `${name}-${company}` || job.id
+
+  return normalizeCrmContact({
+    id: getCrmStableId('crm-order-contact', identity),
+    name,
+    company,
+    role: job.billingRelationship,
+    email,
+    phone,
+    playerNames: normalizeCrmList([job.playerName, job.customerName].filter(Boolean)),
+    salesOwner: job.salesRep,
+    ownerEmail: job.salesRepEmail,
+    stage: inferCrmStageFromOrder(job),
+    priority: inferCrmPriorityFromOrder(job),
+    source: job.origin === 'internal_sales' ? 'Sales intake' : 'Website order',
+    tags: normalizeCrmList([
+      job.origin === 'internal_sales' ? 'Manual sales order' : 'Website customer',
+      job.billingCompany ? 'Team or agency' : '',
+      job.specs.wood,
+      job.specs.model,
+    ]),
+    batPreferences: [job.specs.model, job.specs.wood, job.specs.length, job.specs.targetWeight]
+      .filter(Boolean)
+      .join(' / '),
+    opportunities: isSalesDashboardPaid(job)
+      ? 'Potential reorder or companion bat opportunity.'
+      : 'Open invoice or quote needs follow-up.',
+    lastContactedAt: job.orderSubmittedAt || job.createdAt,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  })
+}
+
+function createCrmContactFromBillingContact(contact: BillingContact): CrmContact {
+  return normalizeCrmContact({
+    id: getCrmStableId('crm-billing-contact', contact.email || contact.phone || contact.name),
+    name: contact.name,
+    company: contact.company,
+    role: contact.relationship,
+    email: contact.email,
+    phone: contact.phone,
+    stage: 'qualified',
+    priority: 'warm',
+    source: 'Saved payer contact',
+    tags: normalizeCrmList(['Saved billing contact', contact.company]),
+    relationshipNotes: contact.notes,
+  })
+}
+
+function getCrmOrdersForContact(contact: CrmContact, orderJobs: OrderJob[]) {
+  const contactEmails = new Set(
+    [contact.email]
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  const contactPhone = normalizeCrmPhone(contact.phone)
+  const contactName = normalizeCrmSearchText(contact.name)
+  const contactCompany = normalizeCrmSearchText(contact.company)
+  const playerNames = contact.playerNames.map((value) => normalizeCrmSearchText(value)).filter(Boolean)
+
+  return orderJobs
+    .filter((job) => {
+      const jobEmails = [job.billingEmail, job.customerEmail, job.playerEmail]
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+      if (jobEmails.some((email) => contactEmails.has(email))) return true
+
+      const jobPhone = normalizeCrmPhone(job.billingPhone)
+      if (contactPhone && jobPhone && contactPhone === jobPhone) return true
+
+      const jobNames = [job.billingName, job.customerName, job.playerName]
+        .map((value) => normalizeCrmSearchText(value))
+        .filter(Boolean)
+      if (contactName && jobNames.includes(contactName)) return true
+      if (playerNames.some((playerName) => jobNames.includes(playerName))) return true
+
+      const jobCompany = normalizeCrmSearchText(job.billingCompany)
+      return Boolean(contactCompany && jobCompany && contactCompany === jobCompany)
+    })
+    .sort(
+      (a, b) =>
+        getDateTimestamp(b.orderSubmittedAt || b.createdAt) -
+        getDateTimestamp(a.orderSubmittedAt || a.createdAt),
+    )
+}
+
+function buildCrmContactDirectory(
+  savedContacts: CrmContact[],
+  orderJobs: OrderJob[],
+  billingContacts: BillingContact[],
+) {
+  const directory: Array<{ contact: CrmContact; derivedFromOrders: boolean }> = []
+
+  function addCandidate(candidate: CrmContact, derivedFromOrders: boolean) {
+    const existingIndex = directory.findIndex(({ contact }) => hasSharedCrmIdentity(contact, candidate))
+    if (existingIndex === -1) {
+      directory.push({ contact: candidate, derivedFromOrders })
+      return
+    }
+
+    const existing = directory[existingIndex]
+    directory[existingIndex] = {
+      contact: mergeCrmContacts(existing.contact, candidate),
+      derivedFromOrders: existing.derivedFromOrders && derivedFromOrders,
+    }
+  }
+
+  for (const contact of savedContacts) {
+    addCandidate(normalizeCrmContact(contact), false)
+  }
+
+  for (const contact of billingContacts) {
+    addCandidate(createCrmContactFromBillingContact(contact), true)
+  }
+
+  for (const job of orderJobs) {
+    addCandidate(createCrmContactFromOrder(job), true)
+  }
+
+  return directory.sort((a, b) => {
+    const aDate = getDateTimestamp(a.contact.followUpAt) || getDateTimestamp(a.contact.updatedAt)
+    const bDate = getDateTimestamp(b.contact.followUpAt) || getDateTimestamp(b.contact.updatedAt)
+    return bDate - aDate
+  })
+}
+
+function buildCrmContactSummaries(
+  directory: Array<{ contact: CrmContact; derivedFromOrders: boolean }>,
+  orderJobs: OrderJob[],
+): CrmContactSummary[] {
+  return directory.map(({ contact, derivedFromOrders }) => {
+    const orders = getCrmOrdersForContact(contact, orderJobs)
+    const submittedValue = orders.reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
+    const paidValue = orders
+      .filter((job) => isSalesDashboardPaid(job))
+      .reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
+    const openValue = submittedValue - paidValue
+    const openInvoiceCount = orders.filter((job) => !isSalesDashboardPaid(job)).length
+    const lastOrderAt = orders[0]?.orderSubmittedAt || orders[0]?.createdAt || ''
+    const lastTouchpointAt = contact.touchpoints[0]?.contactedAt || ''
+    const lastActivityAt = getLaterDate(getLaterDate(lastOrderAt, lastTouchpointAt), contact.lastContactedAt)
+    const followUpAt = contact.followUpAt || contact.touchpoints[0]?.nextFollowUpAt || ''
+    const followUpDue = Boolean(followUpAt && getDateTimestamp(followUpAt) <= Date.now())
+
+    return {
+      contact,
+      orders,
+      orderCount: orders.length,
+      submittedValue,
+      paidValue,
+      openValue,
+      openInvoiceCount,
+      lastOrderAt,
+      lastActivityAt,
+      followUpDue,
+      derivedFromOrders,
+    }
+  })
+}
+
+function getSalesPortalOrderTotal(draft: SalesOrderDraft) {
+  return getSalesOrderTotal(draft)
+}
+
+function createSalesPortalOrder(
+  draft: SalesOrderDraft,
+  owner: CrmOwnerOption,
+  contactId: string,
+): SalesPortalOrder {
+  const payerName = draft.billingDifferent ? draft.billingName : draft.playerName
+  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+  const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
+
+  return {
+    id: createId('portal-order'),
+    ownerName: owner.name,
+    ownerEmail: owner.email,
+    submittedAt: new Date().toISOString(),
+    contactId,
+    playerName: draft.playerName,
+    payerName,
+    payerEmail,
+    payerPhone,
+    total: getSalesPortalOrderTotal(draft),
+    status: 'local_saved',
+    draft: cloneSalesOrderDraft(draft),
+  }
+}
+
+function createCrmContactFromSalesPortalDraft(
+  draft: SalesOrderDraft,
+  owner: CrmOwnerOption,
+): CrmContact {
+  const now = new Date().toISOString()
+  const payerName = draft.billingDifferent ? draft.billingName : draft.playerName
+  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+  const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
+
+  return normalizeCrmContact({
+    ...emptyCrmContact(),
+    name: payerName,
+    company: draft.billingCompany,
+    role: draft.billingRelationship,
+    email: payerEmail,
+    phone: payerPhone,
+    playerNames: normalizeCrmList([draft.playerName]),
+    salesOwner: owner.name,
+    ownerEmail: owner.email,
+    stage: draft.createDraftOrder ? 'quoted' : 'active_customer',
+    priority: draft.sendInvoice ? 'hot' : 'warm',
+    source: 'Sales portal order',
+    tags: normalizeCrmList(['Sales portal', 'Order form']),
+    buyingContext: draft.notes,
+    batPreferences: draft.lines
+      .map((line) => [line.title, line.wood, line.length, line.targetWeight].filter(Boolean).join(' / '))
+      .filter(Boolean)
+      .join('; '),
+    opportunities: draft.createDraftOrder ? 'Invoice/order follow-up required.' : 'Order saved.',
+    lastContactedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  })
+}
+
+function isCrmSummaryOwnedBy(summary: CrmContactSummary, owner: CrmOwnerOption) {
+  return getCrmSummaryOwnerKey(summary) === owner.key
+}
+
+function isSalesPortalOrderOwnedBy(order: SalesPortalOrder, owner: CrmOwnerOption) {
+  return getCrmOwnerKey(order.ownerName, order.ownerEmail) === owner.key
+}
+
+function salesPortalContactMatchesSearch(
+  summary: CrmContactSummary,
+  orders: SalesPortalOrder[],
+  normalizedQuery: string,
+) {
+  if (!normalizedQuery) return true
+
+  const contactOrders = orders.filter((order) => order.contactId === summary.contact.id)
+  const searchable = normalizeCrmSearchText(
+    [
+      summary.contact.name,
+      summary.contact.company,
+      summary.contact.role,
+      summary.contact.email,
+      summary.contact.phone,
+      summary.contact.alternateContacts,
+      summary.contact.salesOwner,
+      summary.contact.ownerEmail,
+      summary.contact.stage,
+      summary.contact.priority,
+      summary.contact.source,
+      summary.contact.preferredContactMethod,
+      summary.contact.buyingContext,
+      summary.contact.batPreferences,
+      summary.contact.relationshipNotes,
+      summary.contact.objections,
+      summary.contact.opportunities,
+      ...summary.contact.playerNames,
+      ...summary.contact.tags,
+      ...summary.contact.touchpoints.flatMap((touchpoint) => [
+        touchpoint.type,
+        getCrmTouchpointTypeLabel(touchpoint.type),
+        touchpoint.salesRep,
+        touchpoint.summary,
+        touchpoint.sentiment,
+        touchpoint.nextStep,
+      ]),
+      ...contactOrders.flatMap((order) => [
+        order.playerName,
+        order.payerName,
+        order.payerEmail,
+        order.payerPhone,
+        order.ownerName,
+        order.status,
+        ...order.draft.lines.flatMap((line) => [
+          line.title,
+          line.wood,
+          line.length,
+          line.targetWeight,
+          line.handleColor,
+          line.barrelColor,
+          line.logoColor,
+          line.engraving,
+          line.notes,
+        ]),
+      ]),
+    ].join(' '),
+  )
+
+  return searchable.includes(normalizedQuery)
 }
 
 function normalizePlayerProfile(
@@ -2201,7 +3087,11 @@ const publicOrderFormPaths = new Set([
   '/trinity-order-from',
 ])
 
+const salesPortalPaths = new Set(['/sales-portal', '/sales-crm'])
 const internalToolPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
+const salesPortalDemoOnly =
+  import.meta.env.VITE_SALES_PORTAL_DEMO_ONLY === 'true' ||
+  window.location.hostname.includes('trinity-sales-portal-demo')
 
 function getCurrentAppPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/'
@@ -2211,8 +3101,26 @@ function isPublicOrderFormRoute() {
   return publicOrderFormPaths.has(getCurrentAppPath())
 }
 
+function isSalesPortalRoute() {
+  return salesPortalPaths.has(getCurrentAppPath())
+}
+
 function isInternalToolRoute() {
   return internalToolPaths.has(getCurrentAppPath())
+}
+
+function isLocalPreviewHost() {
+  return ['localhost', '127.0.0.1', ''].includes(window.location.hostname)
+}
+
+function isCrmSandboxPreviewRoute() {
+  const params = new URLSearchParams(window.location.search)
+  return isLocalPreviewHost() && params.get('crmSandbox') === '1'
+}
+
+function getInitialActiveSection(): ActiveSection {
+  const params = new URLSearchParams(window.location.search)
+  return isCrmSandboxPreviewRoute() && params.get('section') === 'crm' ? 'crm' : 'inventory'
 }
 
 function getEmbeddedAuthSearch() {
@@ -2405,6 +3313,7 @@ type SalesOrderFormFieldsProps = {
   attachmentFile: File | null
   setAttachmentFile: Dispatch<SetStateAction<File | null>>
   isSubmitting: boolean
+  hideSalesRepFields?: boolean
 }
 
 function SalesOrderFormFields({
@@ -2424,6 +3333,7 @@ function SalesOrderFormFields({
   attachmentFile,
   setAttachmentFile,
   isSubmitting,
+  hideSalesRepFields = false,
 }: SalesOrderFormFieldsProps) {
   return (
     <>
@@ -2610,24 +3520,28 @@ function SalesOrderFormFields({
 
       <SalesOrderShippingAddressFields draft={draft} updateField={updateField} />
 
-      <label>
-        Sales rep
-        <input
-          value={draft.salesRep}
-          placeholder="Example: Matt"
-          onChange={(event) => updateField('salesRep', event.target.value)}
-        />
-      </label>
+      {!hideSalesRepFields ? (
+        <>
+          <label>
+            Sales rep
+            <input
+              value={draft.salesRep}
+              placeholder="Example: Matt"
+              onChange={(event) => updateField('salesRep', event.target.value)}
+            />
+          </label>
 
-      <label>
-        Sales rep email
-        <input
-          type="email"
-          value={draft.salesRepEmail}
-          placeholder="rep@trinitybats.com"
-          onChange={(event) => updateField('salesRepEmail', event.target.value)}
-        />
-      </label>
+          <label>
+            Sales rep email
+            <input
+              type="email"
+              value={draft.salesRepEmail}
+              placeholder="rep@trinitybats.com"
+              onChange={(event) => updateField('salesRepEmail', event.target.value)}
+            />
+          </label>
+        </>
+      ) : null}
 
       <div className="sales-line-list">
         {draft.lines.map((line, index) => {
@@ -3398,7 +4312,8 @@ function PublicSalesOrderForm() {
 }
 
 function InternalApp() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('inventory')
+  const crmSandboxPreviewEnabled = isCrmSandboxPreviewRoute()
+  const [activeSection, setActiveSection] = useState<ActiveSection>(() => getInitialActiveSection())
   const [billets, setBillets] = useState<Billet[]>(() => {
     const stored = window.localStorage.getItem(billetStorageKey)
     const parsed = stored ? (JSON.parse(stored) as Billet[]) : seedBillets
@@ -3434,6 +4349,10 @@ function InternalApp() {
       normalizeBillingContact(contact),
     )
   })
+  const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
+    const stored = window.localStorage.getItem(crmContactStorageKey)
+    return stored ? (JSON.parse(stored) as CrmContact[]).map((contact) => normalizeCrmContact(contact)) : []
+  })
   const [draft, setDraft] = useState(emptyBillet)
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
@@ -3441,6 +4360,32 @@ function InternalApp() {
   const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
   const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
   const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState('all')
+  const [activeCrmView, setActiveCrmView] = useState<CrmWorkspaceView>('new_contact')
+  const [crmQuery, setCrmQuery] = useState('')
+  const [crmStageFilter, setCrmStageFilter] = useState<'all' | CrmStage>('all')
+  const [crmOwnerFilter, setCrmOwnerFilter] = useState(
+    () => window.localStorage.getItem(crmActiveOwnerStorageKey) || 'all',
+  )
+  const [selectedCrmContactId, setSelectedCrmContactId] = useState('')
+  const [selectedCrmEngagementId, setSelectedCrmEngagementId] = useState('')
+  const [newCrmContactDraft, setNewCrmContactDraft] = useState<CrmContact>(() =>
+    emptyCrmContact(),
+  )
+  const [newCrmLeadDraft, setNewCrmLeadDraft] = useState<CrmContact>(() =>
+    normalizeCrmContact({
+      ...emptyCrmContact(),
+      stage: 'lead',
+      priority: 'warm',
+      source: 'Manual lead',
+      tags: ['Lead'],
+    }),
+  )
+  const [crmTouchpointDraft, setCrmTouchpointDraft] = useState<CrmTouchpointDraft>(() =>
+    emptyCrmTouchpointDraft(),
+  )
+  const [crmAssistantInput, setCrmAssistantInput] = useState('')
+  const [crmAssistantResult, setCrmAssistantResult] = useState('')
+  const [crmMessage, setCrmMessage] = useState('')
   const [orderQuery, setOrderQuery] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
@@ -3479,11 +4424,15 @@ function InternalApp() {
   const [backendStatus, setBackendStatus] = useState<
     'connecting' | 'connected' | 'offline' | 'unauthorized'
   >(
-    'connecting',
+    crmSandboxPreviewEnabled ? 'offline' : 'connecting',
   )
   const [syncRetryNonce, setSyncRetryNonce] = useState(0)
-  const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(true)
-  const [syncMessage, setSyncMessage] = useState('Connecting to Shopify backend...')
+  const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(!crmSandboxPreviewEnabled)
+  const [syncMessage, setSyncMessage] = useState(
+    crmSandboxPreviewEnabled
+      ? 'CRM sandbox preview is local-only and not connected to live Shopify sync.'
+      : 'Connecting to Shopify backend...',
+  )
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState('')
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -3520,6 +4469,14 @@ function InternalApp() {
   useEffect(() => {
     window.localStorage.setItem(billingContactStorageKey, JSON.stringify(billingContacts))
   }, [billingContacts])
+
+  useEffect(() => {
+    window.localStorage.setItem(crmContactStorageKey, JSON.stringify(crmContacts))
+  }, [crmContacts])
+
+  useEffect(() => {
+    window.localStorage.setItem(crmActiveOwnerStorageKey, crmOwnerFilter)
+  }, [crmOwnerFilter])
 
   function getCurrentRemoteState(): RemoteState {
     return {
@@ -3690,15 +4647,21 @@ function InternalApp() {
   })
 
   useEffect(() => {
+    if (crmSandboxPreviewEnabled) {
+      hasLoadedRemoteState.current = true
+      return
+    }
+
     const timeout = window.setTimeout(() => {
       void loadRemoteState()
     }, 0)
 
     return () => window.clearTimeout(timeout)
-  }, [])
+  }, [crmSandboxPreviewEnabled])
 
   useEffect(() => {
     if (backendStatus !== 'offline') return
+    if (crmSandboxPreviewEnabled) return
 
     const retry = window.setInterval(() => {
       if (hasPendingLocalSync.current) {
@@ -3709,7 +4672,7 @@ function InternalApp() {
     }, 10000)
 
     return () => window.clearInterval(retry)
-  }, [backendStatus])
+  }, [backendStatus, crmSandboxPreviewEnabled])
 
   useEffect(() => {
     if (!hasLoadedRemoteState.current || backendStatus !== 'connected') return
@@ -4094,6 +5057,131 @@ function InternalApp() {
         .slice(0, 8),
     [salesDashboardOpenSales],
   )
+  const crmDirectory = useMemo(
+    () => buildCrmContactDirectory(crmContacts, orderJobs, billingContacts),
+    [billingContacts, crmContacts, orderJobs],
+  )
+  const crmContactSummaries = useMemo(
+    () => buildCrmContactSummaries(crmDirectory, orderJobs),
+    [crmDirectory, orderJobs],
+  )
+  const crmOwnerOptions = useMemo(() => {
+    const owners = new Map<string, CrmOwnerOption>(
+      seedCrmOwnerOptions.map((owner) => [owner.key, owner]),
+    )
+    for (const summary of crmContactSummaries) {
+      const option = createCrmOwnerOption(summary.contact.salesOwner, summary.contact.ownerEmail)
+      if (option) owners.set(option.key, option)
+    }
+    return Array.from(owners.values()).sort((a, b) => compareText(a.label, b.label))
+  }, [crmContactSummaries])
+  const activeCrmOwnerOption =
+    crmOwnerOptions.find((owner) => owner.key === crmOwnerFilter) ?? null
+  const crmOwnerScopedSummaries = useMemo(
+    () =>
+      crmContactSummaries.filter((summary) => matchesCrmOwnerFilter(summary, crmOwnerFilter)),
+    [crmContactSummaries, crmOwnerFilter],
+  )
+  const filteredCrmSummaries = useMemo(() => {
+    const normalizedQuery = normalizeCrmSearchText(crmQuery)
+
+    return crmOwnerScopedSummaries
+      .filter((summary) => {
+        const matchesStage =
+          crmStageFilter === 'all' || summary.contact.stage === crmStageFilter
+        if (!matchesStage) return false
+        if (!normalizedQuery) return true
+
+        const searchable = normalizeCrmSearchText(
+          [
+            summary.contact.name,
+            summary.contact.company,
+            summary.contact.role,
+            summary.contact.email,
+            summary.contact.phone,
+            summary.contact.salesOwner,
+            summary.contact.source,
+            summary.contact.preferredContactMethod,
+            summary.contact.buyingContext,
+            summary.contact.batPreferences,
+            summary.contact.relationshipNotes,
+            summary.contact.objections,
+            summary.contact.opportunities,
+            ...summary.contact.playerNames,
+            ...summary.contact.tags,
+            ...summary.orders.flatMap((job) => [
+              job.shopifyOrderName,
+              job.shopifyDraftOrderName,
+              job.productTitle,
+              job.specs.model,
+              job.specs.wood,
+              job.salesRep,
+            ]),
+          ].join(' '),
+        )
+
+        return searchable.includes(normalizedQuery)
+      })
+      .sort((a, b) => {
+        if (a.followUpDue !== b.followUpDue) return a.followUpDue ? -1 : 1
+        const priorityOrder: Record<CrmPriority, number> = { hot: 0, warm: 1, steady: 2, low: 3 }
+        if (a.contact.priority !== b.contact.priority) {
+          return priorityOrder[a.contact.priority] - priorityOrder[b.contact.priority]
+        }
+        return getDateTimestamp(b.lastActivityAt) - getDateTimestamp(a.lastActivityAt)
+      })
+  }, [crmOwnerScopedSummaries, crmQuery, crmStageFilter])
+  const selectedCrmSummary =
+    filteredCrmSummaries.find((summary) => summary.contact.id === selectedCrmContactId) ??
+    crmOwnerScopedSummaries.find((summary) => summary.contact.id === selectedCrmContactId) ??
+    filteredCrmSummaries[0] ??
+    crmOwnerScopedSummaries[0] ??
+    null
+  const crmMetricTotals = useMemo(() => {
+    const dueFollowUps = crmOwnerScopedSummaries.filter((summary) => summary.followUpDue).length
+    const hotContacts = crmOwnerScopedSummaries.filter(
+      (summary) => summary.contact.priority === 'hot' || summary.contact.stage === 'invoice_sent',
+    ).length
+    const openValue = crmOwnerScopedSummaries.reduce((total, summary) => total + summary.openValue, 0)
+    const repeatCustomers = crmOwnerScopedSummaries.filter((summary) => summary.orderCount > 1).length
+
+    return { dueFollowUps, hotContacts, openValue, repeatCustomers }
+  }, [crmOwnerScopedSummaries])
+  const crmLeadSummaries = useMemo(
+    () =>
+      crmOwnerScopedSummaries
+        .filter((summary) => {
+          const leadStages: CrmStage[] = ['lead', 'qualified', 'quoted', 'invoice_sent', 'nurture']
+          const cameFromManualSalesFeed = summary.orders.some((job) => job.origin === 'internal_sales')
+          return leadStages.includes(summary.contact.stage) || cameFromManualSalesFeed
+        })
+        .sort((a, b) => {
+          if (a.followUpDue !== b.followUpDue) return a.followUpDue ? -1 : 1
+          return getDateTimestamp(b.lastActivityAt) - getDateTimestamp(a.lastActivityAt)
+        }),
+    [crmOwnerScopedSummaries],
+  )
+  const crmEngagements = useMemo(
+    () =>
+      crmOwnerScopedSummaries
+        .flatMap((summary) =>
+          summary.contact.touchpoints.map((touchpoint) => ({
+            contact: summary.contact,
+            summary,
+            touchpoint,
+          })),
+        )
+        .sort(
+          (a, b) =>
+            getDateTimestamp(b.touchpoint.contactedAt) -
+            getDateTimestamp(a.touchpoint.contactedAt),
+        ),
+    [crmOwnerScopedSummaries],
+  )
+  const selectedCrmEngagement =
+    crmEngagements.find((item) => item.touchpoint.id === selectedCrmEngagementId) ??
+    crmEngagements[0] ??
+    null
 
   const filteredBatModels = allBatModels.filter((model) => {
     const modelText = [
@@ -4352,6 +5440,7 @@ function InternalApp() {
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
+      upsertCrmContactFromSalesOrderDraft(salesOrderDraft, payload.orderJobs ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
       setSalesOrderAttachmentFile(null)
       setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
@@ -4460,6 +5549,303 @@ function InternalApp() {
           : job,
       ),
     )
+  }
+
+  function getActiveCrmOwnerAssignment(fallback?: Pick<CrmContact, 'salesOwner' | 'ownerEmail'>) {
+    return {
+      salesOwner: fallback?.salesOwner || activeCrmOwnerOption?.name || '',
+      ownerEmail: fallback?.ownerEmail || activeCrmOwnerOption?.email || '',
+    }
+  }
+
+  function saveCrmContact(contact: CrmContact) {
+    const normalized = normalizeCrmContact({
+      ...contact,
+      updatedAt: new Date().toISOString(),
+      sandboxOnly: true,
+    })
+
+    setCrmContacts((current) => {
+      const existingIndex = current.findIndex(
+        (savedContact) =>
+          savedContact.id === normalized.id || hasSharedCrmIdentity(savedContact, normalized),
+      )
+      if (existingIndex === -1) return [...current, normalized]
+
+      return current.map((savedContact, index) =>
+        index === existingIndex ? mergeCrmContacts(normalized, savedContact) : savedContact,
+      )
+    })
+    setSelectedCrmContactId(normalized.id)
+  }
+
+  function updateSelectedCrmContact(patch: Partial<CrmContact>) {
+    if (!selectedCrmSummary) return
+    saveCrmContact({
+      ...selectedCrmSummary.contact,
+      ...patch,
+    })
+  }
+
+  function createCrmContact() {
+    const contact = normalizeCrmContact({
+      ...emptyCrmContact(),
+      ...getActiveCrmOwnerAssignment(),
+      source: 'Manual CRM entry',
+      tags: ['Manual entry'],
+    })
+    saveCrmContact(contact)
+    setSelectedCrmContactId(contact.id)
+    setCrmMessage('New sandbox customer profile created.')
+  }
+
+  function saveNewCrmContact(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!newCrmContactDraft.name.trim() && !newCrmContactDraft.company.trim()) {
+      setCrmMessage('Add at least a name or organization before saving a contact.')
+      return
+    }
+
+    const now = new Date().toISOString()
+    const ownerAssignment = getActiveCrmOwnerAssignment(newCrmContactDraft)
+    const firstNote = newCrmContactDraft.buyingContext.trim()
+    const firstTouchpoint = firstNote
+      ? normalizeCrmTouchpoint({
+          id: createId('crm-touchpoint'),
+          type: 'note',
+          contactedAt: now,
+          salesRep: ownerAssignment.salesOwner,
+          summary: firstNote,
+          sentiment: '',
+          nextStep: '',
+          nextFollowUpAt: newCrmContactDraft.followUpAt,
+          relatedOrderId: '',
+        })
+      : null
+    const contact = normalizeCrmContact({
+      ...newCrmContactDraft,
+      ...ownerAssignment,
+      stage: newCrmContactDraft.stage || 'lead',
+      source: newCrmContactDraft.source || 'Manual CRM entry',
+      tags: normalizeCrmList([...newCrmContactDraft.tags, 'Manual entry']),
+      lastContactedAt: firstTouchpoint ? now : newCrmContactDraft.lastContactedAt,
+      createdAt: newCrmContactDraft.createdAt || now,
+      updatedAt: now,
+      touchpoints: firstTouchpoint
+        ? [firstTouchpoint, ...newCrmContactDraft.touchpoints]
+        : newCrmContactDraft.touchpoints,
+    })
+    saveCrmContact(contact)
+    setNewCrmContactDraft(emptyCrmContact())
+    setActiveCrmView('contact_list')
+    setCrmMessage('Contact saved to the CRM sandbox.')
+  }
+
+  function saveNewCrmLead(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!newCrmLeadDraft.name.trim() && !newCrmLeadDraft.company.trim()) {
+      setCrmMessage('Add at least a lead name or organization before saving.')
+      return
+    }
+
+    const now = new Date().toISOString()
+    const ownerAssignment = getActiveCrmOwnerAssignment(newCrmLeadDraft)
+    const firstLeadNote =
+      newCrmLeadDraft.buyingContext.trim() ||
+      newCrmLeadDraft.opportunities.trim() ||
+      newCrmLeadDraft.relationshipNotes.trim()
+    const firstLeadTouchpoint = firstLeadNote
+      ? normalizeCrmTouchpoint({
+          id: createId('crm-touchpoint'),
+          type: 'note',
+          contactedAt: now,
+          salesRep: ownerAssignment.salesOwner,
+          summary: firstLeadNote,
+          sentiment: '',
+          nextStep: newCrmLeadDraft.opportunities,
+          nextFollowUpAt: newCrmLeadDraft.followUpAt,
+          relatedOrderId: '',
+        })
+      : null
+    const lead = normalizeCrmContact({
+      ...newCrmLeadDraft,
+      ...ownerAssignment,
+      stage: newCrmLeadDraft.stage === 'active_customer' ? 'qualified' : newCrmLeadDraft.stage,
+      priority: newCrmLeadDraft.priority || 'warm',
+      source: newCrmLeadDraft.source || 'Manual lead',
+      tags: normalizeCrmList([...newCrmLeadDraft.tags, 'Lead']),
+      lastContactedAt: firstLeadTouchpoint ? now : newCrmLeadDraft.lastContactedAt,
+      createdAt: newCrmLeadDraft.createdAt || now,
+      updatedAt: now,
+      touchpoints: firstLeadTouchpoint
+        ? [firstLeadTouchpoint, ...newCrmLeadDraft.touchpoints]
+        : newCrmLeadDraft.touchpoints,
+    })
+    saveCrmContact(lead)
+    setNewCrmLeadDraft(
+      normalizeCrmContact({
+        ...emptyCrmContact(),
+        stage: 'lead',
+        priority: 'warm',
+        source: 'Manual lead',
+        tags: ['Lead'],
+      }),
+    )
+    setActiveCrmView('leads')
+    setCrmMessage('Lead saved to the CRM sandbox.')
+  }
+
+  function addCrmTouchpoint(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedCrmSummary) return
+    if (!crmTouchpointDraft.summary.trim()) {
+      setCrmMessage('Add a short conversation summary before saving the touchpoint.')
+      return
+    }
+
+    const contactedAt = getCrmDateFromInput(crmTouchpointDraft.contactedAt) || new Date().toISOString()
+    const nextFollowUpAt = getCrmDateFromInput(crmTouchpointDraft.nextFollowUpAt)
+    const ownerAssignment = getActiveCrmOwnerAssignment(selectedCrmSummary.contact)
+    const touchpoint = normalizeCrmTouchpoint({
+      id: createId('crm-touchpoint'),
+      type: crmTouchpointDraft.type,
+      contactedAt,
+      salesRep: crmTouchpointDraft.salesRep || ownerAssignment.salesOwner,
+      summary: crmTouchpointDraft.summary,
+      sentiment: '',
+      nextStep: crmTouchpointDraft.nextStep,
+      nextFollowUpAt,
+      relatedOrderId: crmTouchpointDraft.relatedOrderId,
+    })
+
+    saveCrmContact({
+      ...selectedCrmSummary.contact,
+      ...ownerAssignment,
+      lastContactedAt: contactedAt,
+      followUpAt: nextFollowUpAt || selectedCrmSummary.contact.followUpAt,
+      touchpoints: [touchpoint, ...selectedCrmSummary.contact.touchpoints],
+    })
+    setCrmTouchpointDraft({
+      ...emptyCrmTouchpointDraft(),
+      salesRep: crmTouchpointDraft.salesRep || ownerAssignment.salesOwner,
+    })
+    setCrmMessage('Touchpoint saved to this sandbox CRM profile.')
+  }
+
+  function applyCrmAssistantRequest(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const text = crmAssistantInput.trim()
+    if (!text) {
+      setCrmAssistantResult('Describe the customer, conversation, or follow-up to store.')
+      return
+    }
+
+    const email = extractCrmEmail(text)
+    const phone = extractCrmPhone(text)
+    const name = inferCrmContactNameFromText(text)
+    const company = extractCrmLabeledValue(text, ['team', 'company', 'organization', 'org', 'agency'])
+    const player = extractCrmLabeledValue(text, ['player', 'athlete'])
+    const owner = extractCrmLabeledValue(text, ['rep', 'owner', 'sales rep'])
+    const ownerAssignment = getActiveCrmOwnerAssignment({
+      salesOwner: owner,
+      ownerEmail: '',
+    })
+    const nextStep = extractCrmLabeledValue(text, ['next step', 'todo', 'to do'])
+    const followUpInput = inferCrmFollowUpInputFromText(text)
+    const followUpAt = getCrmDateFromInput(followUpInput)
+    const now = new Date().toISOString()
+    const existingContact =
+      crmContactSummaries.find((summary) => {
+        const contact = summary.contact
+        if (email && contact.email.trim().toLowerCase() === email.toLowerCase()) return true
+        if (phone && normalizeCrmPhone(contact.phone) === normalizeCrmPhone(phone)) return true
+        if (name && normalizeCrmSearchText(contact.name) === normalizeCrmSearchText(name)) return true
+        return false
+      })?.contact ?? null
+
+    const contact = normalizeCrmContact({
+      ...(existingContact ?? emptyCrmContact()),
+      name: existingContact?.name || name,
+      company: existingContact?.company || company,
+      email: existingContact?.email || email,
+      phone: existingContact?.phone || phone,
+      playerNames: normalizeCrmList([
+        ...(existingContact?.playerNames ?? []),
+        player,
+      ]),
+      salesOwner: existingContact?.salesOwner || ownerAssignment.salesOwner,
+      ownerEmail: existingContact?.ownerEmail || ownerAssignment.ownerEmail,
+      stage: inferCrmStageFromText(text),
+      priority: inferCrmPriorityFromText(text),
+      source: existingContact?.source || 'CRM assistant',
+      tags: normalizeCrmList([...(existingContact?.tags ?? []), 'AI captured']),
+      buyingContext: existingContact?.buyingContext || text,
+      followUpAt: followUpAt || existingContact?.followUpAt || '',
+      lastContactedAt: now,
+      updatedAt: now,
+    })
+    const touchpoint = normalizeCrmTouchpoint({
+      id: createId('crm-touchpoint'),
+      type: inferCrmTouchpointTypeFromText(text),
+      contactedAt: now,
+      salesRep: ownerAssignment.salesOwner || contact.salesOwner,
+      summary: text,
+      sentiment: extractCrmLabeledValue(text, ['sentiment', 'tone', 'vibe']),
+      nextStep,
+      nextFollowUpAt: followUpAt,
+      relatedOrderId: '',
+    })
+
+    saveCrmContact({
+      ...contact,
+      touchpoints: [touchpoint, ...contact.touchpoints],
+    })
+    setCrmAssistantResult(
+      `Saved ${contact.name || contact.company || 'new contact'} as ${getCrmStageLabel(
+        contact.stage,
+      )} with a ${getCrmTouchpointTypeLabel(touchpoint.type).toLowerCase()} note${
+        followUpAt ? ` and follow-up on ${formatSalesDashboardDate(followUpAt)}` : ''
+      }.`,
+    )
+    setCrmAssistantInput('')
+    setActiveCrmView('contact_list')
+  }
+
+  function upsertCrmContactFromSalesOrderDraft(draftToSave: SalesOrderDraft, jobs: OrderJob[]) {
+    const primaryJob = jobs[0]
+    const ownerAssignment = getActiveCrmOwnerAssignment({
+      salesOwner: draftToSave.salesRep,
+      ownerEmail: draftToSave.salesRepEmail,
+    })
+    const contact = primaryJob
+      ? normalizeCrmContact({
+          ...createCrmContactFromOrder(primaryJob),
+          ...getActiveCrmOwnerAssignment({
+            salesOwner: primaryJob.salesRep,
+            ownerEmail: primaryJob.salesRepEmail,
+          }),
+        })
+      : normalizeCrmContact({
+          ...emptyCrmContact(),
+          name: draftToSave.billingName || draftToSave.playerName,
+          email: draftToSave.billingEmail || draftToSave.playerEmail,
+          phone: draftToSave.billingPhone || draftToSave.playerPhone,
+          company: draftToSave.billingCompany,
+          role: draftToSave.billingRelationship,
+          playerNames: normalizeCrmList([draftToSave.playerName]),
+          ...ownerAssignment,
+          stage: draftToSave.createDraftOrder ? 'quoted' : 'active_customer',
+          priority: draftToSave.sendInvoice ? 'hot' : 'warm',
+          source: 'Sales intake',
+          tags: ['Manual sales order'],
+          buyingContext: draftToSave.notes,
+          batPreferences: draftToSave.lines
+            .map((line) => [line.title, line.wood, line.length, line.targetWeight].filter(Boolean).join(' / '))
+            .filter(Boolean)
+            .join('; '),
+        })
+
+    saveCrmContact(contact)
   }
 
   function applyQuickEntry() {
@@ -4788,6 +6174,13 @@ function InternalApp() {
             </button>
             <button
               type="button"
+              className={activeSection === 'crm' ? 'active' : ''}
+              onClick={() => setActiveSection('crm')}
+            >
+              CRM
+            </button>
+            <button
+              type="button"
               className={activeSection === 'players' ? 'active' : ''}
               onClick={() => setActiveSection('players')}
             >
@@ -4841,7 +6234,7 @@ function InternalApp() {
             the secure internal link we issued for Trinity or launch the tool from Shopify admin.
           </p>
         </section>
-      ) : backendStatus !== 'connected' ? (
+      ) : backendStatus !== 'connected' && !(crmSandboxPreviewEnabled && activeSection === 'crm') ? (
         <section className="panel inventory-panel">
           <div className="section-heading">
             <p className="eyebrow">Live sync paused</p>
@@ -6098,6 +7491,1014 @@ function InternalApp() {
             </div>
           </section>
         </section>
+      ) : activeSection === 'crm' ? (
+        <section className="crm-page">
+          <section className="panel crm-toolbar">
+            <div className="section-heading">
+              <p className="eyebrow">Sales CRM</p>
+              <h2>{crmWorkspaceViews.find((view) => view.value === activeCrmView)?.label}</h2>
+            </div>
+            <div className="crm-toolbar-actions">
+              <label className="crm-owner-selector">
+                Team member
+                <select
+                  value={crmOwnerFilter}
+                  onChange={(event) => setCrmOwnerFilter(event.target.value)}
+                >
+                  <option value="all">All team members</option>
+                  {crmOwnerOptions.map((owner) => (
+                    <option key={owner.key} value={owner.key}>
+                      {owner.label}
+                    </option>
+                  ))}
+                  <option value="unassigned">Unassigned</option>
+                </select>
+              </label>
+              <div className="crm-tab-strip" role="tablist" aria-label="CRM sections">
+                {crmWorkspaceViews.map((view) => (
+                  <button
+                    type="button"
+                    className={activeCrmView === view.value ? 'active' : ''}
+                    key={view.value}
+                    onClick={() => setActiveCrmView(view.value)}
+                  >
+                    {view.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="metrics-grid sales-dashboard-metrics" aria-label="CRM summary">
+            <article>
+              <span>Contacts</span>
+              <strong>{crmOwnerScopedSummaries.length}</strong>
+            </article>
+            <article>
+              <span>Leads</span>
+              <strong>{crmLeadSummaries.length}</strong>
+            </article>
+            <article>
+              <span>Follow-ups due</span>
+              <strong>{crmMetricTotals.dueFollowUps}</strong>
+            </article>
+            <article>
+              <span>Open value</span>
+              <strong>{formatSalesOrderMoney(crmMetricTotals.openValue)}</strong>
+            </article>
+          </section>
+
+          {crmMessage ? <p className="helper-text crm-message">{crmMessage}</p> : null}
+
+          {activeCrmView === 'new_contact' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-quick-intake" onSubmit={saveNewCrmContact}>
+                <div className="section-heading">
+                  <p className="eyebrow">New contact</p>
+                  <h2>Quick capture</h2>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Name
+                    <input
+                      value={newCrmContactDraft.name}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Team or company
+                    <input
+                      value={newCrmContactDraft.company}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          company: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Phone
+                    <input
+                      value={newCrmContactDraft.phone}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          phone: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      value={newCrmContactDraft.email}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          email: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Follow-up
+                    <input
+                      type="date"
+                      value={getCrmDateInputValue(newCrmContactDraft.followUpAt)}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          followUpAt: getCrmDateFromInput(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label className="notes-field">
+                  First note
+                  <textarea
+                    value={newCrmContactDraft.buyingContext}
+                    onChange={(event) =>
+                      setNewCrmContactDraft((current) => ({
+                        ...current,
+                        buyingContext: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <button type="submit">Save contact</button>
+              </form>
+
+              <aside className="panel crm-side-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Auto-stamped</p>
+                  <h2>Entry details</h2>
+                </div>
+                <div className="crm-stat-grid">
+                  <article>
+                    <span>Entry date</span>
+                    <strong>{formatSalesDashboardDate(new Date().toISOString())}</strong>
+                  </article>
+                  <article>
+                    <span>Owner</span>
+                    <strong>{activeCrmOwnerOption?.label ?? 'Unassigned'}</strong>
+                  </article>
+                  <article>
+                    <span>Storage</span>
+                    <strong>Sandbox</strong>
+                  </article>
+                </div>
+                <button type="button" className="secondary-button" onClick={createCrmContact}>
+                  Blank profile
+                </button>
+              </aside>
+            </section>
+          ) : activeCrmView === 'leads' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-quick-intake" onSubmit={saveNewCrmLead}>
+                <div className="section-heading">
+                  <p className="eyebrow">Leads</p>
+                  <h2>Manual lead entry</h2>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Name
+                    <input
+                      value={newCrmLeadDraft.name}
+                      onChange={(event) =>
+                        setNewCrmLeadDraft((current) => ({ ...current, name: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Team or company
+                    <input
+                      value={newCrmLeadDraft.company}
+                      onChange={(event) =>
+                        setNewCrmLeadDraft((current) => ({
+                          ...current,
+                          company: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Phone
+                    <input
+                      value={newCrmLeadDraft.phone}
+                      onChange={(event) =>
+                        setNewCrmLeadDraft((current) => ({ ...current, phone: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Follow-up
+                    <input
+                      type="date"
+                      value={getCrmDateInputValue(newCrmLeadDraft.followUpAt)}
+                      onChange={(event) =>
+                        setNewCrmLeadDraft((current) => ({
+                          ...current,
+                          followUpAt: getCrmDateFromInput(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="notes-field">
+                  Why this is promising
+                  <textarea
+                    value={newCrmLeadDraft.buyingContext}
+                    onChange={(event) =>
+                      setNewCrmLeadDraft((current) => ({
+                        ...current,
+                        buyingContext: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Next step
+                  <input
+                    value={newCrmLeadDraft.opportunities}
+                    onChange={(event) =>
+                      setNewCrmLeadDraft((current) => ({
+                        ...current,
+                        opportunities: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button type="submit">Save lead</button>
+              </form>
+
+              <section className="panel crm-list-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Lead pipeline</p>
+                  <h2>{crmLeadSummaries.length} tracked leads</h2>
+                </div>
+                <div className="crm-contact-list">
+                  {crmLeadSummaries.length === 0 ? (
+                    <p className="empty-state">No leads are being tracked yet.</p>
+                  ) : (
+                    crmLeadSummaries.map((summary) => (
+                      <button
+                        type="button"
+                        className="crm-contact-card"
+                        key={summary.contact.id}
+                        onClick={() => {
+                          setSelectedCrmContactId(summary.contact.id)
+                          setActiveCrmView('contact_list')
+                        }}
+                      >
+                        <span className={`pill crm-priority-${summary.contact.priority}`}>
+                          {getCrmPriorityLabel(summary.contact.priority)}
+                        </span>
+                        <strong>
+                          {summary.contact.name || summary.contact.company || 'Unnamed lead'}
+                        </strong>
+                        <span>{getCrmStageLabel(summary.contact.stage)}</span>
+                        <span>
+                          {summary.followUpDue
+                            ? 'Follow-up due'
+                            : summary.contact.followUpAt
+                              ? `Next ${formatSalesDashboardDate(summary.contact.followUpAt)}`
+                              : 'No follow-up set'}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </section>
+            </section>
+          ) : activeCrmView === 'engagements' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-touchpoint-form" onSubmit={addCrmTouchpoint}>
+                <div className="section-heading">
+                  <p className="eyebrow">Engagements</p>
+                  <h2>Log a call or text</h2>
+                </div>
+                <label>
+                  Contact
+                  <select
+                    value={selectedCrmSummary?.contact.id ?? ''}
+                    onChange={(event) => setSelectedCrmContactId(event.target.value)}
+                  >
+                    <option value="">Select contact</option>
+                    {crmContactSummaries.map((summary) => (
+                      <option key={summary.contact.id} value={summary.contact.id}>
+                        {summary.contact.name || summary.contact.company || summary.contact.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="form-row">
+                  <label>
+                    Type
+                    <select
+                      value={crmTouchpointDraft.type}
+                      onChange={(event) =>
+                        setCrmTouchpointDraft((current) => ({
+                          ...current,
+                          type: event.target.value as CrmTouchpointType,
+                        }))
+                      }
+                    >
+                      {crmTouchpointTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Date
+                    <input
+                      type="date"
+                      value={crmTouchpointDraft.contactedAt || getCrmTodayInputValue()}
+                      onChange={(event) =>
+                        setCrmTouchpointDraft((current) => ({
+                          ...current,
+                          contactedAt: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="notes-field">
+                  What happened
+                  <textarea
+                    value={crmTouchpointDraft.summary}
+                    onChange={(event) =>
+                      setCrmTouchpointDraft((current) => ({
+                        ...current,
+                        summary: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="notes-field">
+                  Next step
+                  <textarea
+                    value={crmTouchpointDraft.nextStep}
+                    onChange={(event) =>
+                      setCrmTouchpointDraft((current) => ({
+                        ...current,
+                        nextStep: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Follow-up
+                  <input
+                    type="date"
+                    value={crmTouchpointDraft.nextFollowUpAt}
+                    onChange={(event) =>
+                      setCrmTouchpointDraft((current) => ({
+                        ...current,
+                        nextFollowUpAt: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button type="submit">Save engagement</button>
+              </form>
+
+              <section className="panel crm-detail-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Engagement history</p>
+                  <h2>{crmEngagements.length} logged entries</h2>
+                </div>
+                <div className="crm-engagement-layout">
+                  <div className="crm-engagement-list">
+                    {crmEngagements.length === 0 ? (
+                      <p className="empty-state">No calls, texts, or notes logged yet.</p>
+                    ) : (
+                      crmEngagements.map(({ contact, touchpoint }) => (
+                        <button
+                          type="button"
+                          className={`crm-engagement-row ${
+                            selectedCrmEngagement?.touchpoint.id === touchpoint.id ? 'active' : ''
+                          }`}
+                          key={touchpoint.id}
+                          onClick={() => setSelectedCrmEngagementId(touchpoint.id)}
+                        >
+                          <span>{getCrmTouchpointTypeLabel(touchpoint.type)}</span>
+                          <strong>{contact.name || contact.company || 'Unnamed contact'}</strong>
+                          <p>{touchpoint.summary}</p>
+                          <small>{formatSalesDashboardDate(touchpoint.contactedAt)}</small>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {selectedCrmEngagement ? (
+                    <article className="crm-engagement-detail">
+                      <span className="profile-type-pill">
+                        {getCrmTouchpointTypeLabel(selectedCrmEngagement.touchpoint.type)}
+                      </span>
+                      <h3>
+                        {selectedCrmEngagement.contact.name ||
+                          selectedCrmEngagement.contact.company ||
+                          'Unnamed contact'}
+                      </h3>
+                      <p>{formatOrderDateTime(selectedCrmEngagement.touchpoint.contactedAt)}</p>
+                      <p>{selectedCrmEngagement.touchpoint.summary}</p>
+                      {selectedCrmEngagement.touchpoint.nextStep ? (
+                        <p>Next: {selectedCrmEngagement.touchpoint.nextStep}</p>
+                      ) : null}
+                      {selectedCrmEngagement.touchpoint.nextFollowUpAt ? (
+                        <p>
+                          Follow-up:{' '}
+                          {formatSalesDashboardDate(selectedCrmEngagement.touchpoint.nextFollowUpAt)}
+                        </p>
+                      ) : null}
+                    </article>
+                  ) : null}
+                </div>
+              </section>
+            </section>
+          ) : activeCrmView === 'assistant' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-assistant-panel" onSubmit={applyCrmAssistantRequest}>
+                <div className="section-heading">
+                  <p className="eyebrow">CRM assistant</p>
+                  <h2>Describe the update</h2>
+                </div>
+                <label className="notes-field">
+                  Natural-language entry
+                  <textarea
+                    value={crmAssistantInput}
+                    onChange={(event) => setCrmAssistantInput(event.target.value)}
+                  />
+                </label>
+                <button type="submit">Store CRM update</button>
+              </form>
+              <section className="panel crm-side-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Assistant result</p>
+                  <h2>Structured save</h2>
+                </div>
+                <p className="empty-state">{crmAssistantResult || 'No assistant update saved yet.'}</p>
+              </section>
+            </section>
+          ) : (
+          <section className="crm-layout">
+            <section className="panel crm-list-panel">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">Book of business</p>
+                  <h2>{filteredCrmSummaries.length} contacts</h2>
+                </div>
+                <div className="dashboard-total-chip">
+                  <span>Repeat buyers</span>
+                  <strong>{crmMetricTotals.repeatCustomers}</strong>
+                </div>
+              </div>
+
+              <div className="crm-filter-row">
+                <input
+                  aria-label="Search CRM contacts"
+                  placeholder="Search customer, team, player..."
+                  value={crmQuery}
+                  onChange={(event) => setCrmQuery(event.target.value)}
+                />
+                <select
+                  aria-label="Filter CRM stage"
+                  value={crmStageFilter}
+                  onChange={(event) => setCrmStageFilter(event.target.value as 'all' | CrmStage)}
+                >
+                  <option value="all">All stages</option>
+                  {crmStageOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="crm-contact-list">
+                {filteredCrmSummaries.length === 0 ? (
+                  <p className="empty-state">No CRM contacts match this view yet.</p>
+                ) : (
+                  filteredCrmSummaries.map((summary) => (
+                    <button
+                      type="button"
+                      className={`crm-contact-card ${
+                        selectedCrmSummary?.contact.id === summary.contact.id ? 'active' : ''
+                      }`}
+                      key={summary.contact.id}
+                      onClick={() => {
+                        setSelectedCrmContactId(summary.contact.id)
+                        setCrmTouchpointDraft({
+                          ...emptyCrmTouchpointDraft(),
+                          salesRep: summary.contact.salesOwner,
+                        })
+                      }}
+                    >
+                      <span className={`pill crm-priority-${summary.contact.priority}`}>
+                        {getCrmPriorityLabel(summary.contact.priority)}
+                      </span>
+                      <strong>{summary.contact.name || summary.contact.company || 'Unnamed contact'}</strong>
+                      <span>{summary.contact.company || summary.contact.email || 'No company saved'}</span>
+                      <span>
+                        {getCrmStageLabel(summary.contact.stage)} ·{' '}
+                        {summary.orderCount} order{summary.orderCount === 1 ? '' : 's'}
+                      </span>
+                      <span>
+                        {summary.followUpDue
+                          ? 'Follow-up due'
+                          : summary.contact.followUpAt
+                            ? `Next ${formatSalesDashboardDate(summary.contact.followUpAt)}`
+                            : 'No follow-up set'}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="panel crm-detail-panel">
+              {selectedCrmSummary ? (
+                <>
+                  <div className="crm-detail-header">
+                    <div>
+                      <p className="eyebrow">
+                        {selectedCrmSummary.derivedFromOrders ? 'Order-derived profile' : 'Sandbox CRM profile'}
+                      </p>
+                      <h2>
+                        {selectedCrmSummary.contact.name ||
+                          selectedCrmSummary.contact.company ||
+                          'Unnamed contact'}
+                      </h2>
+                      <p>
+                        {selectedCrmSummary.contact.company || 'No company saved'} ·{' '}
+                        {selectedCrmSummary.contact.salesOwner || 'No owner assigned'}
+                      </p>
+                    </div>
+                    <div className="crm-header-actions">
+                      <span className="profile-type-pill">Sandbox only</span>
+                      <span className={`pill crm-priority-${selectedCrmSummary.contact.priority}`}>
+                        {getCrmPriorityLabel(selectedCrmSummary.contact.priority)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {crmMessage ? <p className="helper-text">{crmMessage}</p> : null}
+
+                  <div className="crm-detail-grid">
+                    <section className="crm-profile-editor">
+                      <div className="form-row">
+                        <label>
+                          Customer name
+                          <input
+                            value={selectedCrmSummary.contact.name}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ name: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Team, agency, or company
+                          <input
+                            value={selectedCrmSummary.contact.company}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ company: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Role or relationship
+                          <input
+                            value={selectedCrmSummary.contact.role}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ role: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Preferred contact
+                          <select
+                            value={selectedCrmSummary.contact.preferredContactMethod}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({
+                                preferredContactMethod: event.target.value,
+                              })
+                            }
+                          >
+                            {crmContactMethodOptions.map((method) => (
+                              <option key={method}>{method}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Email
+                          <input
+                            type="email"
+                            value={selectedCrmSummary.contact.email}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ email: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Phone
+                          <input
+                            value={selectedCrmSummary.contact.phone}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ phone: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <label>
+                        Alternate contacts
+                        <input
+                          value={selectedCrmSummary.contact.alternateContacts}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ alternateContacts: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <div className="form-row">
+                        <label>
+                          Sales owner
+                          <input
+                            value={selectedCrmSummary.contact.salesOwner}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ salesOwner: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Owner email
+                          <input
+                            type="email"
+                            value={selectedCrmSummary.contact.ownerEmail}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ ownerEmail: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Stage
+                          <select
+                            value={selectedCrmSummary.contact.stage}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ stage: event.target.value as CrmStage })
+                            }
+                          >
+                            {crmStageOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Priority
+                          <select
+                            value={selectedCrmSummary.contact.priority}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({
+                                priority: event.target.value as CrmPriority,
+                              })
+                            }
+                          >
+                            {crmPriorityOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Source
+                          <input
+                            value={selectedCrmSummary.contact.source}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ source: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Next follow-up
+                          <input
+                            type="date"
+                            value={getCrmDateInputValue(selectedCrmSummary.contact.followUpAt)}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({
+                                followUpAt: getCrmDateFromInput(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <label>
+                        Players tied to this buyer
+                        <input
+                          value={selectedCrmSummary.contact.playerNames.join(', ')}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({
+                              playerNames: normalizeCrmList(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        Tags
+                        <input
+                          value={selectedCrmSummary.contact.tags.join(', ')}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ tags: normalizeCrmList(event.target.value) })
+                          }
+                        />
+                      </label>
+
+                      <label className="notes-field">
+                        Buying context
+                        <textarea
+                          value={selectedCrmSummary.contact.buyingContext}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ buyingContext: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="notes-field">
+                        Bat preferences
+                        <textarea
+                          value={selectedCrmSummary.contact.batPreferences}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ batPreferences: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="notes-field">
+                        Relationship notes
+                        <textarea
+                          value={selectedCrmSummary.contact.relationshipNotes}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ relationshipNotes: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <div className="form-row">
+                        <label className="notes-field">
+                          Objections or concerns
+                          <textarea
+                            value={selectedCrmSummary.contact.objections}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ objections: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="notes-field">
+                          Opportunities
+                          <textarea
+                            value={selectedCrmSummary.contact.opportunities}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ opportunities: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+                    </section>
+
+                    <aside className="crm-intelligence-panel">
+                      <div className="crm-stat-grid">
+                        <article>
+                          <span>Orders</span>
+                          <strong>{selectedCrmSummary.orderCount}</strong>
+                        </article>
+                        <article>
+                          <span>Paid value</span>
+                          <strong>{formatSalesOrderMoney(selectedCrmSummary.paidValue)}</strong>
+                        </article>
+                        <article>
+                          <span>Open value</span>
+                          <strong>{formatSalesOrderMoney(selectedCrmSummary.openValue)}</strong>
+                        </article>
+                        <article>
+                          <span>Open invoices</span>
+                          <strong>{selectedCrmSummary.openInvoiceCount}</strong>
+                        </article>
+                      </div>
+
+                      <form className="crm-touchpoint-form" onSubmit={addCrmTouchpoint}>
+                        <div className="section-heading">
+                          <p className="eyebrow">Log touchpoint</p>
+                          <h2>Conversation note</h2>
+                        </div>
+                        <div className="form-row">
+                          <label>
+                            Type
+                            <select
+                              value={crmTouchpointDraft.type}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  type: event.target.value as CrmTouchpointType,
+                                }))
+                              }
+                            >
+                              {crmTouchpointTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Date
+                            <input
+                              type="date"
+                              value={crmTouchpointDraft.contactedAt}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  contactedAt: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                        <label className="notes-field">
+                          Summary
+                          <textarea
+                            value={crmTouchpointDraft.summary}
+                            onChange={(event) =>
+                              setCrmTouchpointDraft((current) => ({
+                                ...current,
+                                summary: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="notes-field">
+                          Next step
+                          <textarea
+                            value={crmTouchpointDraft.nextStep}
+                            onChange={(event) =>
+                              setCrmTouchpointDraft((current) => ({
+                                ...current,
+                                nextStep: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <div className="form-row">
+                          <label>
+                            Follow-up date
+                            <input
+                              type="date"
+                              value={crmTouchpointDraft.nextFollowUpAt}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  nextFollowUpAt: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            Related order
+                            <select
+                              value={crmTouchpointDraft.relatedOrderId}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  relatedOrderId: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">No related order</option>
+                              {selectedCrmSummary.orders.map((job) => (
+                                <option key={job.id} value={job.id}>
+                                  {job.shopifyOrderName ||
+                                    job.shopifyDraftOrderName ||
+                                    job.productTitle ||
+                                    job.id}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <button type="submit">Save touchpoint</button>
+                      </form>
+                    </aside>
+                  </div>
+
+                  <section className="crm-history-grid">
+                    <div className="crm-history-column">
+                      <div className="section-heading">
+                        <p className="eyebrow">Timeline</p>
+                        <h2>Touchpoints</h2>
+                      </div>
+                      <div className="crm-timeline">
+                        {selectedCrmSummary.contact.touchpoints.length === 0 ? (
+                          <p className="empty-state">No logged touchpoints for this profile yet.</p>
+                        ) : (
+                          selectedCrmSummary.contact.touchpoints.map((touchpoint) => (
+                            <button
+                              type="button"
+                              className="crm-engagement-row"
+                              key={touchpoint.id}
+                              onClick={() => {
+                                setSelectedCrmEngagementId(touchpoint.id)
+                                setActiveCrmView('engagements')
+                              }}
+                            >
+                              <span>{getCrmTouchpointTypeLabel(touchpoint.type)}</span>
+                              <strong>{formatOrderDateTime(touchpoint.contactedAt)}</strong>
+                              <p>{touchpoint.summary}</p>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="crm-history-column">
+                      <div className="section-heading">
+                        <p className="eyebrow">Order history</p>
+                        <h2>Past orders and invoices</h2>
+                      </div>
+                      <div className="crm-order-history">
+                        {selectedCrmSummary.orders.length === 0 ? (
+                          <p className="empty-state">No linked Trinity orders yet.</p>
+                        ) : (
+                          selectedCrmSummary.orders.map((job) => (
+                            <article className="sales-dashboard-card" key={job.id}>
+                              <div>
+                                <span className={`pill ${isSalesDashboardPaid(job) ? 'yes' : ''}`}>
+                                  {isSalesDashboardPaid(job)
+                                    ? 'Paid'
+                                    : invoiceStatusLabels[job.invoiceStatus]}
+                                </span>
+                                <h3>
+                                  {job.shopifyOrderName ||
+                                    job.shopifyDraftOrderName ||
+                                    'Unnumbered order'}
+                                </h3>
+                                <p>
+                                  {job.productTitle || 'Custom bat'} · {job.specs.model || 'No model'} ·{' '}
+                                  {job.specs.wood || 'No wood saved'}
+                                </p>
+                              </div>
+                              <div className="sales-card-values">
+                                <strong>{formatSalesOrderMoney(getSalesDashboardLineValue(job))}</strong>
+                                <span>{formatSalesDashboardDate(job.orderSubmittedAt || job.createdAt)}</span>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                </>
+              ) : (
+                <p className="empty-state">Create a customer or import order history to start the CRM.</p>
+              )}
+            </section>
+          </section>
+          )}
+        </section>
       ) : activeSection === 'players' ? (
         <section className="profiles-page">
           <section className="panel profile-entry-panel">
@@ -6848,10 +9249,769 @@ function InternalApp() {
   )
 }
 
+function SalesPortalApp() {
+  const [session, setSession] = useState<SalesPortalSession | null>(() => {
+    const stored = window.localStorage.getItem(salesPortalSessionStorageKey)
+    return stored ? (JSON.parse(stored) as SalesPortalSession) : null
+  })
+  const [loginEmail, setLoginEmail] = useState(session?.email ?? '')
+  const [loginMessage, setLoginMessage] = useState('')
+  const [activeView, setActiveView] = useState<SalesPortalView>('crm')
+  const [adminOwnerFilter, setAdminOwnerFilter] = useState('all')
+  const [crmSearchQuery, setCrmSearchQuery] = useState('')
+  const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
+    const stored = window.localStorage.getItem(crmContactStorageKey)
+    return stored ? (JSON.parse(stored) as CrmContact[]).map((contact) => normalizeCrmContact(contact)) : []
+  })
+  const [portalOrders, setPortalOrders] = useState<SalesPortalOrder[]>(() => {
+    const stored = window.localStorage.getItem(salesPortalOrderStorageKey)
+    return stored ? (JSON.parse(stored) as SalesPortalOrder[]) : []
+  })
+  const [orderDraft, setOrderDraft] = useState<SalesOrderDraft>(() => emptySalesOrderDraft())
+  const [orderAttachmentFile, setOrderAttachmentFile] = useState<File | null>(null)
+  const [portalMessage, setPortalMessage] = useState('')
+  const [selectedContactId, setSelectedContactId] = useState('')
+  const [touchpointDraft, setTouchpointDraft] = useState<CrmTouchpointDraft>(() =>
+    emptyCrmTouchpointDraft(),
+  )
+  const [newContactDraft, setNewContactDraft] = useState<CrmContact>(() => emptyCrmContact())
+  const [reportStartDate, setReportStartDate] = useState(() => {
+    const date = new Date()
+    date.setDate(date.getDate() - 6)
+    return date.toISOString().slice(0, 10)
+  })
+  const [reportEndDate, setReportEndDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [reportTypeFilter, setReportTypeFilter] = useState<'all' | CrmTouchpointType>('all')
+
+  const portalOwner = session ? getSalesPortalOwnerForEmail(session.email) : null
+  const isAdmin = Boolean(session && salesPortalAdminEmails.has(normalizeTrinityEmail(session.email)))
+  const portalOwnerOptions = useMemo(() => {
+    const owners = new Map<string, CrmOwnerOption>(
+      seedCrmOwnerOptions.map((owner) => [owner.key, owner]),
+    )
+    for (const contact of crmContacts) {
+      const option = createCrmOwnerOption(contact.salesOwner, contact.ownerEmail)
+      if (option) owners.set(option.key, option)
+    }
+    return Array.from(owners.values()).sort((a, b) => compareText(a.label, b.label))
+  }, [crmContacts])
+  const activeScopeOwner =
+    isAdmin && adminOwnerFilter !== 'all'
+      ? portalOwnerOptions.find((owner) => owner.key === adminOwnerFilter) ?? null
+      : portalOwner
+  const crmDirectory = useMemo(
+    () => buildCrmContactDirectory(crmContacts, [], []),
+    [crmContacts],
+  )
+  const crmContactSummaries = useMemo(
+    () => buildCrmContactSummaries(crmDirectory, []),
+    [crmDirectory],
+  )
+  const visibleContactSummaries = useMemo(
+    () =>
+      crmContactSummaries.filter((summary) => {
+        if (isAdmin && adminOwnerFilter === 'all') return true
+        if (!activeScopeOwner) return false
+        return isCrmSummaryOwnedBy(summary, activeScopeOwner)
+      }),
+    [activeScopeOwner, adminOwnerFilter, crmContactSummaries, isAdmin],
+  )
+  const visibleOrders = useMemo(
+    () =>
+      portalOrders.filter((order) => {
+        if (isAdmin && adminOwnerFilter === 'all') return true
+        if (!activeScopeOwner) return false
+        return isSalesPortalOrderOwnedBy(order, activeScopeOwner)
+      }),
+    [activeScopeOwner, adminOwnerFilter, isAdmin, portalOrders],
+  )
+  const searchedContactSummaries = useMemo(() => {
+    const normalizedQuery = normalizeCrmSearchText(crmSearchQuery)
+    return visibleContactSummaries.filter((summary) =>
+      salesPortalContactMatchesSearch(summary, visibleOrders, normalizedQuery),
+    )
+  }, [crmSearchQuery, visibleContactSummaries, visibleOrders])
+  const selectedSummary =
+    searchedContactSummaries.find((summary) => summary.contact.id === selectedContactId) ??
+    searchedContactSummaries[0] ??
+    null
+  const visibleEngagements = useMemo(
+    () =>
+      visibleContactSummaries
+        .flatMap((summary) =>
+          summary.contact.touchpoints.map((touchpoint) => ({
+            contact: summary.contact,
+            touchpoint,
+          })),
+        )
+        .sort(
+          (first, second) =>
+            getDateTimestamp(second.touchpoint.contactedAt) -
+            getDateTimestamp(first.touchpoint.contactedAt),
+        ),
+    [visibleContactSummaries],
+  )
+  const reportDateWindow = useMemo(() => {
+    const start = getDateTimestamp(getCrmDateFromInput(reportStartDate))
+    const end = getDateTimestamp(getCrmDateFromInput(reportEndDate)) + 24 * 60 * 60 * 1000 - 1
+    return { start, end }
+  }, [reportEndDate, reportStartDate])
+
+  const reportEngagements = useMemo(() => {
+    return visibleEngagements.filter(({ touchpoint }) => {
+      const timestamp = getDateTimestamp(touchpoint.contactedAt)
+      const matchesType = reportTypeFilter === 'all' || touchpoint.type === reportTypeFilter
+      return matchesType && timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+    })
+  }, [reportDateWindow, reportTypeFilter, visibleEngagements])
+  const reportOrders = useMemo(
+    () =>
+      visibleOrders.filter((order) => {
+        const timestamp = getDateTimestamp(order.submittedAt)
+        return timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+      }),
+    [reportDateWindow, visibleOrders],
+  )
+  const reportNewContacts = useMemo(
+    () =>
+      visibleContactSummaries.filter((summary) => {
+        const timestamp = getDateTimestamp(summary.contact.createdAt)
+        return timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+      }),
+    [reportDateWindow, visibleContactSummaries],
+  )
+  const activeLeadCount = useMemo(
+    () =>
+      visibleContactSummaries.filter((summary) =>
+        ['lead', 'qualified', 'quoted', 'invoice_sent', 'nurture'].includes(summary.contact.stage),
+      ).length,
+    [visibleContactSummaries],
+  )
+  const reportRevenue = useMemo(
+    () => reportOrders.reduce((total, order) => total + order.total, 0),
+    [reportOrders],
+  )
+  const conversionRate =
+    reportNewContacts.length > 0 ? Math.round((reportOrders.length / reportNewContacts.length) * 100) : 0
+  const reportCountsByType = useMemo(() => {
+    const counts = new Map<CrmTouchpointType, number>()
+    for (const { touchpoint } of reportEngagements) {
+      counts.set(touchpoint.type, (counts.get(touchpoint.type) ?? 0) + 1)
+    }
+    return crmTouchpointTypeOptions.map((option) => ({
+      ...option,
+      count: counts.get(option.value) ?? 0,
+    }))
+  }, [reportEngagements])
+  const reportCountsByRep = useMemo(() => {
+    const counts = new Map<string, { label: string; count: number }>()
+    for (const { contact, touchpoint } of reportEngagements) {
+      const label = touchpoint.salesRep || contact.salesOwner || 'Unassigned'
+      counts.set(label, { label, count: (counts.get(label)?.count ?? 0) + 1 })
+    }
+    return Array.from(counts.values()).sort((a, b) => b.count - a.count)
+  }, [reportEngagements])
+
+  useEffect(() => {
+    if (session) {
+      window.localStorage.setItem(salesPortalSessionStorageKey, JSON.stringify(session))
+    } else {
+      window.localStorage.removeItem(salesPortalSessionStorageKey)
+    }
+  }, [session])
+
+  useEffect(() => {
+    window.localStorage.setItem(crmContactStorageKey, JSON.stringify(crmContacts))
+  }, [crmContacts])
+
+  useEffect(() => {
+    window.localStorage.setItem(salesPortalOrderStorageKey, JSON.stringify(portalOrders))
+  }, [portalOrders])
+
+  function loginToPortal(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const email = normalizeTrinityEmail(loginEmail)
+    if (!isTrinityEmail(email)) {
+      setLoginMessage('Use a Trinity email address ending in @trinitybats.com.')
+      return
+    }
+    setSession({ email, loggedInAt: new Date().toISOString() })
+    setLoginMessage('')
+  }
+
+  function savePortalCrmContact(contact: CrmContact) {
+    const normalized = normalizeCrmContact({
+      ...contact,
+      updatedAt: new Date().toISOString(),
+      sandboxOnly: true,
+    })
+    setCrmContacts((current) => {
+      const existingIndex = current.findIndex(
+        (savedContact) =>
+          savedContact.id === normalized.id || hasSharedCrmIdentity(savedContact, normalized),
+      )
+      if (existingIndex === -1) return [...current, normalized]
+      return current.map((savedContact, index) =>
+        index === existingIndex ? mergeCrmContacts(normalized, savedContact) : savedContact,
+      )
+    })
+    setSelectedContactId(normalized.id)
+    return normalized
+  }
+
+  function savePortalNewContact(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!portalOwner) return
+    if (!newContactDraft.name.trim() && !newContactDraft.company.trim()) {
+      setPortalMessage('Add a name or company before saving.')
+      return
+    }
+    const now = new Date().toISOString()
+    const contact = savePortalCrmContact({
+      ...newContactDraft,
+      salesOwner: portalOwner.name,
+      ownerEmail: portalOwner.email,
+      source: newContactDraft.source || 'Sales portal',
+      createdAt: newContactDraft.createdAt || now,
+      updatedAt: now,
+    })
+    setNewContactDraft({
+      ...emptyCrmContact(),
+      salesOwner: portalOwner.name,
+      ownerEmail: portalOwner.email,
+    })
+    setSelectedContactId(contact.id)
+    setPortalMessage('Contact saved.')
+  }
+
+  function startPortalOrderForContact(contact: CrmContact) {
+    if (!portalOwner) return
+    setOrderDraft({
+      ...emptySalesOrderDraft(),
+      playerName: contact.playerNames[0] || contact.name,
+      playerEmail: contact.email,
+      playerPhone: contact.phone,
+      billingDifferent: Boolean(contact.company),
+      billingName: contact.name,
+      billingEmail: contact.email,
+      billingPhone: contact.phone,
+      billingCompany: contact.company,
+      billingRelationship: contact.role,
+      salesRep: portalOwner.name,
+      salesRepEmail: portalOwner.email,
+      notes: contact.buyingContext,
+    })
+    setSelectedContactId(contact.id)
+    setActiveView('order_form')
+  }
+
+  function updatePortalSalesDraftField<K extends keyof SalesOrderDraft>(
+    key: K,
+    value: SalesOrderDraft[K],
+  ) {
+    setOrderDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function updatePortalSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
+    setOrderDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+    }))
+  }
+
+  function submitPortalOrder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!portalOwner) return
+    const draft = {
+      ...cloneSalesOrderDraft(orderDraft),
+      salesRep: portalOwner.name,
+      salesRepEmail: portalOwner.email,
+    }
+    if (hasInvalidSalesOrderDraft(draft)) {
+      setPortalMessage('Add player, payer email, payer phone, shipping info, bat model, and price.')
+      return
+    }
+    const contact = savePortalCrmContact(createCrmContactFromSalesPortalDraft(draft, portalOwner))
+    const order = createSalesPortalOrder(draft, portalOwner, contact.id)
+    setPortalOrders((current) => [order, ...current])
+    setOrderDraft({
+      ...emptySalesOrderDraft(),
+      salesRep: portalOwner.name,
+      salesRepEmail: portalOwner.email,
+    })
+    setOrderAttachmentFile(null)
+    setSelectedContactId(contact.id)
+    setActiveView('orders')
+    setPortalMessage('Order saved locally to this sales portal sandbox.')
+  }
+
+  function savePortalEngagement(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedSummary || !portalOwner) return
+    if (!touchpointDraft.summary.trim()) {
+      setPortalMessage('Add a summary before saving the engagement.')
+      return
+    }
+    const touchpoint = normalizeCrmTouchpoint({
+      id: createId('portal-touchpoint'),
+      type: touchpointDraft.type,
+      contactedAt: getCrmDateFromInput(touchpointDraft.contactedAt) || new Date().toISOString(),
+      salesRep: portalOwner.name,
+      summary: touchpointDraft.summary,
+      sentiment: '',
+      nextStep: touchpointDraft.nextStep,
+      nextFollowUpAt: getCrmDateFromInput(touchpointDraft.nextFollowUpAt),
+      relatedOrderId: touchpointDraft.relatedOrderId,
+    })
+    savePortalCrmContact({
+      ...selectedSummary.contact,
+      salesOwner: selectedSummary.contact.salesOwner || portalOwner.name,
+      ownerEmail: selectedSummary.contact.ownerEmail || portalOwner.email,
+      lastContactedAt: touchpoint.contactedAt,
+      followUpAt: touchpoint.nextFollowUpAt || selectedSummary.contact.followUpAt,
+      touchpoints: [touchpoint, ...selectedSummary.contact.touchpoints],
+    })
+    setTouchpointDraft({ ...emptyCrmTouchpointDraft(), salesRep: portalOwner.name })
+    setPortalMessage('Engagement saved.')
+  }
+
+  if (!session || !portalOwner) {
+    return (
+      <main className="sales-portal-shell">
+        <section className="panel sales-portal-login">
+          <div className="sales-portal-login-brand">
+            <img src="/trinity-logo-cropped.png" alt="Trinity Bat Company" className="sales-portal-logo" />
+            <div className="section-heading">
+              <p className="eyebrow">Trinity Bat Co.</p>
+              <h1>Sales portal</h1>
+            </div>
+          </div>
+          <form className="bat-form" onSubmit={loginToPortal}>
+            <label>
+              Trinity email
+              <input
+                type="email"
+                value={loginEmail}
+                placeholder="name@trinitybats.com"
+                onChange={(event) => setLoginEmail(event.target.value)}
+              />
+            </label>
+            <button type="submit">Continue</button>
+          </form>
+          {loginMessage ? <p className="helper-text">{loginMessage}</p> : null}
+        </section>
+      </main>
+    )
+  }
+
+  return (
+    <main className="sales-portal-shell">
+      <section className="panel sales-portal-header">
+        <div className="sales-portal-brand-lockup">
+          <img src="/trinity-logo-cropped.png" alt="Trinity Bat Company" className="sales-portal-logo" />
+          <div className="section-heading sales-portal-brand-copy">
+            <p className="eyebrow">Trinity Bat Co.</p>
+            <h1>{portalOwner.label}</h1>
+            <p className="sales-portal-brand-line">Sales CRM and order entry</p>
+          </div>
+        </div>
+        <div className="sales-portal-session">
+          {isAdmin ? (
+            <label>
+              View
+              <select value={adminOwnerFilter} onChange={(event) => setAdminOwnerFilter(event.target.value)}>
+                <option value="all">Full team</option>
+                {portalOwnerOptions.map((owner) => (
+                  <option key={owner.key} value={owner.key}>
+                    {owner.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button sales-portal-signout"
+            onClick={() => setSession(null)}
+          >
+            Sign out
+          </button>
+        </div>
+        <nav className="crm-tab-strip sales-portal-nav" aria-label="Sales portal sections">
+          {salesPortalViews
+            .filter((view) => !view.adminOnly || isAdmin)
+            .map((view) => (
+              <button
+                type="button"
+                className={activeView === view.value ? 'active' : ''}
+                key={view.value}
+                onClick={() => setActiveView(view.value)}
+              >
+                {view.label}
+              </button>
+            ))}
+        </nav>
+      </section>
+
+      {portalMessage ? <p className="helper-text crm-message">{portalMessage}</p> : null}
+
+      {activeView === 'crm' ? (
+        <section className="sales-portal-crm-layout">
+          <aside className="sales-portal-crm-sidebar" aria-label="CRM intake and contacts">
+            <form className="panel crm-quick-intake" onSubmit={savePortalNewContact}>
+              <div className="section-heading">
+                <p className="eyebrow">CRM</p>
+                <h2>New contact</h2>
+              </div>
+              <div className="form-row">
+                <label>
+                  Name
+                  <input
+                    value={newContactDraft.name}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, name: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Company
+                  <input
+                    value={newContactDraft.company}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, company: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Phone
+                  <input
+                    value={newContactDraft.phone}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, phone: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={newContactDraft.email}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, email: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+              <label className="notes-field">
+                Summary
+                <textarea
+                  value={newContactDraft.buyingContext}
+                  onChange={(event) =>
+                    setNewContactDraft((current) => ({ ...current, buyingContext: event.target.value }))
+                  }
+                />
+              </label>
+              <button type="submit">Save contact</button>
+            </form>
+
+            <section className="panel crm-list-panel">
+              <div className="section-heading">
+                <p className="eyebrow">Contacts</p>
+                <h2>{searchedContactSummaries.length} visible</h2>
+              </div>
+              <label className="sales-portal-search">
+                Search CRM
+                <input
+                  type="search"
+                  value={crmSearchQuery}
+                  placeholder="Search names, teams, players, notes, bat specs..."
+                  onChange={(event) => setCrmSearchQuery(event.target.value)}
+                />
+              </label>
+              <div className="crm-contact-list">
+                {searchedContactSummaries.length === 0 ? (
+                  <p className="empty-state">
+                    {crmSearchQuery.trim() ? 'No contacts match that search.' : 'No contacts yet.'}
+                  </p>
+                ) : (
+                  searchedContactSummaries.map((summary) => (
+                    <button
+                      type="button"
+                      className={`crm-contact-card ${selectedSummary?.contact.id === summary.contact.id ? 'active' : ''}`}
+                      key={summary.contact.id}
+                      onClick={() => setSelectedContactId(summary.contact.id)}
+                    >
+                      <span className={`pill crm-priority-${summary.contact.priority}`}>
+                        {getCrmPriorityLabel(summary.contact.priority)}
+                      </span>
+                      <strong>{summary.contact.name || summary.contact.company || 'Unnamed contact'}</strong>
+                      <span>{summary.contact.company || summary.contact.email || summary.contact.phone}</span>
+                      <span>{summary.contact.salesOwner || 'Unassigned'}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </section>
+          </aside>
+
+          <section className="panel crm-detail-panel sales-portal-crm-main">
+            {selectedSummary ? (
+              <>
+                <div className="crm-detail-header">
+                  <div>
+                    <p className="eyebrow">Selected contact</p>
+                    <h2>{selectedSummary.contact.name || selectedSummary.contact.company}</h2>
+                    <p>{selectedSummary.contact.email || selectedSummary.contact.phone || 'No contact method saved'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => startPortalOrderForContact(selectedSummary.contact)}
+                  >
+                    Start order
+                  </button>
+                </div>
+                <form className="crm-touchpoint-form" onSubmit={savePortalEngagement}>
+                  <div className="section-heading">
+                    <p className="eyebrow">Engagement</p>
+                    <h2>Log activity</h2>
+                  </div>
+                  <div className="form-row">
+                    <label>
+                      Type
+                      <select
+                        value={touchpointDraft.type}
+                        onChange={(event) =>
+                          setTouchpointDraft((current) => ({
+                            ...current,
+                            type: event.target.value as CrmTouchpointType,
+                          }))
+                        }
+                      >
+                        {crmTouchpointTypeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Date
+                      <input
+                        type="date"
+                        value={touchpointDraft.contactedAt || getCrmTodayInputValue()}
+                        onChange={(event) =>
+                          setTouchpointDraft((current) => ({
+                            ...current,
+                            contactedAt: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="notes-field">
+                    Summary
+                    <textarea
+                      value={touchpointDraft.summary}
+                      onChange={(event) =>
+                        setTouchpointDraft((current) => ({ ...current, summary: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="notes-field">
+                    Next step
+                    <textarea
+                      value={touchpointDraft.nextStep}
+                      onChange={(event) =>
+                        setTouchpointDraft((current) => ({ ...current, nextStep: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <button type="submit">Save engagement</button>
+                </form>
+              </>
+            ) : (
+              <p className="empty-state">Select a contact to log activity or start an order.</p>
+            )}
+          </section>
+        </section>
+      ) : null}
+
+      {activeView === 'order_form' ? (
+        <section className="panel crm-detail-panel">
+          <form className="bat-form order-intake-form" onSubmit={submitPortalOrder}>
+            <div className="section-heading">
+              <p className="eyebrow">Order form</p>
+              <h2>Sales order</h2>
+            </div>
+            <datalist id="portal-shopify-bat-products"></datalist>
+            <SalesOrderFormFields
+              draft={orderDraft}
+              setDraft={setOrderDraft}
+              updateField={updatePortalSalesDraftField}
+              updateLine={updatePortalSalesLine}
+              addLine={() =>
+                setOrderDraft((current) => ({
+                  ...current,
+                  lines: [...current.lines, emptySalesLine()],
+                }))
+              }
+              removeLine={(id) =>
+                setOrderDraft((current) => ({
+                  ...current,
+                  lines: current.lines.filter((line) => line.id !== id),
+                }))
+              }
+              shopifyCatalog={[]}
+              productDatalistId="portal-shopify-bat-products"
+              attachmentFile={orderAttachmentFile}
+              setAttachmentFile={setOrderAttachmentFile}
+              isSubmitting={false}
+              hideSalesRepFields
+            />
+          </form>
+        </section>
+      ) : null}
+
+      {activeView === 'orders' ? (
+        <section className="panel crm-list-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Orders</p>
+            <h2>{visibleOrders.length} visible</h2>
+          </div>
+          <div className="sales-dashboard-list">
+            {visibleOrders.length === 0 ? (
+              <p className="empty-state">No portal orders saved yet.</p>
+            ) : (
+              visibleOrders.map((order) => (
+                <article className="sales-dashboard-card" key={order.id}>
+                  <div>
+                    <span className="profile-type-pill">{order.ownerName}</span>
+                    <h3>{order.payerName || order.playerName || 'Unnamed order'}</h3>
+                    <p>
+                      {order.draft.lines.map((line) => line.title || 'Custom bat').join(', ')}
+                    </p>
+                  </div>
+                  <div className="sales-card-values">
+                    <strong>{formatSalesOrderMoney(order.total)}</strong>
+                    <span>{formatSalesDashboardDate(order.submittedAt)}</span>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === 'reports' ? (
+        <section className="sales-portal-report-layout">
+          <section className="panel crm-side-panel">
+            <div className="section-heading">
+              <p className="eyebrow">{isAdmin ? 'Admin report' : 'My report'}</p>
+              <h2>Activity counts</h2>
+            </div>
+            <div className="form-row">
+              <label>
+                Start
+                <input
+                  type="date"
+                  value={reportStartDate}
+                  onChange={(event) => setReportStartDate(event.target.value)}
+                />
+              </label>
+              <label>
+                End
+                <input
+                  type="date"
+                  value={reportEndDate}
+                  onChange={(event) => setReportEndDate(event.target.value)}
+                />
+              </label>
+            </div>
+            <label>
+              Activity type
+              <select
+                value={reportTypeFilter}
+                onChange={(event) => setReportTypeFilter(event.target.value as 'all' | CrmTouchpointType)}
+              >
+                <option value="all">All activity</option>
+                {crmTouchpointTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="crm-stat-grid sales-portal-report-stats">
+              <article>
+                <span>Contacts created</span>
+                <strong>{reportNewContacts.length}</strong>
+              </article>
+              <article>
+                <span>Active leads</span>
+                <strong>{activeLeadCount}</strong>
+              </article>
+              <article>
+                <span>Conversions</span>
+                <strong>{reportOrders.length}</strong>
+              </article>
+              <article>
+                <span>Portal sales</span>
+                <strong>{formatSalesOrderMoney(reportRevenue)}</strong>
+              </article>
+              <article>
+                <span>Engagements</span>
+                <strong>{reportEngagements.length}</strong>
+              </article>
+              <article>
+                <span>Conversion rate</span>
+                <strong>{conversionRate}%</strong>
+              </article>
+            </div>
+            <div className="crm-stat-grid">
+              {reportCountsByType.map((item) => (
+                <article key={item.value}>
+                  <span>{item.label}</span>
+                  <strong>{item.count}</strong>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel crm-detail-panel">
+            <div className="section-heading">
+              <p className="eyebrow">{isAdmin ? 'By team member' : 'My activity'}</p>
+              <h2>{reportEngagements.length} entries</h2>
+            </div>
+            <div className="crm-engagement-list">
+              {reportCountsByRep.map((row) => (
+                <article className="crm-engagement-detail" key={row.label}>
+                  <h3>{row.label}</h3>
+                  <p>{row.count} engagement{row.count === 1 ? '' : 's'}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </section>
+      ) : null}
+    </main>
+  )
+}
+
 function App() {
+  if (salesPortalDemoOnly) {
+    return <SalesPortalApp />
+  }
+
   // Keep the public order form on explicit public paths only. Every other
   // route should open the internal inventory tool so the two experiences
   // never silently fall back into each other.
+  if (isSalesPortalRoute()) {
+    return <SalesPortalApp />
+  }
+
   if (isPublicOrderFormRoute()) {
     return <PublicSalesOrderForm />
   }
