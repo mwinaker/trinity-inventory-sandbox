@@ -1512,6 +1512,17 @@ function getCrmDateFromInput(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toISOString()
 }
 
+function getCrmContactedAtFromInput(value: string) {
+  if (!value) return new Date().toISOString()
+  const now = new Date()
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+  const milliseconds = String(now.getMilliseconds()).padStart(3, '0')
+  const date = new Date(`${value}T${hours}:${minutes}:${seconds}.${milliseconds}`)
+  return Number.isNaN(date.getTime()) ? getCrmDateFromInput(value) || now.toISOString() : date.toISOString()
+}
+
 function getCrmTodayInputValue() {
   return new Date().toISOString().slice(0, 10)
 }
@@ -3229,6 +3240,19 @@ function getSalesOrderSuccessMessage(
   return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`
 }
 
+function getCrmTouchpointDayTimestamp(touchpoint: CrmTouchpoint) {
+  const dateValue = getCrmDateInputValue(touchpoint.contactedAt)
+  return getDateTimestamp(getCrmDateFromInput(dateValue)) || getDateTimestamp(touchpoint.contactedAt)
+}
+
+function getCrmTouchpointSequenceTimestamp(touchpoint: CrmTouchpoint, fallbackIndex: number) {
+  const idTimestamp = Number(touchpoint.id.match(/-(\d{12,})-/)?.[1] ?? '')
+  if (Number.isFinite(idTimestamp) && idTimestamp > 0) return idTimestamp
+
+  const contactedTimestamp = getDateTimestamp(touchpoint.contactedAt)
+  return contactedTimestamp || fallbackIndex
+}
+
 function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
   const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
@@ -3266,12 +3290,17 @@ function ContactEngagementReview({
   emptyMessage?: string
 }) {
   const sortedTouchpoints = touchpoints
-    .map((touchpoint, originalIndex) => ({ touchpoint, originalIndex }))
+    .map((touchpoint, originalIndex) => ({
+      touchpoint,
+      originalIndex,
+      dayTimestamp: getCrmTouchpointDayTimestamp(touchpoint),
+      sequenceTimestamp: getCrmTouchpointSequenceTimestamp(touchpoint, originalIndex),
+    }))
     .sort(
       (first, second) =>
-        getDateTimestamp(first.touchpoint.contactedAt) -
-          getDateTimestamp(second.touchpoint.contactedAt) ||
-        second.originalIndex - first.originalIndex,
+        first.dayTimestamp - second.dayTimestamp ||
+        first.sequenceTimestamp - second.sequenceTimestamp ||
+        first.originalIndex - second.originalIndex,
     )
     .map(({ touchpoint }) => touchpoint)
 
@@ -5809,7 +5838,7 @@ function InternalApp() {
       return
     }
 
-    const contactedAt = getCrmDateFromInput(crmTouchpointDraft.contactedAt) || new Date().toISOString()
+    const contactedAt = getCrmContactedAtFromInput(crmTouchpointDraft.contactedAt)
     const nextFollowUpAt = getCrmDateFromInput(crmTouchpointDraft.nextFollowUpAt)
     const ownerAssignment = getActiveCrmOwnerAssignment(selectedCrmSummary.contact)
     const touchpoint = normalizeCrmTouchpoint({
@@ -9663,7 +9692,7 @@ function SalesPortalApp() {
     const touchpoint = normalizeCrmTouchpoint({
       id: createId('portal-touchpoint'),
       type: touchpointDraft.type,
-      contactedAt: getCrmDateFromInput(touchpointDraft.contactedAt) || new Date().toISOString(),
+      contactedAt: getCrmContactedAtFromInput(touchpointDraft.contactedAt),
       salesRep: portalOwner.name,
       summary: touchpointDraft.summary,
       sentiment: '',
