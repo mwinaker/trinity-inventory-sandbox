@@ -477,6 +477,38 @@ const resourceConfigs = {
       definitionField('touchpoints_json', 'Touchpoints JSON', 'json'),
     ],
   },
+  salesPortalUsers: {
+    type: '$app:trinity_sales_portal_user',
+    name: 'Trinity Sales Portal User',
+    deleteMissing: false,
+    labelFor(item) {
+      return `${item.name || item.email || item.id}`.trim()
+    },
+    fieldsFor(item) {
+      return [
+        fieldValue('email', item.email),
+        fieldValue('name', item.name),
+        fieldValue('role', item.role),
+        fieldValue('status', item.status),
+        fieldValue('access_code_hash', item.accessCodeHash),
+        fieldValue('access_code_rotated_at', item.accessCodeRotatedAt),
+        fieldValue('last_login_at', item.lastLoginAt),
+        fieldValue('created_at', item.createdAt),
+        fieldValue('updated_at', item.updatedAt),
+      ].filter(Boolean)
+    },
+    fieldDefinitions: [
+      definitionField('email', 'Email', 'single_line_text_field'),
+      definitionField('name', 'Name', 'single_line_text_field'),
+      definitionField('role', 'Role', 'single_line_text_field'),
+      definitionField('status', 'Status', 'single_line_text_field'),
+      definitionField('access_code_hash', 'Access Code Hash', 'single_line_text_field'),
+      definitionField('access_code_rotated_at', 'Access Code Rotated At', 'single_line_text_field'),
+      definitionField('last_login_at', 'Last Login At', 'single_line_text_field'),
+      definitionField('created_at', 'Created At', 'single_line_text_field'),
+      definitionField('updated_at', 'Updated At', 'single_line_text_field'),
+    ],
+  },
   customerSessions: {
     type: '$app:trinity_customer_session',
     name: 'Trinity Customer Session',
@@ -686,7 +718,7 @@ app.post('/api/sales-portal/login-code', async (request, response) => {
       response.status(503).json({
         ok: false,
         message:
-          'Sales portal email delivery is not configured yet. Ask an admin to create a temporary sign-in code.',
+          'Sales portal email delivery is not configured yet. Enter your access code or ask an admin to create one.',
       })
       return
     }
@@ -705,57 +737,79 @@ app.post('/api/sales-portal/login-code', async (request, response) => {
   }
 })
 
-app.post('/api/sales-portal/admin-login-code', requireInternalAccess, (request, response) => {
-  const email = normalizeSalesPortalEmail(request.body?.email)
-  const owner = getSalesPortalOwnerForEmail(email)
-  if (!email || !owner) {
-    response.status(400).json({
-      ok: false,
-      message: 'Choose an approved Trinity sales team member.',
-    })
-    return
-  }
+app.post('/api/sales-portal/admin-login-code', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
+  try {
+    const email = normalizeSalesPortalEmail(request.body?.email)
+    const owner = getSalesPortalOwnerForEmail(email)
+    if (!email || !owner) {
+      response.status(400).json({
+        ok: false,
+        message: 'Choose an approved Trinity sales team member.',
+      })
+      return
+    }
 
-  const { code, expiresAt } = createSalesPortalLoginCodeEntry(email)
-  response.json({
-    ok: true,
-    email,
-    loginCode: code,
-    expiresAt: new Date(expiresAt).toISOString(),
-    message: `Temporary sign-in code created for ${owner.label}.`,
-  })
+    const { accessCode, user } = await issueSalesPortalAccessCode(email)
+    response.json({
+      ok: true,
+      email,
+      loginCode: accessCode,
+      accessCode,
+      user: publicSalesPortalUser(user),
+      message: `Access code created for ${owner.label}.`,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not create an access code.',
+    })
+  }
 })
 
-app.post('/api/sales-portal/verify-code', (request, response) => {
+app.post('/api/sales-portal/verify-code', async (request, response) => {
   const email = normalizeSalesPortalEmail(request.body?.email)
-  const code = cleanString(request.body?.code).replace(/\D/g, '')
+  const rawCode = cleanString(request.body?.code)
+  const code = rawCode.replace(/\D/g, '')
   const owner = getSalesPortalOwnerForEmail(email)
   const savedCode = salesPortalLoginCodes.get(email)
 
-  if (!email || !owner || !savedCode) {
-    response.status(400).json({ ok: false, message: 'Request a fresh sign-in code.' })
+  if (!email || !owner || !rawCode) {
+    response.status(400).json({ ok: false, message: 'Enter your Trinity email and access code.' })
     return
   }
 
-  if (savedCode.expiresAt < Date.now()) {
-    salesPortalLoginCodes.delete(email)
-    response.status(400).json({ ok: false, message: 'That sign-in code expired.' })
+  let verified = false
+  if (savedCode) {
+    if (savedCode.expiresAt < Date.now()) {
+      salesPortalLoginCodes.delete(email)
+    } else if (savedCode.attempts >= 5) {
+      salesPortalLoginCodes.delete(email)
+      response.status(400).json({ ok: false, message: 'Too many attempts. Request a fresh code.' })
+      return
+    } else {
+      savedCode.attempts += 1
+      verified = safeEqual(savedCode.codeHash, hashSalesPortalLoginCode(email, code), 'utf8')
+      if (verified) salesPortalLoginCodes.delete(email)
+    }
+  }
+
+  if (!verified) {
+    try {
+      verified = await verifySalesPortalAccessCode(email, rawCode)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Could not verify the access code.',
+      })
+      return
+    }
+  }
+
+  if (!verified) {
+    response.status(400).json({ ok: false, message: 'That access code did not match.' })
     return
   }
 
-  if (savedCode.attempts >= 5) {
-    salesPortalLoginCodes.delete(email)
-    response.status(400).json({ ok: false, message: 'Too many attempts. Request a fresh code.' })
-    return
-  }
-
-  savedCode.attempts += 1
-  if (!safeEqual(savedCode.codeHash, hashSalesPortalLoginCode(email, code), 'utf8')) {
-    response.status(400).json({ ok: false, message: 'That code did not match.' })
-    return
-  }
-
-  salesPortalLoginCodes.delete(email)
   const token = createSalesPortalSessionToken(email)
   const session = buildSalesPortalSession(email)
   if (!token || !session) {
@@ -763,6 +817,7 @@ app.post('/api/sales-portal/verify-code', (request, response) => {
     return
   }
 
+  void recordSalesPortalLogin(email)
   response.cookie(salesPortalSessionCookieName, token, getSalesPortalCookieOptions(request))
   response.json({ ok: true, session })
 })
@@ -1851,6 +1906,17 @@ function requireSalesPortalAccess(request, response, next) {
   })
 }
 
+function requireSalesPortalAdminOrInternalAccess(request, response, next) {
+  const session = getSalesPortalSession(request)
+  if (session?.isAdmin) {
+    request.salesPortalSession = session
+    next()
+    return
+  }
+
+  requireInternalAccess(request, response, next)
+}
+
 function createSalesPortalLoginCode() {
   return String(crypto.randomInt(100000, 1000000))
 }
@@ -1865,6 +1931,107 @@ function createSalesPortalLoginCodeEntry(email) {
   })
 
   return { code, expiresAt }
+}
+
+function createSalesPortalAccessCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  for (let index = 0; index < 10; index += 1) {
+    code += alphabet[crypto.randomInt(0, alphabet.length)]
+  }
+
+  return `TRI-${code.slice(0, 5)}-${code.slice(5)}`
+}
+
+function normalizeSalesPortalAccessCode(value) {
+  return cleanString(value).toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function hashSalesPortalAccessCode(email, code) {
+  return crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(`${normalizeSalesPortalEmail(email)}:${normalizeSalesPortalAccessCode(code)}`)
+    .digest('base64url')
+}
+
+async function issueSalesPortalAccessCode(email) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) throw new Error('Choose an approved Trinity sales team member.')
+
+  await ensureDefinitions()
+  const now = new Date().toISOString()
+  const accessCode = createSalesPortalAccessCode()
+  const existing = (await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)) ?? {}
+  const user = {
+    ...existing,
+    id: owner.email,
+    email: owner.email,
+    name: owner.name,
+    role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+    status: 'active',
+    accessCodeHash: hashSalesPortalAccessCode(owner.email, accessCode),
+    accessCodeRotatedAt: now,
+    createdAt: cleanString(existing.createdAt) || now,
+    updatedAt: now,
+  }
+
+  await upsertRecord(resourceConfigs.salesPortalUsers, user)
+  return { accessCode, user }
+}
+
+async function verifySalesPortalAccessCode(email, code) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return false
+
+  await ensureDefinitions()
+  const user = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
+  const status = cleanString(user?.status).toLowerCase()
+  const codeHash = cleanString(user?.accessCodeHash)
+  if (status !== 'active' || !codeHash) return false
+
+  return safeEqual(codeHash, hashSalesPortalAccessCode(owner.email, code), 'utf8')
+}
+
+async function recordSalesPortalLogin(email) {
+  try {
+    if (!shopDomain || !adminToken) return
+    const owner = getSalesPortalOwnerForEmail(email)
+    if (!owner) return
+
+    await ensureDefinitions()
+    const existing = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
+    if (!existing?.accessCodeHash) return
+
+    const now = new Date().toISOString()
+    await upsertRecord(resourceConfigs.salesPortalUsers, {
+      ...existing,
+      id: owner.email,
+      email: owner.email,
+      name: owner.name,
+      role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+      status: cleanString(existing.status) || 'active',
+      lastLoginAt: now,
+      updatedAt: now,
+    })
+  } catch (error) {
+    console.warn(
+      `Unable to record sales portal login: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`,
+    )
+  }
+}
+
+function publicSalesPortalUser(user) {
+  if (!user) return null
+  return {
+    email: normalizeSalesPortalEmail(user.email),
+    name: cleanString(user.name),
+    role: cleanString(user.role),
+    status: cleanString(user.status),
+    accessCodeRotatedAt: cleanString(user.accessCodeRotatedAt),
+    lastLoginAt: cleanString(user.lastLoginAt),
+  }
 }
 
 function hashSalesPortalLoginCode(email, code) {

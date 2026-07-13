@@ -3180,6 +3180,7 @@ type SalesPortalApiResponse = {
   email?: string
   devCode?: string
   loginCode?: string
+  accessCode?: string
   expiresAt?: string
   session?: SalesPortalSession
   crmContacts?: CrmContact[]
@@ -9463,7 +9464,6 @@ function SalesPortalApp() {
   const [loginEmail, setLoginEmail] = useState(session?.email ?? '')
   const [loginMessage, setLoginMessage] = useState('')
   const [loginCode, setLoginCode] = useState('')
-  const [loginCodeSentTo, setLoginCodeSentTo] = useState('')
   const [canIssueLoginCode, setCanIssueLoginCode] = useState(false)
   const [codeIssuerEmail, setCodeIssuerEmail] = useState(
     seedCrmOwnerOptions.find((owner) => owner.email)?.email ?? '',
@@ -9864,19 +9864,21 @@ function SalesPortalApp() {
         body: JSON.stringify({ email }),
       })
       const payload = (await response.json()) as SalesPortalApiResponse
-      if (!response.ok || !payload.ok || !payload.loginCode) {
+      const issuedCode = payload.loginCode ?? payload.accessCode
+      if (!response.ok || !payload.ok || !issuedCode) {
         throw new Error(payload.message ?? 'Could not create a sign-in code.')
       }
 
       setIssuedLoginCode({
         email,
-        code: payload.loginCode,
+        code: issuedCode,
         expiresAt: payload.expiresAt ?? '',
       })
-      setLoginEmail(email)
-      setLoginCode(payload.loginCode)
-      setLoginCodeSentTo(email)
-      setLoginMessage(payload.message ?? `Temporary sign-in code created for ${owner.label}.`)
+      if (!session) {
+        setLoginEmail(email)
+        setLoginCode(issuedCode)
+      }
+      setLoginMessage(payload.message ?? `Access code created for ${owner.label}.`)
     } catch (error) {
       setIssuedLoginCode(null)
       setLoginMessage(error instanceof Error ? error.message : 'Could not create a sign-in code.')
@@ -9900,7 +9902,7 @@ function SalesPortalApp() {
     }
 
     try {
-      const isVerifyingCode = loginCodeSentTo === email && loginCode.trim()
+      const isVerifyingCode = Boolean(loginCode.trim())
       const response = await fetch(
         getApiPath(isVerifyingCode ? '/api/sales-portal/verify-code' : '/api/sales-portal/login-code'),
         {
@@ -9918,15 +9920,14 @@ function SalesPortalApp() {
         if (!payload.session) throw new Error('Sales portal session was not returned.')
         setSession(payload.session)
         setLoginCode('')
-        setLoginCodeSentTo('')
         setLoginMessage('')
       } else {
         setLoginCode('')
-        setLoginCodeSentTo(email)
         setLoginMessage(
           payload.devCode
             ? `Use local preview code ${payload.devCode}.`
-            : payload.message ?? `A sign-in code was sent to ${email}.`,
+            : payload.message ??
+                `A sign-in code was sent to ${email}. You can also enter an admin-issued access code.`,
         )
       }
     } catch (error) {
@@ -9952,7 +9953,6 @@ function SalesPortalApp() {
     setPortalOrders([])
     setShopifyCatalog([])
     setLoginCode('')
-    setLoginCodeSentTo('')
   }
 
   function mergePortalCrmContactIntoList(current: CrmContact[], contact: CrmContact) {
@@ -10189,28 +10189,24 @@ function SalesPortalApp() {
                 onChange={(event) => {
                   setLoginEmail(event.target.value)
                   setLoginCode('')
-                  setLoginCodeSentTo('')
                 }}
               />
             </label>
-            {loginCodeSentTo ? (
-              <label>
-                Sign-in code
-                <input
-                  inputMode="numeric"
-                  value={loginCode}
-                  placeholder="6-digit code"
-                  onChange={(event) => setLoginCode(event.target.value)}
-                />
-              </label>
-            ) : null}
-            <button type="submit">{loginCodeSentTo ? 'Sign in' : 'Send code'}</button>
+            <label>
+              Access code
+              <input
+                value={loginCode}
+                placeholder="TRI-XXXXX-XXXXX or 6-digit email code"
+                onChange={(event) => setLoginCode(event.target.value)}
+              />
+            </label>
+            <button type="submit">{loginCode.trim() ? 'Sign in' : 'Send email code'}</button>
           </form>
           {canIssueLoginCode ? (
             <div className="sales-portal-code-issuer">
               <div className="form-row">
                 <label>
-                  Admin code
+                  Issue access
                   <select
                     value={codeIssuerEmail}
                     onChange={(event) => {
@@ -10233,7 +10229,7 @@ function SalesPortalApp() {
                   disabled={isIssuingLoginCode}
                   onClick={issueSalesPortalLoginCode}
                 >
-                  {isIssuingLoginCode ? 'Creating...' : 'Create code'}
+                  {isIssuingLoginCode ? 'Creating...' : 'Create access code'}
                 </button>
               </div>
               {issuedLoginCode ? (
@@ -10244,7 +10240,7 @@ function SalesPortalApp() {
                         hour: 'numeric',
                         minute: '2-digit',
                       })}.`
-                    : ' expires in 10 minutes.'}
+                    : ' stays active until an admin reissues it.'}
                   <button
                     type="button"
                     className="secondary-button"
@@ -10617,6 +10613,55 @@ function SalesPortalApp() {
                 ))}
               </select>
             </label>
+            {isAdmin ? (
+              <div className="sales-portal-code-issuer sales-portal-admin-access">
+                <div className="section-heading">
+                  <p className="eyebrow">Team access</p>
+                  <h2>Issue access codes</h2>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Team member
+                    <select
+                      value={codeIssuerEmail}
+                      onChange={(event) => {
+                        setCodeIssuerEmail(event.target.value)
+                        setIssuedLoginCode(null)
+                      }}
+                    >
+                      {seedCrmOwnerOptions
+                        .filter((owner) => owner.email)
+                        .map((owner) => (
+                          <option key={owner.email} value={owner.email}>
+                            {owner.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isIssuingLoginCode}
+                    onClick={issueSalesPortalLoginCode}
+                  >
+                    {isIssuingLoginCode ? 'Creating...' : 'Create access code'}
+                  </button>
+                </div>
+                {issuedLoginCode ? (
+                  <div className="helper-text sales-portal-issued-code">
+                    Code <strong>{issuedLoginCode.code}</strong> for {issuedLoginCode.email}. It stays active
+                    until an admin reissues it.
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void navigator.clipboard?.writeText(issuedLoginCode.code)}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="crm-stat-grid sales-portal-report-stats">
               <article>
                 <span>Contacts created</span>
