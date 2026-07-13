@@ -1331,6 +1331,96 @@ button:hover {
   line-height: 1.35;
 }
 
+.crm-contact-engagement-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(72, 50, 31, 0.12);
+}
+
+.crm-contact-engagement-list {
+  display: grid;
+  gap: 10px;
+}
+
+.crm-contact-engagement-item {
+  border: 1px solid rgba(72, 50, 31, 0.12);
+  border-radius: 12px;
+  background: #fffaf0;
+  overflow: hidden;
+}
+
+.crm-contact-engagement-item[open] {
+  border-color: rgba(47, 76, 50, 0.32);
+  background: rgba(47, 76, 50, 0.06);
+}
+
+.crm-contact-engagement-item summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.crm-contact-engagement-item summary::marker {
+  color: #5d4b3c;
+}
+
+.crm-engagement-number {
+  display: inline-grid;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  background: #2f4c32;
+  color: #fff8ef;
+  font-size: 0.82rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.crm-contact-engagement-item summary strong {
+  min-width: 0;
+  color: #20140c;
+  font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.crm-contact-engagement-item summary small {
+  margin-left: auto;
+  color: #746353;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.crm-contact-engagement-summary {
+  display: grid;
+  gap: 8px;
+  padding: 0 14px 14px 50px;
+  color: #5d4b3c;
+}
+
+.crm-contact-engagement-summary p {
+  margin: 0;
+  line-height: 1.38;
+}
+
+.crm-contact-engagement-summary p strong {
+  color: #2f4c32;
+}
+
+.crm-contact-engagement-summary small {
+  color: #746353;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
 .crm-priority-hot {
   background: #873528;
   color: #fff8ef;

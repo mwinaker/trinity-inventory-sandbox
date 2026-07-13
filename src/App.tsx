@@ -3219,6 +3219,47 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   )
 }
 
+function ContactEngagementReview({
+  touchpoints,
+  emptyMessage = 'No engagements have been saved for this contact yet.',
+}: {
+  touchpoints: CrmTouchpoint[]
+  emptyMessage?: string
+}) {
+  const sortedTouchpoints = [...touchpoints].sort(
+    (first, second) => getDateTimestamp(second.contactedAt) - getDateTimestamp(first.contactedAt),
+  )
+
+  if (sortedTouchpoints.length === 0) {
+    return <p className="empty-state">{emptyMessage}</p>
+  }
+
+  return (
+    <div className="crm-contact-engagement-list">
+      {sortedTouchpoints.map((touchpoint, index) => (
+        <details className="crm-contact-engagement-item" key={touchpoint.id}>
+          <summary>
+            <span className="crm-engagement-number">{index + 1}</span>
+            <strong>{getCrmTouchpointTypeLabel(touchpoint.type)}</strong>
+            <small>{formatSalesDashboardDate(touchpoint.contactedAt)}</small>
+          </summary>
+          <div className="crm-contact-engagement-summary">
+            <p>{touchpoint.summary || 'No summary was saved for this engagement.'}</p>
+            {touchpoint.nextStep ? (
+              <p>
+                <strong>Next step:</strong> {touchpoint.nextStep}
+              </p>
+            ) : null}
+            {touchpoint.nextFollowUpAt ? (
+              <small>Follow up {formatSalesDashboardDate(touchpoint.nextFollowUpAt)}</small>
+            ) : null}
+          </div>
+        </details>
+      ))}
+    </div>
+  )
+}
+
 type SalesOrderDraftFieldUpdater = <K extends keyof SalesOrderDraft>(
   key: K,
   value: SalesOrderDraft[K],
@@ -8449,29 +8490,12 @@ function InternalApp() {
                     <div className="crm-history-column">
                       <div className="section-heading">
                         <p className="eyebrow">Timeline</p>
-                        <h2>Touchpoints</h2>
+                        <h2>{selectedCrmSummary.contact.touchpoints.length} engagements</h2>
                       </div>
-                      <div className="crm-timeline">
-                        {selectedCrmSummary.contact.touchpoints.length === 0 ? (
-                          <p className="empty-state">No logged touchpoints for this profile yet.</p>
-                        ) : (
-                          selectedCrmSummary.contact.touchpoints.map((touchpoint) => (
-                            <button
-                              type="button"
-                              className="crm-engagement-row"
-                              key={touchpoint.id}
-                              onClick={() => {
-                                setSelectedCrmEngagementId(touchpoint.id)
-                                setActiveCrmView('engagements')
-                              }}
-                            >
-                              <span>{getCrmTouchpointTypeLabel(touchpoint.type)}</span>
-                              <strong>{formatOrderDateTime(touchpoint.contactedAt)}</strong>
-                              <p>{touchpoint.summary}</p>
-                            </button>
-                          ))
-                        )}
-                      </div>
+                      <ContactEngagementReview
+                        touchpoints={selectedCrmSummary.contact.touchpoints}
+                        emptyMessage="No logged touchpoints for this profile yet."
+                      />
                     </div>
 
                     <div className="crm-history-column">
@@ -9864,6 +9888,13 @@ function SalesPortalApp() {
                   </label>
                   <button type="submit">Save engagement</button>
                 </form>
+                <section className="crm-contact-engagement-section">
+                  <div className="section-heading">
+                    <p className="eyebrow">Saved engagements</p>
+                    <h2>{selectedSummary.contact.touchpoints.length} stored</h2>
+                  </div>
+                  <ContactEngagementReview touchpoints={selectedSummary.contact.touchpoints} />
+                </section>
               </>
             ) : (
               <p className="empty-state">Select a contact to log activity or start an order.</p>
