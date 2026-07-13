@@ -3089,19 +3089,28 @@ const publicOrderFormPaths = new Set([
 
 const salesPortalPaths = new Set(['/sales-portal', '/sales-crm'])
 const internalToolPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
-const keithDemoEmail = 'keith@trinitybats.com'
+const defaultDemoEmail = 'keith@trinitybats.com'
 const salesPortalDemoOnly =
   import.meta.env.VITE_SALES_PORTAL_DEMO_ONLY === 'true' ||
   window.location.hostname.includes('trinity-sales-portal-demo')
 
-function isKeithSalesPortalDemo() {
+function getSalesPortalDemoEmail() {
   const params = new URLSearchParams(window.location.search)
-  const demoValue = params.get('demo') ?? params.get('demoUser') ?? ''
-  return salesPortalDemoOnly || ['keith', keithDemoEmail].includes(demoValue.toLowerCase())
+  const demoValue = (params.get('demo') ?? params.get('demoUser') ?? '').trim().toLowerCase()
+  const demoEmails = new Map([
+    ['keith', 'keith@trinitybats.com'],
+    ['keith@trinitybats.com', 'keith@trinitybats.com'],
+    ['shane', 'shane@trinitybats.com'],
+    ['shane@trinitybats.com', 'shane@trinitybats.com'],
+  ])
+  const requestedEmail = demoEmails.get(demoValue)
+
+  if (requestedEmail) return requestedEmail
+  return salesPortalDemoOnly ? defaultDemoEmail : ''
 }
 
-function createKeithDemoSession(): SalesPortalSession {
-  return { email: keithDemoEmail, loggedInAt: new Date().toISOString() }
+function createDemoSalesPortalSession(email: string): SalesPortalSession {
+  return { email, loggedInAt: new Date().toISOString() }
 }
 
 function getCurrentAppPath() {
@@ -9261,9 +9270,10 @@ function InternalApp() {
 }
 
 function SalesPortalApp() {
-  const isKeithDemo = isKeithSalesPortalDemo()
+  const demoEmail = getSalesPortalDemoEmail()
+  const isDemoSession = Boolean(demoEmail)
   const [session, setSession] = useState<SalesPortalSession | null>(() => {
-    if (isKeithDemo) return createKeithDemoSession()
+    if (demoEmail) return createDemoSalesPortalSession(demoEmail)
     const stored = window.localStorage.getItem(salesPortalSessionStorageKey)
     return stored ? (JSON.parse(stored) as SalesPortalSession) : null
   })
@@ -9453,9 +9463,9 @@ function SalesPortalApp() {
   }
 
   function handlePortalSignOut() {
-    if (isKeithDemo) {
-      setSession(createKeithDemoSession())
-      setPortalMessage('Keith demo refreshed.')
+    if (demoEmail) {
+      setSession(createDemoSalesPortalSession(demoEmail))
+      setPortalMessage(`${getSalesPortalOwnerForEmail(demoEmail).label} demo refreshed.`)
       return
     }
 
@@ -9657,7 +9667,7 @@ function SalesPortalApp() {
             className="secondary-button sales-portal-signout"
             onClick={handlePortalSignOut}
           >
-            {isKeithDemo ? 'Reset demo' : 'Sign out'}
+            {isDemoSession ? 'Reset demo' : 'Sign out'}
           </button>
         </div>
         <nav className="crm-tab-strip sales-portal-nav" aria-label="Sales portal sections">
