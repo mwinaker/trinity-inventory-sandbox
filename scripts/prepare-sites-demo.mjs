@@ -1,10 +1,18 @@
-import { copyFile, mkdir, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const rootDir = process.cwd()
 const distDir = path.join(rootDir, 'dist')
+const clientDir = path.join(distDir, 'client')
 const serverDir = path.join(distDir, 'server')
 const openAiDistDir = path.join(distDir, '.openai')
+
+await mkdir(clientDir, { recursive: true })
+const distEntries = await readdir(distDir, { withFileTypes: true })
+for (const entry of distEntries) {
+  if (['client', 'server', '.openai'].includes(entry.name)) continue
+  await rename(path.join(distDir, entry.name), path.join(clientDir, entry.name))
+}
 
 await mkdir(serverDir, { recursive: true })
 await mkdir(openAiDistDir, { recursive: true })
