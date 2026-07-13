@@ -733,6 +733,47 @@ app.get('/api/catalog', async (_request, response) => {
   }
 })
 
+app.get(['/ai/shoply-bat-knowledge.md', '/api/shoply-bat-knowledge.md'], async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).type('text/plain').send('Shopify credentials are not configured.')
+      return
+    }
+
+    const knowledge = await getShoplyBatKnowledge(request)
+    response.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=1800')
+    response.set('Content-Type', 'text/markdown; charset=utf-8')
+    response.set('X-Robots-Tag', 'noindex, nofollow')
+    response.send(renderShoplyBatKnowledgeMarkdown(knowledge))
+  } catch (error) {
+    response.status(500).type('text/plain').send(
+      error instanceof Error ? error.message : 'Unknown Shoply knowledge feed error.',
+    )
+  }
+})
+
+app.get('/api/shoply-bat-knowledge.json', async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const knowledge = await getShoplyBatKnowledge(request)
+    response.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=1800')
+    response.set('X-Robots-Tag', 'noindex, nofollow')
+    response.json({ ok: true, ...knowledge })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown Shoply knowledge feed error.',
+    })
+  }
+})
+
 app.put('/api/state', requireInternalAccess, async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
@@ -2394,6 +2435,393 @@ async function loadSharedState() {
     orderJobs,
     billingContacts,
   }
+}
+
+async function getShoplyBatKnowledge(request) {
+  const [state, catalog] = await Promise.all([loadShoplyKnowledgeState(), getCatalogProducts()])
+  const publicBaseUrl = resolvePublicBaseUrl(request, '')
+  const markdownUrl = publicBaseUrl ? `${publicBaseUrl}/ai/shoply-bat-knowledge.md` : ''
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: {
+      shop: shopDomain,
+      markdownUrl,
+      purpose: 'Sanitized Trinity bat-selection knowledge feed for Shoply AI.',
+    },
+    usageRules: [
+      'Use this feed as fit and product-selection guidance, not as a public inventory promise.',
+      'Recommend only Trinity products, models, collections, or pages present in this feed or the crawled Trinity storefront.',
+      'Ask concise qualifying questions before recommending a bat when player size, level, current bat, or intended use is missing.',
+      'Give one primary recommendation and one alternate when enough information is available.',
+      'Do not quote internal counts as guaranteed live stock, and route final custom-build decisions to a Trinity team member.',
+      'Do not mention customer names, orders, billet barcodes, billet locations, billing contacts, or internal sales details.',
+    ],
+    products: sanitizeShoplyProducts(catalog.products),
+    customModelGuidance: buildCustomModelGuidance(state.customBatModels),
+    producedBatGuidance: buildProducedBatGuidance(
+      state.producedBats,
+      state.customBatModels,
+      catalog.products,
+    ),
+    savedFitPatterns: buildSavedFitPatterns(state.players),
+    materialCapacity: buildMaterialCapacitySummary(state.billets),
+  }
+}
+
+async function loadShoplyKnowledgeState() {
+  await ensureDefinitions()
+  const [billets, players, producedBats, customBatModels] = await Promise.all([
+    listRecords(resourceConfigs.billets),
+    listRecords(resourceConfigs.players),
+    listRecords(resourceConfigs.producedBats),
+    listRecords(resourceConfigs.customBatModels),
+  ])
+
+  return {
+    billets,
+    players,
+    producedBats,
+    customBatModels,
+  }
+}
+
+function sanitizeShoplyProducts(products) {
+  return arrayFromPayload(products)
+    .filter((product) => cleanString(product.status).toUpperCase() !== 'DRAFT')
+    .map((product) => ({
+      name: cleanString(product.name),
+      category: cleanString(product.category) || 'Uncategorized',
+      url: cleanString(product.url),
+      tags: arrayFromPayload(product.tags).map(cleanString).filter(Boolean).slice(0, 12),
+      variants: arrayFromPayload(product.variants)
+        .map((variant) => ({
+          title: cleanString(variant.title),
+          price: cleanString(variant.price),
+          sku: cleanString(variant.sku),
+        }))
+        .filter((variant) => variant.title || variant.price || variant.sku)
+        .slice(0, 12),
+    }))
+    .filter((product) => product.name)
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function buildCustomModelGuidance(customBatModels) {
+  return arrayFromPayload(customBatModels)
+    .map((model) => ({
+      name: cleanString(model.name),
+      category: cleanString(model.category),
+      url: cleanString(model.url),
+      compatibility: formatModelCompatibilityForKnowledge(model.compatibility),
+    }))
+    .filter((model) => model.name)
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function buildProducedBatGuidance(producedBats, customBatModels, products) {
+  const productsById = new Map(arrayFromPayload(products).map((product) => [product.id, product]))
+  const modelsById = new Map(arrayFromPayload(customBatModels).map((model) => [model.id, model]))
+  const guidanceByKey = new Map()
+
+  for (const record of arrayFromPayload(producedBats)) {
+    const batType = cleanString(record.batType)
+    if (!batType || batType === 'Trophy') continue
+
+    const modelName = resolveKnowledgeModelName(record, modelsById, productsById)
+    const length = cleanString(record.length)
+    const finishedWeight = cleanString(record.weight)
+    const billetWeight = cleanString(record.billetWeight)
+    const billetGrade = cleanString(record.billetGrade)
+    const cupped = cleanString(record.cupped)
+
+    if (!modelName || (!length && !finishedWeight && !billetWeight && !billetGrade)) continue
+
+    const key = [modelName, batType, length, finishedWeight, billetWeight, billetGrade, cupped].join(
+      '|',
+    )
+    const existing = guidanceByKey.get(key)
+    guidanceByKey.set(key, {
+      model: modelName,
+      batType,
+      length,
+      finishedWeight,
+      billetWeight,
+      billetGrade,
+      cupped,
+      examples: (existing?.examples ?? 0) + 1,
+    })
+  }
+
+  return Array.from(guidanceByKey.values()).sort((left, right) =>
+    `${left.model} ${left.length}`.localeCompare(`${right.model} ${right.length}`),
+  )
+}
+
+function resolveKnowledgeModelName(record, modelsById, productsById) {
+  const shopifyProduct = productsById.get(cleanString(record.shopifyProductId))
+  if (shopifyProduct?.name) return cleanString(shopifyProduct.name)
+
+  const model =
+    modelsById.get(cleanString(record.modelId)) || modelsById.get(cleanString(record.sourceModelId))
+  if (model?.name) return cleanString(model.name)
+
+  if (cleanString(record.modelId)) return cleanString(record.modelId)
+  if (cleanString(record.sourceModelId)) return cleanString(record.sourceModelId)
+  if (cleanString(record.customModelName)) return 'Internal custom model'
+  return ''
+}
+
+function buildSavedFitPatterns(players) {
+  const patternsByKey = new Map()
+
+  for (const profile of arrayFromPayload(players)) {
+    for (const bat of arrayFromPayload(profile.bats)) {
+      const model = cleanString(bat.modelNumber)
+      const length = cleanString(bat.length)
+      const finishedWeight = cleanString(bat.weight)
+      const woodTier = cleanString(bat.woodTier)
+      const idealBilletWeight = cleanString(
+        bat.idealBilletWeight ?? bat.optimalBilletWeight ?? bat.billetWeight,
+      )
+
+      if (!model && !length && !finishedWeight && !woodTier && !idealBilletWeight) continue
+
+      const key = [model, length, finishedWeight, woodTier, idealBilletWeight].join('|')
+      const existing = patternsByKey.get(key)
+      patternsByKey.set(key, {
+        model,
+        length,
+        finishedWeight,
+        woodTier,
+        idealBilletWeight,
+        examples: (existing?.examples ?? 0) + 1,
+      })
+    }
+  }
+
+  return Array.from(patternsByKey.values()).sort((left, right) =>
+    `${left.model} ${left.length}`.localeCompare(`${right.model} ${right.length}`),
+  )
+}
+
+function buildMaterialCapacitySummary(billets) {
+  const groups = new Map()
+
+  for (const billet of arrayFromPayload(billets)) {
+    const status = cleanString(billet.status)
+    if (status && status !== 'storage') continue
+
+    const species = cleanString(billet.species) || 'Unknown species'
+    const grade = cleanString(billet.grade) || 'Unknown grade'
+    const mlbCapable = billet.mlbEligible ? 'MLB-capable' : 'non-MLB'
+    const weight = Number(billet.weight)
+    const weightBucket = getBilletWeightBucket(weight)
+    const key = [species, grade, mlbCapable, weightBucket].join('|')
+    const existing = groups.get(key) ?? {
+      species,
+      grade,
+      mlbCapable,
+      weightBucket,
+      count: 0,
+      minWeight: null,
+      maxWeight: null,
+    }
+
+    existing.count += 1
+    if (Number.isFinite(weight)) {
+      existing.minWeight =
+        existing.minWeight === null ? weight : Math.min(existing.minWeight, weight)
+      existing.maxWeight =
+        existing.maxWeight === null ? weight : Math.max(existing.maxWeight, weight)
+    }
+    groups.set(key, existing)
+  }
+
+  return Array.from(groups.values()).sort((left, right) =>
+    `${left.species} ${left.grade} ${left.weightBucket}`.localeCompare(
+      `${right.species} ${right.grade} ${right.weightBucket}`,
+    ),
+  )
+}
+
+function getBilletWeightBucket(weight) {
+  if (!Number.isFinite(weight)) return 'weight unknown'
+  if (weight < 85) return 'under 85 oz'
+  if (weight < 90) return '85-89 oz'
+  if (weight < 95) return '90-94 oz'
+  if (weight < 100) return '95-99 oz'
+  return '100+ oz'
+}
+
+function formatModelCompatibilityForKnowledge(compatibility = {}) {
+  if (!compatibility || typeof compatibility !== 'object') return ''
+
+  const weightRange = compatibility.billetWeightRange ?? {}
+  const min = Number(weightRange.minOz)
+  const max = Number(weightRange.maxOz)
+  const rangeParts = []
+  if (Number.isFinite(min)) rangeParts.push(`minimum billet weight ${min} oz`)
+  if (Number.isFinite(max)) rangeParts.push(`maximum billet weight ${max} oz`)
+
+  const species = Array.isArray(compatibility.species)
+    ? compatibility.species.map(cleanString).filter(Boolean).join(', ')
+    : cleanString(compatibility.species)
+  const speciesText = species ? `species ${species}` : ''
+  const dependencyText =
+    typeof compatibility.speciesDependent === 'boolean'
+      ? compatibility.speciesDependent
+        ? 'species-specific fit'
+        : 'species-flexible fit'
+      : ''
+
+  return [rangeParts.join(', '), speciesText, dependencyText].filter(Boolean).join('; ')
+}
+
+function renderShoplyBatKnowledgeMarkdown(knowledge) {
+  const lines = [
+    '# Trinity Bat Selector Knowledge Feed',
+    '',
+    `Generated: ${knowledge.generatedAt}`,
+    `Shop: ${knowledge.source.shop}`,
+    '',
+    'This is a sanitized feed from the Trinity Billet Inventory system for Shoply AI.',
+    'It intentionally excludes customer records, billing contacts, order details, billet barcodes, billet locations, and raw internal notes.',
+    '',
+    '## How Shoply Should Use This',
+    '',
+    ...knowledge.usageRules.map((rule) => `- ${singleLine(rule)}`),
+    '',
+    '## Bat Selection Baseline',
+    '',
+    '- Start by identifying intended use: game bat, training bat, trophy/display bat, team order, or gift.',
+    '- For game or training bats, ask for player age/level, height/weight, current bat length and weight, wood bat experience, preferred swing feel, and the biggest priority: durability, barrel size, control, power, or training use.',
+    '- Treat billet material as production-fit guidance. Finished bat weight is not the same as billet input weight.',
+    '- If a final build depends on inventory, model availability, or production judgment, ask the customer to confirm with Trinity.',
+    '',
+    '## Shopify Catalog Products',
+    '',
+    ...renderShoplyProducts(knowledge.products),
+    '',
+    '## Internal Model Compatibility Guidance',
+    '',
+    ...renderCustomModelGuidance(knowledge.customModelGuidance),
+    '',
+    '## Internal Produced-Bat Fit Examples',
+    '',
+    ...renderProducedBatGuidance(knowledge.producedBatGuidance),
+    '',
+    '## Anonymous Saved Fit Patterns',
+    '',
+    ...renderSavedFitPatterns(knowledge.savedFitPatterns),
+    '',
+    '## Sanitized Material Capacity Summary',
+    '',
+    'Use this only as internal fit context. Do not tell shoppers these are guaranteed live inventory counts.',
+    '',
+    ...renderMaterialCapacity(knowledge.materialCapacity),
+    '',
+  ]
+
+  return `${lines.join('\n')}\n`
+}
+
+function renderShoplyProducts(products) {
+  if (products.length === 0) return ['No catalog products are available in the feed.']
+
+  return products.flatMap((product) => {
+    const lines = [
+      `### ${singleLine(product.name)}`,
+      `- Category: ${singleLine(product.category)}`,
+    ]
+    if (product.url) lines.push(`- URL: ${singleLine(product.url)}`)
+    if (product.tags.length > 0) lines.push(`- Tags: ${product.tags.map(singleLine).join(', ')}`)
+    if (product.variants.length > 0) {
+      lines.push(
+        `- Variants: ${product.variants
+          .map((variant) =>
+            [variant.title, variant.price ? `$${variant.price}` : '', variant.sku]
+              .filter(Boolean)
+              .map(singleLine)
+              .join(' / '),
+          )
+          .filter(Boolean)
+          .join('; ')}`,
+      )
+    }
+    return [...lines, '']
+  })
+}
+
+function renderCustomModelGuidance(models) {
+  if (models.length === 0) return ['No custom model compatibility records are available.']
+
+  return models.flatMap((model) => {
+    const lines = [`- ${singleLine(model.name)}`]
+    if (model.category) lines.push(`  - Category: ${singleLine(model.category)}`)
+    if (model.url) lines.push(`  - URL: ${singleLine(model.url)}`)
+    if (model.compatibility) lines.push(`  - Compatibility: ${singleLine(model.compatibility)}`)
+    return lines
+  })
+}
+
+function renderProducedBatGuidance(records) {
+  if (records.length === 0) return ['No produced-bat fit examples are available.']
+
+  return records.map((record) => {
+    const details = [
+      record.batType,
+      record.length ? `${record.length} in` : '',
+      record.finishedWeight ? `${record.finishedWeight} oz finished` : '',
+      record.billetWeight ? `${record.billetWeight} oz billet` : '',
+      record.billetGrade ? `${record.billetGrade} billet grade` : '',
+      record.cupped ? `cupped: ${record.cupped}` : '',
+      record.examples > 1 ? `${record.examples} examples` : '',
+    ]
+      .filter(Boolean)
+      .map(singleLine)
+      .join('; ')
+
+    return `- ${singleLine(record.model)}: ${details}`
+  })
+}
+
+function renderSavedFitPatterns(patterns) {
+  if (patterns.length === 0) return ['No anonymous saved fit patterns are available.']
+
+  return patterns.map((pattern) => {
+    const details = [
+      pattern.length ? `${pattern.length} in` : '',
+      pattern.finishedWeight ? `${pattern.finishedWeight} oz finished` : '',
+      pattern.woodTier ? `${pattern.woodTier} wood tier` : '',
+      pattern.idealBilletWeight ? `${pattern.idealBilletWeight} oz ideal billet` : '',
+      pattern.examples > 1 ? `${pattern.examples} examples` : '',
+    ]
+      .filter(Boolean)
+      .map(singleLine)
+      .join('; ')
+
+    return `- ${singleLine(pattern.model || 'Saved fit pattern')}: ${details}`
+  })
+}
+
+function renderMaterialCapacity(capacity) {
+  if (capacity.length === 0) return ['No storage billet material summary is available.']
+
+  return capacity.map((item) => {
+    const range =
+      item.minWeight === null
+        ? item.weightBucket
+        : `${item.weightBucket}; observed ${item.minWeight}-${item.maxWeight} oz`
+
+    return `- ${singleLine(item.species)} / ${singleLine(item.grade)} / ${singleLine(
+      item.mlbCapable,
+    )} / ${singleLine(range)}: ${item.count} available material record${item.count === 1 ? '' : 's'}`
+  })
+}
+
+function singleLine(value) {
+  return cleanString(value).replace(/\s+/g, ' ')
 }
 
 async function ensureDefinitionsInternal() {
