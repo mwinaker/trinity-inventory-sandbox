@@ -1674,6 +1674,45 @@ function normalizeCrmContact(record: Partial<CrmContact> & Pick<CrmContact, 'id'
   }
 }
 
+function createSalesPortalDemoContacts() {
+  const now = new Date().toISOString()
+  const shane = getSalesPortalOwnerForEmail('shane@trinitybats.com')
+
+  return [
+    normalizeCrmContact({
+      id: 'demo-shane-engagement-review-contact',
+      name: 'Demo Engagement Review',
+      company: 'Trinity Demo Account',
+      role: 'Player family / prospect',
+      email: 'demo-engagement-review@example.com',
+      phone: '555-0100',
+      salesOwner: shane.name,
+      ownerEmail: shane.email,
+      stage: 'qualified',
+      priority: 'warm',
+      source: 'Sales portal demo',
+      preferredContactMethod: 'Call',
+      buyingContext: 'Demo profile for showing how a sales rep reviews stored CRM engagements.',
+      batPreferences: 'Interested in a maple gamer, 33 inch, balanced feel.',
+      lastContactedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      touchpoints: [
+        normalizeCrmTouchpoint({
+          id: 'demo-shane-call-engagement',
+          type: 'call',
+          contactedAt: now,
+          salesRep: shane.name,
+          summary:
+            'Shane called the player and confirmed interest in a maple gamer with a quick follow-up quote.',
+          nextStep: 'Send quote details and follow up tomorrow.',
+        }),
+      ],
+      sandboxOnly: true,
+    }),
+  ]
+}
+
 function normalizeCrmSearchText(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
@@ -9308,7 +9347,8 @@ function SalesPortalApp() {
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
   const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
     const stored = window.localStorage.getItem(crmContactStorageKey)
-    return stored ? (JSON.parse(stored) as CrmContact[]).map((contact) => normalizeCrmContact(contact)) : []
+    if (stored) return (JSON.parse(stored) as CrmContact[]).map((contact) => normalizeCrmContact(contact))
+    return isDemoSession ? createSalesPortalDemoContacts() : []
   })
   const [portalOrders, setPortalOrders] = useState<SalesPortalOrder[]>(() => {
     const stored = window.localStorage.getItem(salesPortalOrderStorageKey)
