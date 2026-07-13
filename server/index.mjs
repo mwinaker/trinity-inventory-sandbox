@@ -105,6 +105,13 @@ const billetDiameterWeightCorrectionOz = 1.75
 const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
 const billetSourceOptions = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
 const billetSpeciesOptions = new Set(['Maple', 'Birch', 'Ash'])
+const publicSalesOrderFormPaths = [
+  '/order-submission',
+  '/sales-order',
+  '/trinity-order-form',
+  '/trinity-order-from',
+]
+const publicStaticAssetPaths = ['/favicon.svg', '/icons.svg', '/site.webmanifest', '/sw.js']
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
@@ -1174,6 +1181,12 @@ app.post('/api/webhooks/register', requireInternalAccess, async (request, respon
   }
 })
 
+app.get(publicSalesOrderFormPaths, serveAppShell)
+app.use('/assets', express.static(path.join(rootDir, 'dist', 'assets')))
+app.get(publicStaticAssetPaths, (request, response) => {
+  response.sendFile(path.join(rootDir, 'dist', path.basename(request.path)))
+})
+
 app.use(requireInternalAccess)
 
 app.use(
@@ -1187,13 +1200,17 @@ app.use(
 )
 
 app.get('/{*path}', (_request, response) => {
-  response.set('Cache-Control', 'no-store')
-  response.sendFile(path.join(rootDir, 'dist', 'index.html'))
+  serveAppShell(_request, response)
 })
 
 app.listen(port, () => {
   console.log(`Trinity billet server listening on http://127.0.0.1:${port}`)
 })
+
+function serveAppShell(_request, response) {
+  response.set('Cache-Control', 'no-store')
+  response.sendFile(path.join(rootDir, 'dist', 'index.html'))
+}
 
 function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
