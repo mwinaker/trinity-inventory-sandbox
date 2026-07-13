@@ -3265,9 +3265,15 @@ function ContactEngagementReview({
   touchpoints: CrmTouchpoint[]
   emptyMessage?: string
 }) {
-  const sortedTouchpoints = [...touchpoints].sort(
-    (first, second) => getDateTimestamp(second.contactedAt) - getDateTimestamp(first.contactedAt),
-  )
+  const sortedTouchpoints = touchpoints
+    .map((touchpoint, originalIndex) => ({ touchpoint, originalIndex }))
+    .sort(
+      (first, second) =>
+        getDateTimestamp(first.touchpoint.contactedAt) -
+          getDateTimestamp(second.touchpoint.contactedAt) ||
+        second.originalIndex - first.originalIndex,
+    )
+    .map(({ touchpoint }) => touchpoint)
 
   if (sortedTouchpoints.length === 0) {
     return <p className="empty-state">{emptyMessage}</p>
