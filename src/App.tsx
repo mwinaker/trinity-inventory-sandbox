@@ -3089,9 +3089,20 @@ const publicOrderFormPaths = new Set([
 
 const salesPortalPaths = new Set(['/sales-portal', '/sales-crm'])
 const internalToolPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
+const keithDemoEmail = 'keith@trinitybats.com'
 const salesPortalDemoOnly =
   import.meta.env.VITE_SALES_PORTAL_DEMO_ONLY === 'true' ||
   window.location.hostname.includes('trinity-sales-portal-demo')
+
+function isKeithSalesPortalDemo() {
+  const params = new URLSearchParams(window.location.search)
+  const demoValue = params.get('demo') ?? params.get('demoUser') ?? ''
+  return salesPortalDemoOnly || ['keith', keithDemoEmail].includes(demoValue.toLowerCase())
+}
+
+function createKeithDemoSession(): SalesPortalSession {
+  return { email: keithDemoEmail, loggedInAt: new Date().toISOString() }
+}
 
 function getCurrentAppPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/'
@@ -9250,7 +9261,9 @@ function InternalApp() {
 }
 
 function SalesPortalApp() {
+  const isKeithDemo = isKeithSalesPortalDemo()
   const [session, setSession] = useState<SalesPortalSession | null>(() => {
+    if (isKeithDemo) return createKeithDemoSession()
     const stored = window.localStorage.getItem(salesPortalSessionStorageKey)
     return stored ? (JSON.parse(stored) as SalesPortalSession) : null
   })
@@ -9437,6 +9450,16 @@ function SalesPortalApp() {
     }
     setSession({ email, loggedInAt: new Date().toISOString() })
     setLoginMessage('')
+  }
+
+  function handlePortalSignOut() {
+    if (isKeithDemo) {
+      setSession(createKeithDemoSession())
+      setPortalMessage('Keith demo refreshed.')
+      return
+    }
+
+    setSession(null)
   }
 
   function savePortalCrmContact(contact: CrmContact) {
@@ -9632,9 +9655,9 @@ function SalesPortalApp() {
           <button
             type="button"
             className="secondary-button sales-portal-signout"
-            onClick={() => setSession(null)}
+            onClick={handlePortalSignOut}
           >
-            Sign out
+            {isKeithDemo ? 'Reset demo' : 'Sign out'}
           </button>
         </div>
         <nav className="crm-tab-strip sales-portal-nav" aria-label="Sales portal sections">
