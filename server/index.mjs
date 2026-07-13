@@ -1174,6 +1174,8 @@ app.post('/api/webhooks/register', requireInternalAccess, async (request, respon
   }
 })
 
+app.use(requireInternalAccess)
+
 app.use(
   express.static(path.join(rootDir, 'dist'), {
     setHeaders(response, filePath) {
