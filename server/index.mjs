@@ -4562,18 +4562,9 @@ function buildDirectOrderAddresses(payload) {
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const shippingAddress = buildMailingAddressInput(payload, 'shipping', playerName, playerPhone)
-  const billingDifferent = isTruthy(payload.billingDifferent)
-  const billingAddressDifferent = isTruthy(payload.billingAddressDifferent)
-  const billingAddress = billingAddressDifferent
-    ? buildMailingAddressInput(payload, 'billing', playerName, playerPhone)
-    : billingDifferent
-      ? null
-      : shippingAddress
 
   return {
     shippingAddress,
-    billingAddress,
-    billingAddressDifferent,
   }
 }
 
@@ -4627,7 +4618,6 @@ function formatMailingAddress(address) {
 function validateSalesOrderPayload(payload) {
   const playerName = cleanString(payload?.playerName || payload?.customerName)
   const salesRepEmail = normalizeEmail(payload?.salesRepEmail)
-  const billingDifferent = isTruthy(payload?.billingDifferent)
   const payer = resolvePayer(payload ?? {})
   const requiresShipping = requiresShippingForOrder(payload ?? {})
   const lines = Array.isArray(payload?.lines) ? payload.lines : []
@@ -4639,9 +4629,7 @@ function validateSalesOrderPayload(payload) {
     return 'Sales rep email must be a valid email address.'
   }
 
-  if (!billingDifferent && !payer.phone) {
-    return 'Player phone is required for direct-bill orders.'
-  }
+  if (!payer.phone) return 'Payer phone is required.'
 
   if (requiresShipping) {
     const missingShippingAddress =
@@ -4651,16 +4639,6 @@ function validateSalesOrderPayload(payload) {
       !cleanString(payload?.shippingZip) ||
       !cleanString(payload?.shippingCountryCode)
     if (missingShippingAddress) return 'Shipping address is required for shipped orders.'
-
-    if (isTruthy(payload?.billingAddressDifferent)) {
-      const missingBillingAddress =
-        !cleanString(payload?.billingAddress1) ||
-        !cleanString(payload?.billingCity) ||
-        !cleanString(payload?.billingProvinceCode) ||
-        !cleanString(payload?.billingZip) ||
-        !cleanString(payload?.billingCountryCode)
-      if (missingBillingAddress) return 'Billing address is required when it differs from shipping.'
-    }
   }
 
   if (lines.length === 0) return 'At least one order line is required.'
@@ -5021,12 +4999,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     : ''
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
-  const billingAddress = directAddresses.billingAddress
-  const billingAddressDifferent = requiresShipping
-    ? directAddresses.billingAddressDifferent
-    : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
-  const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
@@ -5040,10 +5013,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     playerEmail ? `Player email: ${playerEmail}` : '',
     playerPhone ? `Player phone: ${playerPhone}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
-    billingAddressDifferent ? 'Billing address differs from shipping address' : '',
-    billingAddressDifferent && formattedBillingAddress
-      ? `Billing address: ${formattedBillingAddress}`
-      : '',
     billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
@@ -5069,7 +5038,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         }
       : {}),
     ...(shippingAddress ? { shippingAddress } : {}),
-    ...(billingAddress ? { billingAddress } : {}),
     ...(shippingLine ? { shippingLines: [shippingLine] } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
@@ -5100,8 +5068,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
       trinity_shipping_address: formattedShippingAddress,
-      trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
-      trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
       trinity_billing_different: billingDifferent ? 'true' : '',
       trinity_billing_name: payer.name,
       trinity_billing_email: payer.email,
@@ -5176,12 +5142,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
-  const billingAddress = directAddresses.billingAddress
-  const billingAddressDifferent = requiresShipping
-    ? directAddresses.billingAddressDifferent
-    : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
-  const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
@@ -5195,10 +5156,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     playerEmail ? `Player email: ${playerEmail}` : '',
     playerPhone ? `Player phone: ${playerPhone}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
-    billingAddressDifferent ? 'Billing address differs from shipping address' : '',
-    billingAddressDifferent && formattedBillingAddress
-      ? `Billing address: ${formattedBillingAddress}`
-      : '',
     billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
@@ -5215,7 +5172,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     email: payer.email || undefined,
     phone: payer.phone || undefined,
     ...(shippingAddress ? { shippingAddress } : {}),
-    ...(billingAddress ? { billingAddress } : {}),
     ...(shippingLine ? { shippingLine } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
@@ -5248,8 +5204,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
       trinity_shipping_address: formattedShippingAddress,
-      trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
-      trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
       trinity_billing_different: billingDifferent ? 'true' : '',
       trinity_billing_name: payer.name,
       trinity_billing_email: payer.email,
