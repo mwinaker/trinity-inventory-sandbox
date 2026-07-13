@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && VITE_SALES_PORTAL_DEMO_ONLY=true vite build && node scripts/prepare-sites-demo.mjs",
+    "build": "tsc -b && vite build",
+    "build:demo": "tsc -b && VITE_SALES_PORTAL_DEMO_ONLY=true vite build && node scripts/prepare-sites-demo.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "serve": "node server/index.mjs",

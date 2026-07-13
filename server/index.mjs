@@ -87,6 +87,10 @@ const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const internalSessionCookieName = 'trinity_internal_session'
 const internalSessionMaxAgeDays = 90
 const internalSessionMaxAgeMs = internalSessionMaxAgeDays * 24 * 60 * 60 * 1000
+const salesPortalSessionCookieName = 'trinity_sales_portal_session'
+const salesPortalSessionMaxAgeDays = 30
+const salesPortalSessionMaxAgeMs = salesPortalSessionMaxAgeDays * 24 * 60 * 60 * 1000
+const salesPortalLoginCodeMaxAgeMs = 10 * 60 * 1000
 const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
 const internalSessionSecret =
   process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
@@ -111,6 +115,7 @@ const publicSalesOrderFormPaths = [
   '/trinity-order-form',
   '/trinity-order-from',
 ]
+const salesPortalPaths = ['/sales-portal', '/sales-crm']
 const publicStaticAssetPaths = ['/favicon.svg', '/icons.svg', '/site.webmanifest', '/sw.js']
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
@@ -126,6 +131,32 @@ const internalOrderNotificationEmails = parseEmailList(
   defaultInternalOrderNotificationEmails,
   requiredInternalOrderNotificationEmails,
 )
+const salesPortalTeamMembers = [
+  ['Keith', 'keith@trinitybats.com'],
+  ['Daniel', 'daniel@trinitybats.com'],
+  ['Shane', 'shane@trinitybats.com'],
+  ['Steve', 'steve@trinitybats.com'],
+  ['Jeremy McKee', 'jeremy@trinitybats.com'],
+  ['Matt', 'matt@trinitybats.com'],
+  ['Stefan', 'stefan@trinitybats.com'],
+  ['Henry', 'henry@trinitybats.com'],
+  ['Nick', 'nick@trinitybats.com'],
+  ['Scott', 'scott@trinitybats.com'],
+  ['Brandon', 'brandon@trinitybats.com'],
+].map(([name, email]) => ({
+  name,
+  label: name,
+  email,
+  key: email,
+}))
+const salesPortalTeamByEmail = new Map(salesPortalTeamMembers.map((member) => [member.email, member]))
+const salesPortalAdminEmails = new Set([
+  'matt@trinitybats.com',
+  'stefan@trinitybats.com',
+  'jeremy@trinitybats.com',
+  'keith@trinitybats.com',
+])
+const salesPortalLoginCodes = new Map()
 const internalEmailProviderApiKey =
   cleanString(process.env.TRINITY_RESEND_API_KEY) || cleanString(process.env.RESEND_API_KEY)
 const internalEmailProviderUrl =
@@ -394,6 +425,52 @@ const resourceConfigs = {
       definitionField('notes', 'Notes', 'multi_line_text_field'),
     ],
   },
+  crmContacts: {
+    type: '$app:trinity_crm_contact',
+    name: 'Trinity CRM Contact',
+    deleteMissing: false,
+    labelFor(item) {
+      return `${item.name || item.company || item.email || item.phone || item.id}`.trim()
+    },
+    fieldsFor(item) {
+      return [
+        fieldValue('name', item.name),
+        fieldValue('company', item.company),
+        fieldValue('role', item.role),
+        fieldValue('email', item.email),
+        fieldValue('phone', item.phone),
+        fieldValue('sales_owner', item.salesOwner),
+        fieldValue('owner_email', item.ownerEmail),
+        fieldValue('stage', item.stage),
+        fieldValue('priority', item.priority),
+        fieldValue('source', item.source),
+        fieldValue('preferred_contact_method', item.preferredContactMethod),
+        fieldValue('follow_up_at', item.followUpAt),
+        fieldValue('last_contacted_at', item.lastContactedAt),
+        fieldValue('created_at', item.createdAt),
+        fieldValue('updated_at', item.updatedAt),
+        fieldValue('touchpoints_json', JSON.stringify(item.touchpoints ?? [])),
+      ].filter(Boolean)
+    },
+    fieldDefinitions: [
+      definitionField('name', 'Name', 'single_line_text_field'),
+      definitionField('company', 'Company', 'single_line_text_field'),
+      definitionField('role', 'Role', 'single_line_text_field'),
+      definitionField('email', 'Email', 'single_line_text_field'),
+      definitionField('phone', 'Phone', 'single_line_text_field'),
+      definitionField('sales_owner', 'Sales Owner', 'single_line_text_field'),
+      definitionField('owner_email', 'Owner Email', 'single_line_text_field'),
+      definitionField('stage', 'Stage', 'single_line_text_field'),
+      definitionField('priority', 'Priority', 'single_line_text_field'),
+      definitionField('source', 'Source', 'single_line_text_field'),
+      definitionField('preferred_contact_method', 'Preferred Contact Method', 'single_line_text_field'),
+      definitionField('follow_up_at', 'Follow Up At', 'single_line_text_field'),
+      definitionField('last_contacted_at', 'Last Contacted At', 'single_line_text_field'),
+      definitionField('created_at', 'Created At', 'single_line_text_field'),
+      definitionField('updated_at', 'Updated At', 'single_line_text_field'),
+      definitionField('touchpoints_json', 'Touchpoints JSON', 'json'),
+    ],
+  },
   customerSessions: {
     type: '$app:trinity_customer_session',
     name: 'Trinity Customer Session',
@@ -566,6 +643,155 @@ app.get('/api/health', async (_request, response) => {
       ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
     },
   })
+})
+
+app.get('/api/sales-portal/session', (request, response) => {
+  const session = getSalesPortalSession(request)
+  response.set('Cache-Control', 'no-store')
+
+  if (!session) {
+    response.status(401).json({ ok: false, message: 'Sales portal sign-in required.' })
+    return
+  }
+
+  response.json({ ok: true, session })
+})
+
+app.post('/api/sales-portal/login-code', async (request, response) => {
+  try {
+    const email = normalizeSalesPortalEmail(request.body?.email)
+    const owner = getSalesPortalOwnerForEmail(email)
+    if (!email || !owner) {
+      response.status(400).json({
+        ok: false,
+        message: 'Use a Trinity sales team email address.',
+      })
+      return
+    }
+
+    const code = createSalesPortalLoginCode()
+    salesPortalLoginCodes.set(email, {
+      codeHash: hashSalesPortalLoginCode(email, code),
+      expiresAt: Date.now() + salesPortalLoginCodeMaxAgeMs,
+      attempts: 0,
+    })
+
+    let devCode = ''
+    if (internalEmailProviderApiKey && internalEmailFrom) {
+      await sendSalesPortalLoginCodeEmail(email, code)
+    } else if (isLocalRequest(request)) {
+      devCode = code
+    } else {
+      throw new Error('Sales portal email sign-in is not configured on this server.')
+    }
+
+    response.json({
+      ok: true,
+      email,
+      message: `A sign-in code was sent to ${email}.`,
+      ...(devCode ? { devCode } : {}),
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not send the sales portal code.',
+    })
+  }
+})
+
+app.post('/api/sales-portal/verify-code', (request, response) => {
+  const email = normalizeSalesPortalEmail(request.body?.email)
+  const code = cleanString(request.body?.code).replace(/\D/g, '')
+  const owner = getSalesPortalOwnerForEmail(email)
+  const savedCode = salesPortalLoginCodes.get(email)
+
+  if (!email || !owner || !savedCode) {
+    response.status(400).json({ ok: false, message: 'Request a fresh sign-in code.' })
+    return
+  }
+
+  if (savedCode.expiresAt < Date.now()) {
+    salesPortalLoginCodes.delete(email)
+    response.status(400).json({ ok: false, message: 'That sign-in code expired.' })
+    return
+  }
+
+  if (savedCode.attempts >= 5) {
+    salesPortalLoginCodes.delete(email)
+    response.status(400).json({ ok: false, message: 'Too many attempts. Request a fresh code.' })
+    return
+  }
+
+  savedCode.attempts += 1
+  if (!safeEqual(savedCode.codeHash, hashSalesPortalLoginCode(email, code), 'utf8')) {
+    response.status(400).json({ ok: false, message: 'That code did not match.' })
+    return
+  }
+
+  salesPortalLoginCodes.delete(email)
+  const token = createSalesPortalSessionToken(email)
+  const session = buildSalesPortalSession(email)
+  if (!token || !session) {
+    response.status(500).json({ ok: false, message: 'Could not create a sales portal session.' })
+    return
+  }
+
+  response.cookie(salesPortalSessionCookieName, token, getSalesPortalCookieOptions(request))
+  response.json({ ok: true, session })
+})
+
+app.post('/api/sales-portal/logout', (_request, response) => {
+  response.clearCookie(salesPortalSessionCookieName, { path: '/' })
+  response.json({ ok: true })
+})
+
+app.get('/api/sales-portal/state', requireSalesPortalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    response.set('Cache-Control', 'no-store')
+    const state = await getSharedState()
+    response.json(filterSalesPortalStateForSession(state, request.salesPortalSession))
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown sales portal state error.',
+    })
+  }
+})
+
+app.patch('/api/sales-portal/state', requireSalesPortalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const crmContacts = arrayFromPayload(request.body?.crmContacts)
+      .map((contact) => prepareSalesPortalCrmContactForSession(contact, request.salesPortalSession))
+      .filter(Boolean)
+    const result = await enqueueStateWrite(() => applyStatePatch({ crmContacts }))
+
+    response.json({
+      ok: true,
+      syncedAt: new Date().toISOString(),
+      applied: result.applied,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown sales portal save error.',
+    })
+  }
 })
 
 app.post('/api/analytics/events', async (request, response) => {
@@ -833,6 +1059,11 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
         arrayFromPayload(payload.billingContacts),
         (item) => item.id,
       )
+      const nextCrmContacts = mergeRecordsByKey(
+        currentState.crmContacts,
+        arrayFromPayload(payload.crmContacts),
+        (item) => item.id,
+      )
       const nextBillets = reconcileBilletProductionStatuses(
         mergeRecordsByKey(
           currentState.billets,
@@ -849,6 +1080,7 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
         customBatModels: nextCustomBatModels,
         orderJobs: nextOrderJobs,
         billingContacts: nextBillingContacts,
+        crmContacts: nextCrmContacts,
       }
       const patch = buildStatePatchFromStates(currentState, nextState)
       const applied = await applyStatePatch(patch, { ensureDefinitions: false })
@@ -1182,6 +1414,7 @@ app.post('/api/webhooks/register', requireInternalAccess, async (request, respon
 })
 
 app.get(publicSalesOrderFormPaths, serveAppShell)
+app.get(salesPortalPaths, serveAppShell)
 app.use('/assets', express.static(path.join(rootDir, 'dist', 'assets')))
 app.get(publicStaticAssetPaths, (request, response) => {
   response.sendFile(path.join(rootDir, 'dist', path.basename(request.path)))
@@ -1503,6 +1736,224 @@ function isSecureRequest(request) {
 
 function isLocalRequest(request) {
   return ['localhost', '127.0.0.1', '::1'].includes(request.hostname)
+}
+
+function normalizeSalesPortalEmail(value) {
+  const email = normalizeEmail(value)
+  return email.endsWith('@trinitybats.com') ? email : ''
+}
+
+function getSalesPortalOwnerForEmail(email) {
+  const normalizedEmail = normalizeSalesPortalEmail(email)
+  if (!normalizedEmail) return null
+
+  const knownOwner = salesPortalTeamByEmail.get(normalizedEmail)
+  if (knownOwner) return knownOwner
+
+  const firstName = normalizedEmail.split('@')[0] || 'Team member'
+  const name = firstName.charAt(0).toUpperCase() + firstName.slice(1)
+  return {
+    key: normalizedEmail,
+    label: name,
+    name,
+    email: normalizedEmail,
+  }
+}
+
+function getSalesPortalOwnerKey(name, email) {
+  const normalizedEmail = normalizeSalesPortalEmail(email)
+  if (normalizedEmail) return normalizedEmail
+
+  const normalizedName = cleanString(name).toLowerCase()
+  const matchedOwner = salesPortalTeamMembers.find((owner) =>
+    [owner.name, owner.label].map((value) => cleanString(value).toLowerCase()).includes(normalizedName),
+  )
+  if (matchedOwner?.email) return matchedOwner.email
+
+  return normalizedName || 'unassigned'
+}
+
+function buildSalesPortalSession(email, loggedInAt = new Date().toISOString()) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return null
+
+  return {
+    email: owner.email,
+    name: owner.name,
+    label: owner.label,
+    isAdmin: salesPortalAdminEmails.has(owner.email),
+    loggedInAt,
+  }
+}
+
+function createSalesPortalSessionToken(email) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return ''
+
+  const issuedAt = Date.now()
+  return createSalesPortalSignedPayload({
+    purpose: 'sales_portal_session',
+    email: owner.email,
+    iat: issuedAt,
+    exp: issuedAt + salesPortalSessionMaxAgeMs,
+  })
+}
+
+function getSalesPortalSession(request) {
+  const payload = verifySalesPortalSignedPayload(getCookie(request, salesPortalSessionCookieName))
+  if (payload?.purpose !== 'sales_portal_session') return null
+  if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
+  const loggedInAt =
+    typeof payload.iat === 'number' && payload.iat > 0
+      ? new Date(payload.iat).toISOString()
+      : new Date().toISOString()
+  return buildSalesPortalSession(payload.email, loggedInAt)
+}
+
+function getSalesPortalCookieOptions(request) {
+  return {
+    httpOnly: true,
+    secure: isSecureRequest(request),
+    sameSite: isSecureRequest(request) ? 'none' : 'lax',
+    maxAge: salesPortalSessionMaxAgeMs,
+    path: '/',
+  }
+}
+
+function requireSalesPortalAccess(request, response, next) {
+  const session = getSalesPortalSession(request)
+  if (session) {
+    request.salesPortalSession = session
+    next()
+    return
+  }
+
+  response.status(401).json({
+    ok: false,
+    message: 'Sales portal sign-in required.',
+  })
+}
+
+function createSalesPortalLoginCode() {
+  return String(crypto.randomInt(100000, 1000000))
+}
+
+function hashSalesPortalLoginCode(email, code) {
+  return crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(`${normalizeSalesPortalEmail(email)}:${cleanString(code)}`)
+    .digest('base64url')
+}
+
+function getSalesPortalSigningSecret() {
+  return internalSessionSecret || 'trinity-sales-portal-local-preview'
+}
+
+function createSalesPortalSignedPayload(payload) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const signature = crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(encodedPayload)
+    .digest('base64url')
+
+  return `${encodedPayload}.${signature}`
+}
+
+function verifySalesPortalSignedPayload(token) {
+  if (!token) return null
+
+  const [encodedPayload, signature] = token.split('.')
+  if (!encodedPayload || !signature) return null
+
+  const expectedSignature = crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(encodedPayload)
+    .digest('base64url')
+  if (!safeEqual(expectedSignature, signature, 'utf8')) return null
+
+  try {
+    return JSON.parse(decodeBase64Url(encodedPayload))
+  } catch {
+    return null
+  }
+}
+
+async function sendSalesPortalLoginCodeEmail(email, code) {
+  await sendInternalEmail({
+    to: [email],
+    subject: 'Your Trinity sales portal sign-in code',
+    text: [
+      `Your Trinity sales portal sign-in code is ${code}.`,
+      '',
+      'This code expires in 10 minutes.',
+      'If you did not request it, you can ignore this email.',
+    ].join('\n'),
+  })
+}
+
+function isSalesPortalContactOwnedBy(contact, owner) {
+  if (!owner) return false
+  return getSalesPortalOwnerKey(contact?.salesOwner, contact?.ownerEmail) === owner.key
+}
+
+function isSalesPortalOrderJobOwnedBy(job, owner) {
+  if (!owner) return false
+  return getSalesPortalOwnerKey(job?.salesRep, job?.salesRepEmail) === owner.key
+}
+
+function filterSalesPortalStateForSession(state, session) {
+  const internalOrderJobs = arrayFromPayload(state?.orderJobs).filter(
+    (job) => job?.origin === 'internal_sales',
+  )
+  const crmContacts = arrayFromPayload(state?.crmContacts)
+
+  if (session?.isAdmin) {
+    return {
+      ok: true,
+      session,
+      crmContacts,
+      orderJobs: internalOrderJobs,
+      teamMembers: salesPortalTeamMembers,
+    }
+  }
+
+  const owner = getSalesPortalOwnerForEmail(session?.email)
+  return {
+    ok: true,
+    session,
+    crmContacts: crmContacts.filter((contact) => isSalesPortalContactOwnedBy(contact, owner)),
+    orderJobs: internalOrderJobs.filter((job) => isSalesPortalOrderJobOwnedBy(job, owner)),
+    teamMembers: salesPortalTeamMembers,
+  }
+}
+
+function prepareSalesPortalCrmContactForSession(contact, session) {
+  if (!contact || typeof contact !== 'object') return null
+  const sessionOwner = getSalesPortalOwnerForEmail(session?.email)
+  if (!sessionOwner) return null
+  const requestedOwner =
+    session?.isAdmin && normalizeSalesPortalEmail(contact.ownerEmail)
+      ? getSalesPortalOwnerForEmail(contact.ownerEmail)
+      : sessionOwner
+  const owner = requestedOwner || sessionOwner
+  const now = new Date().toISOString()
+  const touchpoints = arrayFromPayload(contact.touchpoints).map((touchpoint) => ({
+    ...touchpoint,
+    salesRep: cleanString(touchpoint?.salesRep) || owner.name,
+  }))
+
+  return {
+    ...contact,
+    id: cleanString(contact.id) || createPlainId('crm-contact'),
+    salesOwner: session?.isAdmin ? cleanString(contact.salesOwner) || owner.name : owner.name,
+    ownerEmail: session?.isAdmin
+      ? normalizeSalesPortalEmail(contact.ownerEmail) || owner.email
+      : owner.email,
+    touchpoints,
+    sandboxOnly: false,
+    updatedAt: cleanString(contact.updatedAt) || now,
+    createdAt: cleanString(contact.createdAt) || now,
+  }
 }
 
 function createDraftInvoiceSendToken(draftOrder, intakeId) {
@@ -2115,6 +2566,7 @@ function normalizeStateSnapshot(value) {
     customBatModels: arrayFromPayload(value.customBatModels),
     orderJobs: arrayFromPayload(value.orderJobs),
     billingContacts: arrayFromPayload(value.billingContacts),
+    crmContacts: arrayFromPayload(value.crmContacts),
   }
 }
 
@@ -2208,6 +2660,11 @@ function getStateResourcePatchConfigs() {
       config: resourceConfigs.billingContacts,
       getKey: (item) => item.id,
     },
+    {
+      key: 'crmContacts',
+      config: resourceConfigs.crmContacts,
+      getKey: (item) => item.id,
+    },
   ]
 }
 
@@ -2271,6 +2728,7 @@ function applyStatePatchToCachedState(state, patch) {
     customBatModels: arrayFromPayload(state.customBatModels),
     orderJobs: arrayFromPayload(state.orderJobs),
     billingContacts: arrayFromPayload(state.billingContacts),
+    crmContacts: arrayFromPayload(state.crmContacts),
   }
 
   for (const entry of getStateResourcePatchConfigs()) {
@@ -2456,6 +2914,7 @@ async function loadSharedState() {
   const customBatModels = await listRecords(resourceConfigs.customBatModels)
   const orderJobs = await listRecords(resourceConfigs.orderJobs)
   const billingContacts = await listRecords(resourceConfigs.billingContacts)
+  const crmContacts = await listRecords(resourceConfigs.crmContacts)
 
   return {
     ok: true,
@@ -2465,6 +2924,7 @@ async function loadSharedState() {
     customBatModels,
     orderJobs,
     billingContacts,
+    crmContacts,
   }
 }
 

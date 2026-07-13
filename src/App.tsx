@@ -343,6 +343,7 @@ type RemoteState = {
   customBatModels: BatModelProduct[]
   orderJobs: OrderJob[]
   billingContacts: BillingContact[]
+  crmContacts: CrmContact[]
 }
 
 type RemoteStateDeletes = Partial<Record<keyof RemoteState, string[]>>
@@ -481,6 +482,9 @@ type CrmOwnerOption = {
 
 type SalesPortalSession = {
   email: string
+  name?: string
+  label?: string
+  isAdmin?: boolean
   loggedInAt: string
 }
 
@@ -1444,6 +1448,14 @@ function getCrmOwnerKey(name: string, email: string) {
   if (normalizedEmail) return normalizedEmail
 
   const normalizedName = normalizeCrmSearchText(name)
+  const matchedOwner = seedCrmOwnerOptions.find((owner) =>
+    [owner.name, owner.label]
+      .map((value) => normalizeCrmSearchText(value))
+      .filter(Boolean)
+      .includes(normalizedName),
+  )
+  if (matchedOwner?.email) return matchedOwner.email
+
   return normalizedName || 'unassigned'
 }
 
@@ -1990,6 +2002,26 @@ function createSalesPortalOrder(
   }
 }
 
+function createSalesDashboardSaleFromPortalOrder(order: SalesPortalOrder): SalesDashboardSale {
+  return {
+    key: order.id,
+    draftOrderName: 'Demo order',
+    paidOrderName: '',
+    salesRep: order.ownerName,
+    salesRepEmail: order.ownerEmail,
+    customerName: order.playerName,
+    payerName: order.payerName,
+    submittedAt: order.submittedAt,
+    paidAt: '',
+    invoiceStatus: 'draft',
+    isPaid: false,
+    total: order.total,
+    quantity: order.draft.lines.reduce((total, line) => total + line.quantity, 0),
+    lineCount: order.draft.lines.length,
+    productSummary: order.draft.lines.map((line) => line.title || 'Custom bat').join(', '),
+  }
+}
+
 function createCrmContactFromSalesPortalDraft(
   draft: SalesOrderDraft,
   owner: CrmOwnerOption,
@@ -2029,18 +2061,34 @@ function isCrmSummaryOwnedBy(summary: CrmContactSummary, owner: CrmOwnerOption) 
   return getCrmSummaryOwnerKey(summary) === owner.key
 }
 
-function isSalesPortalOrderOwnedBy(order: SalesPortalOrder, owner: CrmOwnerOption) {
-  return getCrmOwnerKey(order.ownerName, order.ownerEmail) === owner.key
+function isSalesDashboardSaleOwnedBy(sale: SalesDashboardSale, owner: CrmOwnerOption) {
+  return getCrmOwnerKey(sale.salesRep, sale.salesRepEmail) === owner.key
 }
 
 function salesPortalContactMatchesSearch(
   summary: CrmContactSummary,
-  orders: SalesPortalOrder[],
+  sales: SalesDashboardSale[],
   normalizedQuery: string,
 ) {
   if (!normalizedQuery) return true
 
-  const contactOrders = orders.filter((order) => order.contactId === summary.contact.id)
+  const contactSales = sales.filter((sale) =>
+    [sale.customerName, sale.payerName, sale.salesRep, sale.salesRepEmail].some(
+      (value) =>
+        value &&
+        normalizeCrmSearchText(value) &&
+        [
+          summary.contact.name,
+          summary.contact.company,
+          summary.contact.email,
+          summary.contact.phone,
+          ...summary.contact.playerNames,
+        ]
+          .map((field) => normalizeCrmSearchText(field))
+          .filter(Boolean)
+          .includes(normalizeCrmSearchText(value)),
+    ),
+  )
   const searchable = normalizeCrmSearchText(
     [
       summary.contact.name,
@@ -2070,24 +2118,15 @@ function salesPortalContactMatchesSearch(
         touchpoint.sentiment,
         touchpoint.nextStep,
       ]),
-      ...contactOrders.flatMap((order) => [
-        order.playerName,
-        order.payerName,
-        order.payerEmail,
-        order.payerPhone,
-        order.ownerName,
-        order.status,
-        ...order.draft.lines.flatMap((line) => [
-          line.title,
-          line.wood,
-          line.length,
-          line.targetWeight,
-          line.handleColor,
-          line.barrelColor,
-          line.logoColor,
-          line.engraving,
-          line.notes,
-        ]),
+      ...contactSales.flatMap((sale) => [
+        sale.customerName,
+        sale.payerName,
+        sale.salesRep,
+        sale.salesRepEmail,
+        sale.draftOrderName,
+        sale.paidOrderName,
+        sale.invoiceStatus,
+        sale.productSummary,
       ]),
     ].join(' '),
   )
@@ -2606,6 +2645,7 @@ function createEmptyRemoteState(): RemoteState {
     customBatModels: [],
     orderJobs: [],
     billingContacts: [],
+    crmContacts: [],
   }
 }
 
@@ -2695,6 +2735,11 @@ function buildRemoteStatePatch(current: RemoteState, base: RemoteState | null): 
     baseState.billingContacts,
     (item) => getRemoteStateRecordKey('billingContacts', item),
   )
+  const changedCrmContacts = getChangedRemoteRecords(
+    current.crmContacts,
+    baseState.crmContacts,
+    (item) => getRemoteStateRecordKey('crmContacts', item),
+  )
   const deletedProducedBatIds = getDeletedRemoteRecordIds(
     current.producedBats,
     baseState.producedBats,
@@ -2707,6 +2752,7 @@ function buildRemoteStatePatch(current: RemoteState, base: RemoteState | null): 
   if (changedCustomBatModels.length > 0) patch.customBatModels = changedCustomBatModels
   if (changedOrderJobs.length > 0) patch.orderJobs = changedOrderJobs
   if (changedBillingContacts.length > 0) patch.billingContacts = changedBillingContacts
+  if (changedCrmContacts.length > 0) patch.crmContacts = changedCrmContacts
   if (deletedProducedBatIds.length > 0) {
     patch.deletes = {
       producedBats: deletedProducedBatIds,
@@ -2778,6 +2824,11 @@ function applyRemoteStatePatchToSnapshot(
           getRemoteStateRecordKey('billingContacts', item),
         )
       : nextState.billingContacts,
+    crmContacts: patch.crmContacts
+      ? mergeRecordsByKey(nextState.crmContacts, patch.crmContacts, (item) =>
+          getRemoteStateRecordKey('crmContacts', item),
+        )
+      : nextState.crmContacts,
   }
 }
 
@@ -3123,6 +3174,16 @@ type SalesOrderApiResponse = {
   internalNotificationRecipients?: string[]
 }
 
+type SalesPortalApiResponse = {
+  ok?: boolean
+  message?: string
+  email?: string
+  devCode?: string
+  session?: SalesPortalSession
+  crmContacts?: CrmContact[]
+  orderJobs?: OrderJob[]
+}
+
 type PublicDraftInvoiceReview = {
   draft: SalesOrderDraft
   draftOrder: NonNullable<SalesOrderApiResponse['draftOrder']>
@@ -3160,7 +3221,14 @@ function getSalesPortalDemoEmail() {
 }
 
 function createDemoSalesPortalSession(email: string): SalesPortalSession {
-  return { email, loggedInAt: new Date().toISOString() }
+  const owner = getSalesPortalOwnerForEmail(email)
+  return {
+    email,
+    name: owner.name,
+    label: owner.label,
+    isAdmin: salesPortalAdminEmails.has(normalizeTrinityEmail(email)),
+    loggedInAt: new Date().toISOString(),
+  }
 }
 
 function getCurrentAppPath() {
@@ -4621,6 +4689,7 @@ function InternalApp() {
       customBatModels,
       orderJobs,
       billingContacts,
+      crmContacts,
     }
   }
 
@@ -4740,6 +4809,9 @@ function InternalApp() {
       const remoteBillingContacts = Array.isArray(remote.billingContacts)
         ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
         : []
+      const remoteCrmContacts = Array.isArray(remote.crmContacts)
+        ? remote.crmContacts.map((contact) => normalizeCrmContact(contact))
+        : []
       const remoteState: RemoteState = {
         billets: remoteBillets,
         players: remotePlayers,
@@ -4751,6 +4823,7 @@ function InternalApp() {
           remoteBillingContacts,
           (contact) => contact.id,
         ).map((contact) => normalizeBillingContact(contact)),
+        crmContacts: remoteCrmContacts,
       }
 
       skipNextRemoteSync.current = true
@@ -4761,6 +4834,7 @@ function InternalApp() {
       setCustomBatModels(remoteState.customBatModels)
       setOrderJobs(remoteState.orderJobs)
       setBillingContacts(remoteState.billingContacts)
+      setCrmContacts(remoteState.crmContacts)
       setLastLiveRefreshAt(new Date().toISOString())
 
       setBackendStatus('connected')
@@ -4868,7 +4942,16 @@ function InternalApp() {
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [backendStatus, billets, players, producedBats, customBatModels, orderJobs, billingContacts])
+  }, [
+    backendStatus,
+    billets,
+    players,
+    producedBats,
+    customBatModels,
+    orderJobs,
+    billingContacts,
+    crmContacts,
+  ])
 
   const deliveryDateOptions = Array.from(
     new Set(billets.map((billet) => billet.deliveryDate).filter(Boolean)),
@@ -9377,10 +9460,13 @@ function SalesPortalApp() {
   })
   const [loginEmail, setLoginEmail] = useState(session?.email ?? '')
   const [loginMessage, setLoginMessage] = useState('')
+  const [loginCode, setLoginCode] = useState('')
+  const [loginCodeSentTo, setLoginCodeSentTo] = useState('')
   const [activeView, setActiveView] = useState<SalesPortalView>('crm')
   const [adminOwnerFilter, setAdminOwnerFilter] = useState('all')
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
   const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
+    if (!isDemoSession) return []
     const stored = window.localStorage.getItem(crmContactStorageKey)
     if (stored) {
       const savedContacts = (JSON.parse(stored) as CrmContact[]).map((contact) =>
@@ -9391,12 +9477,19 @@ function SalesPortalApp() {
     return isDemoSession ? createSalesPortalDemoContacts() : []
   })
   const [portalOrders, setPortalOrders] = useState<SalesPortalOrder[]>(() => {
+    if (!isDemoSession) return []
     const stored = window.localStorage.getItem(salesPortalOrderStorageKey)
     return stored ? (JSON.parse(stored) as SalesPortalOrder[]) : []
   })
+  const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
+    return []
+  })
+  const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
   const [orderDraft, setOrderDraft] = useState<SalesOrderDraft>(() => emptySalesOrderDraft())
   const [orderAttachmentFile, setOrderAttachmentFile] = useState<File | null>(null)
   const [portalMessage, setPortalMessage] = useState('')
+  const [isLoadingPortalData, setIsLoadingPortalData] = useState(!isDemoSession)
+  const [isSubmittingPortalOrder, setIsSubmittingPortalOrder] = useState(false)
   const [selectedContactId, setSelectedContactId] = useState('')
   const [touchpointDraft, setTouchpointDraft] = useState<CrmTouchpointDraft>(() =>
     emptyCrmTouchpointDraft(),
@@ -9411,7 +9504,9 @@ function SalesPortalApp() {
   const [reportTypeFilter, setReportTypeFilter] = useState<'all' | CrmTouchpointType>('all')
 
   const portalOwner = session ? getSalesPortalOwnerForEmail(session.email) : null
-  const isAdmin = Boolean(session && salesPortalAdminEmails.has(normalizeTrinityEmail(session.email)))
+  const isAdmin = Boolean(
+    session?.isAdmin ?? (session && salesPortalAdminEmails.has(normalizeTrinityEmail(session.email))),
+  )
   const portalOwnerOptions = useMemo(() => {
     const owners = new Map<string, CrmOwnerOption>(
       seedCrmOwnerOptions.map((owner) => [owner.key, owner]),
@@ -9427,12 +9522,12 @@ function SalesPortalApp() {
       ? portalOwnerOptions.find((owner) => owner.key === adminOwnerFilter) ?? null
       : portalOwner
   const crmDirectory = useMemo(
-    () => buildCrmContactDirectory(crmContacts, [], []),
-    [crmContacts],
+    () => buildCrmContactDirectory(crmContacts, orderJobs, []),
+    [crmContacts, orderJobs],
   )
   const crmContactSummaries = useMemo(
-    () => buildCrmContactSummaries(crmDirectory, []),
-    [crmDirectory],
+    () => buildCrmContactSummaries(crmDirectory, orderJobs),
+    [crmDirectory, orderJobs],
   )
   const visibleContactSummaries = useMemo(
     () =>
@@ -9443,21 +9538,28 @@ function SalesPortalApp() {
       }),
     [activeScopeOwner, adminOwnerFilter, crmContactSummaries, isAdmin],
   )
-  const visibleOrders = useMemo(
+  const portalSales = useMemo(
     () =>
-      portalOrders.filter((order) => {
+      isDemoSession
+        ? portalOrders.map((order) => createSalesDashboardSaleFromPortalOrder(order))
+        : buildSalesDashboardSales(orderJobs),
+    [isDemoSession, orderJobs, portalOrders],
+  )
+  const visibleSales = useMemo(
+    () =>
+      portalSales.filter((sale) => {
         if (isAdmin && adminOwnerFilter === 'all') return true
         if (!activeScopeOwner) return false
-        return isSalesPortalOrderOwnedBy(order, activeScopeOwner)
+        return isSalesDashboardSaleOwnedBy(sale, activeScopeOwner)
       }),
-    [activeScopeOwner, adminOwnerFilter, isAdmin, portalOrders],
+    [activeScopeOwner, adminOwnerFilter, isAdmin, portalSales],
   )
   const searchedContactSummaries = useMemo(() => {
     const normalizedQuery = normalizeCrmSearchText(crmSearchQuery)
     return visibleContactSummaries.filter((summary) =>
-      salesPortalContactMatchesSearch(summary, visibleOrders, normalizedQuery),
+      salesPortalContactMatchesSearch(summary, visibleSales, normalizedQuery),
     )
-  }, [crmSearchQuery, visibleContactSummaries, visibleOrders])
+  }, [crmSearchQuery, visibleContactSummaries, visibleSales])
   const selectedSummary =
     searchedContactSummaries.find((summary) => summary.contact.id === selectedContactId) ??
     searchedContactSummaries[0] ??
@@ -9491,13 +9593,13 @@ function SalesPortalApp() {
       return matchesType && timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
     })
   }, [reportDateWindow, reportTypeFilter, visibleEngagements])
-  const reportOrders = useMemo(
+  const reportSales = useMemo(
     () =>
-      visibleOrders.filter((order) => {
-        const timestamp = getDateTimestamp(order.submittedAt)
+      visibleSales.filter((sale) => {
+        const timestamp = getDateTimestamp(sale.submittedAt)
         return timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
       }),
-    [reportDateWindow, visibleOrders],
+    [reportDateWindow, visibleSales],
   )
   const reportNewContacts = useMemo(
     () =>
@@ -9515,11 +9617,11 @@ function SalesPortalApp() {
     [visibleContactSummaries],
   )
   const reportRevenue = useMemo(
-    () => reportOrders.reduce((total, order) => total + order.total, 0),
-    [reportOrders],
+    () => reportSales.reduce((total, sale) => total + sale.total, 0),
+    [reportSales],
   )
   const conversionRate =
-    reportNewContacts.length > 0 ? Math.round((reportOrders.length / reportNewContacts.length) * 100) : 0
+    reportNewContacts.length > 0 ? Math.round((reportSales.length / reportNewContacts.length) * 100) : 0
   const reportCountsByType = useMemo(() => {
     const counts = new Map<CrmTouchpointType, number>()
     for (const { touchpoint } of reportEngagements) {
@@ -9530,73 +9632,300 @@ function SalesPortalApp() {
       count: counts.get(option.value) ?? 0,
     }))
   }, [reportEngagements])
-  const reportCountsByRep = useMemo(() => {
-    const counts = new Map<string, { label: string; count: number }>()
-    for (const { contact, touchpoint } of reportEngagements) {
-      const label = touchpoint.salesRep || contact.salesOwner || 'Unassigned'
-      counts.set(label, { label, count: (counts.get(label)?.count ?? 0) + 1 })
+  const reportRowsByRep = useMemo(() => {
+    const rows = new Map<
+      string,
+      {
+        key: string
+        label: string
+        email: string
+        engagements: number
+        calls: number
+        texts: number
+        emails: number
+        instagramDms: number
+        submittedSales: number
+        submittedValue: number
+        paidSales: number
+        paidValue: number
+        openValue: number
+      }
+    >()
+
+    function getRow(key: string, label: string, email = '') {
+      const existing = rows.get(key)
+      if (existing) return existing
+
+      const row = {
+        key,
+        label,
+        email,
+        engagements: 0,
+        calls: 0,
+        texts: 0,
+        emails: 0,
+        instagramDms: 0,
+        submittedSales: 0,
+        submittedValue: 0,
+        paidSales: 0,
+        paidValue: 0,
+        openValue: 0,
+      }
+      rows.set(key, row)
+      return row
     }
-    return Array.from(counts.values()).sort((a, b) => b.count - a.count)
-  }, [reportEngagements])
+
+    for (const { contact, touchpoint } of reportEngagements) {
+      const salesRep = touchpoint.salesRep || contact.salesOwner || 'Unassigned'
+      const ownerEmail = contact.ownerEmail
+      const row = getRow(getCrmOwnerKey(salesRep, ownerEmail), salesRep, ownerEmail)
+      row.engagements += 1
+      if (touchpoint.type === 'call') row.calls += 1
+      if (touchpoint.type === 'text') row.texts += 1
+      if (touchpoint.type === 'email') row.emails += 1
+      if (touchpoint.type === 'instagram_dm') row.instagramDms += 1
+    }
+
+    for (const sale of reportSales) {
+      const key = getSalesRepSummaryKey(sale)
+      const row = getRow(key, getSalesRepSummaryLabel(sale), sale.salesRepEmail)
+      row.submittedSales += 1
+      row.submittedValue += sale.total
+      if (sale.isPaid) {
+        row.paidSales += 1
+        row.paidValue += sale.total
+      } else {
+        row.openValue += sale.total
+      }
+    }
+
+    return Array.from(rows.values()).sort(
+      (a, b) =>
+        b.paidValue - a.paidValue ||
+        b.submittedValue - a.submittedValue ||
+        b.engagements - a.engagements ||
+        compareText(a.label, b.label),
+    )
+  }, [reportEngagements, reportSales])
 
   useEffect(() => {
-    if (session) {
+    if (isDemoSession && session) {
       window.localStorage.setItem(salesPortalSessionStorageKey, JSON.stringify(session))
     } else {
       window.localStorage.removeItem(salesPortalSessionStorageKey)
     }
-  }, [session])
+  }, [isDemoSession, session])
 
   useEffect(() => {
-    window.localStorage.setItem(crmContactStorageKey, JSON.stringify(crmContacts))
-  }, [crmContacts])
+    if (isDemoSession) {
+      window.localStorage.setItem(crmContactStorageKey, JSON.stringify(crmContacts))
+    }
+  }, [crmContacts, isDemoSession])
 
   useEffect(() => {
-    window.localStorage.setItem(salesPortalOrderStorageKey, JSON.stringify(portalOrders))
-  }, [portalOrders])
+    if (isDemoSession) {
+      window.localStorage.setItem(salesPortalOrderStorageKey, JSON.stringify(portalOrders))
+    }
+  }, [isDemoSession, portalOrders])
 
-  function loginToPortal(event: React.FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (isDemoSession) return
+
+    let cancelled = false
+
+    async function loadPortalSession() {
+      try {
+        const response = await fetch(getApiPath('/api/sales-portal/session'), { cache: 'no-store' })
+        const payload = (await response.json()) as SalesPortalApiResponse
+        if (cancelled) return
+        if (response.ok && payload.ok && payload.session) {
+          setSession(payload.session)
+          setLoginEmail(payload.session.email)
+          setLoginMessage('')
+        } else {
+          setSession(null)
+        }
+      } catch {
+        if (!cancelled) setSession(null)
+      } finally {
+        if (!cancelled) setIsLoadingPortalData(false)
+      }
+    }
+
+    void loadPortalSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDemoSession])
+
+  useEffect(() => {
+    if (isDemoSession || !session) return
+
+    let cancelled = false
+
+    async function loadPortalData() {
+      try {
+        setIsLoadingPortalData(true)
+        const [stateResponse, catalogResponse] = await Promise.all([
+          fetch(getApiPath('/api/sales-portal/state'), { cache: 'no-store' }),
+          fetch(getApiPath('/api/catalog'), { cache: 'no-store' }),
+        ])
+        const statePayload = (await stateResponse.json()) as SalesPortalApiResponse
+        const catalogPayload = (await catalogResponse.json()) as { products?: ShopifyCatalogProduct[] }
+        if (cancelled) return
+
+        if (stateResponse.status === 401) {
+          setSession(null)
+          setLoginMessage('Sign in again to continue.')
+          return
+        }
+
+        if (!stateResponse.ok || !statePayload.ok) {
+          throw new Error(statePayload.message ?? 'Could not load sales portal data.')
+        }
+
+        setCrmContacts(
+          Array.isArray(statePayload.crmContacts)
+            ? statePayload.crmContacts.map((contact) => normalizeCrmContact(contact))
+            : [],
+        )
+        setOrderJobs(
+          Array.isArray(statePayload.orderJobs)
+            ? statePayload.orderJobs.map((job) => normalizeOrderJob(job))
+            : [],
+        )
+        setShopifyCatalog(Array.isArray(catalogPayload.products) ? catalogPayload.products : [])
+      } catch (error) {
+        if (!cancelled) {
+          setPortalMessage(error instanceof Error ? error.message : 'Could not load sales portal data.')
+        }
+      } finally {
+        if (!cancelled) setIsLoadingPortalData(false)
+      }
+    }
+
+    void loadPortalData()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDemoSession, session])
+
+  async function loginToPortal(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const email = normalizeTrinityEmail(loginEmail)
     if (!isTrinityEmail(email)) {
       setLoginMessage('Use a Trinity email address ending in @trinitybats.com.')
       return
     }
-    setSession({ email, loggedInAt: new Date().toISOString() })
-    setLoginMessage('')
+
+    if (isDemoSession) {
+      setSession(createDemoSalesPortalSession(email))
+      setLoginMessage('')
+      return
+    }
+
+    try {
+      const isVerifyingCode = loginCodeSentTo === email && loginCode.trim()
+      const response = await fetch(
+        getApiPath(isVerifyingCode ? '/api/sales-portal/verify-code' : '/api/sales-portal/login-code'),
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(isVerifyingCode ? { email, code: loginCode } : { email }),
+        },
+      )
+      const payload = (await response.json()) as SalesPortalApiResponse
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Sales portal sign-in failed.')
+
+      if (isVerifyingCode) {
+        if (!payload.session) throw new Error('Sales portal session was not returned.')
+        setSession(payload.session)
+        setLoginCode('')
+        setLoginCodeSentTo('')
+        setLoginMessage('')
+      } else {
+        setLoginCode('')
+        setLoginCodeSentTo(email)
+        setLoginMessage(
+          payload.devCode
+            ? `Use local preview code ${payload.devCode}.`
+            : payload.message ?? `A sign-in code was sent to ${email}.`,
+        )
+      }
+    } catch (error) {
+      setLoginMessage(error instanceof Error ? error.message : 'Could not sign in.')
+    }
   }
 
-  function handlePortalSignOut() {
+  async function handlePortalSignOut() {
     if (demoEmail) {
       setSession(createDemoSalesPortalSession(demoEmail))
       setPortalMessage(`${getSalesPortalOwnerForEmail(demoEmail).label} demo refreshed.`)
       return
     }
 
+    try {
+      await fetch(getApiPath('/api/sales-portal/logout'), { method: 'POST' })
+    } catch {
+      // Clearing the local shell is still the right user outcome if logout cannot reach the server.
+    }
     setSession(null)
+    setCrmContacts([])
+    setOrderJobs([])
+    setPortalOrders([])
+    setShopifyCatalog([])
+    setLoginCode('')
+    setLoginCodeSentTo('')
   }
 
-  function savePortalCrmContact(contact: CrmContact) {
+  function mergePortalCrmContactIntoList(current: CrmContact[], contact: CrmContact) {
     const normalized = normalizeCrmContact({
       ...contact,
       updatedAt: new Date().toISOString(),
-      sandboxOnly: true,
+      sandboxOnly: isDemoSession,
     })
-    setCrmContacts((current) => {
-      const existingIndex = current.findIndex(
-        (savedContact) =>
-          savedContact.id === normalized.id || hasSharedCrmIdentity(savedContact, normalized),
-      )
-      if (existingIndex === -1) return [...current, normalized]
-      return current.map((savedContact, index) =>
-        index === existingIndex ? mergeCrmContacts(normalized, savedContact) : savedContact,
-      )
-    })
-    setSelectedContactId(normalized.id)
-    return normalized
+    const existingIndex = current.findIndex(
+      (savedContact) =>
+        savedContact.id === normalized.id || hasSharedCrmIdentity(savedContact, normalized),
+    )
+    if (existingIndex === -1) return { contacts: [...current, normalized], contact: normalized }
+
+    const savedContact = mergeCrmContacts(normalized, current[existingIndex])
+    return {
+      contacts: current.map((contactItem, index) =>
+        index === existingIndex ? savedContact : contactItem,
+      ),
+      contact: savedContact,
+    }
   }
 
-  function savePortalNewContact(event: React.FormEvent<HTMLFormElement>) {
+  async function savePortalCrmContact(contact: CrmContact) {
+    const merged = mergePortalCrmContactIntoList(crmContacts, contact)
+
+    if (!isDemoSession) {
+      const response = await fetch(getApiPath('/api/sales-portal/state'), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ crmContacts: [merged.contact] }),
+      })
+      const payload = (await response.json()) as SalesPortalApiResponse
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message ?? 'Could not save the CRM contact.')
+      }
+    }
+
+    setCrmContacts(merged.contacts)
+    setSelectedContactId(merged.contact.id)
+    return merged.contact
+  }
+
+  async function savePortalNewContact(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!portalOwner) return
     if (!newContactDraft.name.trim() && !newContactDraft.company.trim()) {
@@ -9604,21 +9933,25 @@ function SalesPortalApp() {
       return
     }
     const now = new Date().toISOString()
-    const contact = savePortalCrmContact({
-      ...newContactDraft,
-      salesOwner: portalOwner.name,
-      ownerEmail: portalOwner.email,
-      source: newContactDraft.source || 'Sales portal',
-      createdAt: newContactDraft.createdAt || now,
-      updatedAt: now,
-    })
-    setNewContactDraft({
-      ...emptyCrmContact(),
-      salesOwner: portalOwner.name,
-      ownerEmail: portalOwner.email,
-    })
-    setSelectedContactId(contact.id)
-    setPortalMessage('Contact saved.')
+    try {
+      const contact = await savePortalCrmContact({
+        ...newContactDraft,
+        salesOwner: portalOwner.name,
+        ownerEmail: portalOwner.email,
+        source: newContactDraft.source || 'Sales portal',
+        createdAt: newContactDraft.createdAt || now,
+        updatedAt: now,
+      })
+      setNewContactDraft({
+        ...emptyCrmContact(),
+        salesOwner: portalOwner.name,
+        ownerEmail: portalOwner.email,
+      })
+      setSelectedContactId(contact.id)
+      setPortalMessage('Contact saved.')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not save the contact.')
+    }
   }
 
   function startPortalOrderForContact(contact: CrmContact) {
@@ -9656,7 +9989,7 @@ function SalesPortalApp() {
     }))
   }
 
-  function submitPortalOrder(event: React.FormEvent<HTMLFormElement>) {
+  async function submitPortalOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!portalOwner) return
     const draft = {
@@ -9668,21 +10001,67 @@ function SalesPortalApp() {
       setPortalMessage('Add player, payer email, payer phone, shipping info, bat model, and price.')
       return
     }
-    const contact = savePortalCrmContact(createCrmContactFromSalesPortalDraft(draft, portalOwner))
-    const order = createSalesPortalOrder(draft, portalOwner, contact.id)
-    setPortalOrders((current) => [order, ...current])
-    setOrderDraft({
-      ...emptySalesOrderDraft(),
-      salesRep: portalOwner.name,
-      salesRepEmail: portalOwner.email,
-    })
-    setOrderAttachmentFile(null)
-    setSelectedContactId(contact.id)
-    setActiveView('orders')
-    setPortalMessage('Order saved locally to this sales portal sandbox.')
+    try {
+      setIsSubmittingPortalOrder(true)
+      if (isDemoSession) {
+        const contact = await savePortalCrmContact(
+          createCrmContactFromSalesPortalDraft(draft, portalOwner),
+        )
+        const order = createSalesPortalOrder(draft, portalOwner, contact.id)
+        setPortalOrders((current) => [order, ...current])
+        setPortalMessage('Order saved to this sales portal demo.')
+        setSelectedContactId(contact.id)
+      } else {
+        setPortalMessage(
+          orderAttachmentFile
+            ? 'Uploading attachment and creating Shopify order...'
+            : 'Creating Shopify order...',
+        )
+        const attachment = orderAttachmentFile
+          ? await uploadSalesOrderAttachment(orderAttachmentFile)
+          : null
+        const submittedDraft = {
+          ...draft,
+          attachment,
+        }
+        const response = await fetch(getApiPath('/api/sales-orders'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(submittedDraft),
+        })
+        const payload = (await response.json()) as SalesOrderApiResponse
+        if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
+
+        const contact = await savePortalCrmContact(
+          createCrmContactFromSalesPortalDraft(submittedDraft, portalOwner),
+        )
+        setOrderJobs((current) =>
+          mergeOrderJobs(
+            (payload.orderJobs ?? []).map((job) => normalizeOrderJob(job)),
+            current,
+          ),
+        )
+        setSelectedContactId(contact.id)
+        setPortalMessage(getSalesOrderSuccessMessage(submittedDraft, payload))
+      }
+
+      setOrderDraft({
+        ...emptySalesOrderDraft(),
+        salesRep: portalOwner.name,
+        salesRepEmail: portalOwner.email,
+      })
+      setOrderAttachmentFile(null)
+      setActiveView('orders')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not create the order.')
+    } finally {
+      setIsSubmittingPortalOrder(false)
+    }
   }
 
-  function savePortalEngagement(event: React.FormEvent<HTMLFormElement>) {
+  async function savePortalEngagement(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!selectedSummary || !portalOwner) return
     if (!touchpointDraft.summary.trim()) {
@@ -9700,16 +10079,20 @@ function SalesPortalApp() {
       nextFollowUpAt: getCrmDateFromInput(touchpointDraft.nextFollowUpAt),
       relatedOrderId: touchpointDraft.relatedOrderId,
     })
-    savePortalCrmContact({
-      ...selectedSummary.contact,
-      salesOwner: selectedSummary.contact.salesOwner || portalOwner.name,
-      ownerEmail: selectedSummary.contact.ownerEmail || portalOwner.email,
-      lastContactedAt: touchpoint.contactedAt,
-      followUpAt: touchpoint.nextFollowUpAt || selectedSummary.contact.followUpAt,
-      touchpoints: [touchpoint, ...selectedSummary.contact.touchpoints],
-    })
-    setTouchpointDraft({ ...emptyCrmTouchpointDraft(), salesRep: portalOwner.name })
-    setPortalMessage('Engagement saved.')
+    try {
+      await savePortalCrmContact({
+        ...selectedSummary.contact,
+        salesOwner: selectedSummary.contact.salesOwner || portalOwner.name,
+        ownerEmail: selectedSummary.contact.ownerEmail || portalOwner.email,
+        lastContactedAt: touchpoint.contactedAt,
+        followUpAt: touchpoint.nextFollowUpAt || selectedSummary.contact.followUpAt,
+        touchpoints: [touchpoint, ...selectedSummary.contact.touchpoints],
+      })
+      setTouchpointDraft({ ...emptyCrmTouchpointDraft(), salesRep: portalOwner.name })
+      setPortalMessage('Engagement saved.')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not save the engagement.')
+    }
   }
 
   if (!session || !portalOwner) {
@@ -9730,11 +10113,27 @@ function SalesPortalApp() {
                 type="email"
                 value={loginEmail}
                 placeholder="name@trinitybats.com"
-                onChange={(event) => setLoginEmail(event.target.value)}
+                onChange={(event) => {
+                  setLoginEmail(event.target.value)
+                  setLoginCode('')
+                  setLoginCodeSentTo('')
+                }}
               />
             </label>
-            <button type="submit">Continue</button>
+            {loginCodeSentTo ? (
+              <label>
+                Sign-in code
+                <input
+                  inputMode="numeric"
+                  value={loginCode}
+                  placeholder="6-digit code"
+                  onChange={(event) => setLoginCode(event.target.value)}
+                />
+              </label>
+            ) : null}
+            <button type="submit">{loginCodeSentTo ? 'Sign in' : 'Send code'}</button>
           </form>
+          {isLoadingPortalData && !loginMessage ? <p className="helper-text">Checking session...</p> : null}
           {loginMessage ? <p className="helper-text">{loginMessage}</p> : null}
         </section>
       </main>
@@ -9790,6 +10189,7 @@ function SalesPortalApp() {
         </nav>
       </section>
 
+      {isLoadingPortalData ? <p className="helper-text crm-message">Syncing live portal data...</p> : null}
       {portalMessage ? <p className="helper-text crm-message">{portalMessage}</p> : null}
 
       {activeView === 'crm' ? (
@@ -9990,7 +10390,11 @@ function SalesPortalApp() {
               <p className="eyebrow">Order form</p>
               <h2>Sales order</h2>
             </div>
-            <datalist id="portal-shopify-bat-products"></datalist>
+            <datalist id="portal-shopify-bat-products">
+              {shopifyCatalog.map((product) => (
+                <option key={product.id} value={product.name} />
+              ))}
+            </datalist>
             <SalesOrderFormFields
               draft={orderDraft}
               setDraft={setOrderDraft}
@@ -10008,11 +10412,11 @@ function SalesPortalApp() {
                   lines: current.lines.filter((line) => line.id !== id),
                 }))
               }
-              shopifyCatalog={[]}
+              shopifyCatalog={shopifyCatalog}
               productDatalistId="portal-shopify-bat-products"
               attachmentFile={orderAttachmentFile}
               setAttachmentFile={setOrderAttachmentFile}
-              isSubmitting={false}
+              isSubmitting={isSubmittingPortalOrder}
               hideSalesRepFields
             />
           </form>
@@ -10023,24 +10427,26 @@ function SalesPortalApp() {
         <section className="panel crm-list-panel">
           <div className="section-heading">
             <p className="eyebrow">Orders</p>
-            <h2>{visibleOrders.length} visible</h2>
+            <h2>{visibleSales.length} visible</h2>
           </div>
           <div className="sales-dashboard-list">
-            {visibleOrders.length === 0 ? (
-              <p className="empty-state">No portal orders saved yet.</p>
+            {visibleSales.length === 0 ? (
+              <p className="empty-state">No sales orders found yet.</p>
             ) : (
-              visibleOrders.map((order) => (
-                <article className="sales-dashboard-card" key={order.id}>
+              visibleSales.map((sale) => (
+                <article className="sales-dashboard-card" key={sale.key}>
                   <div>
-                    <span className="profile-type-pill">{order.ownerName}</span>
-                    <h3>{order.payerName || order.playerName || 'Unnamed order'}</h3>
-                    <p>
-                      {order.draft.lines.map((line) => line.title || 'Custom bat').join(', ')}
-                    </p>
+                    <span className="profile-type-pill">
+                      {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
+                    </span>
+                    <h3>{sale.payerName || sale.customerName || 'Unnamed order'}</h3>
+                    <p>{sale.productSummary}</p>
+                    <p>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</p>
                   </div>
                   <div className="sales-card-values">
-                    <strong>{formatSalesOrderMoney(order.total)}</strong>
-                    <span>{formatSalesDashboardDate(order.submittedAt)}</span>
+                    <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                    <span>{formatSalesDashboardDate(sale.submittedAt)}</span>
+                    <span>{sale.paidAt ? `Paid ${formatSalesDashboardDate(sale.paidAt)}` : 'Open'}</span>
                   </div>
                 </article>
               ))
@@ -10099,7 +10505,7 @@ function SalesPortalApp() {
               </article>
               <article>
                 <span>Conversions</span>
-                <strong>{reportOrders.length}</strong>
+                <strong>{reportSales.length}</strong>
               </article>
               <article>
                 <span>Portal sales</span>
@@ -10127,15 +10533,86 @@ function SalesPortalApp() {
           <section className="panel crm-detail-panel">
             <div className="section-heading">
               <p className="eyebrow">{isAdmin ? 'By team member' : 'My activity'}</p>
-              <h2>{reportEngagements.length} entries</h2>
+              <h2>{reportRowsByRep.length} rows</h2>
             </div>
             <div className="crm-engagement-list">
-              {reportCountsByRep.map((row) => (
-                <article className="crm-engagement-detail" key={row.label}>
-                  <h3>{row.label}</h3>
-                  <p>{row.count} engagement{row.count === 1 ? '' : 's'}</p>
-                </article>
-              ))}
+              {reportRowsByRep.length === 0 ? (
+                <p className="empty-state">No activity or sales in this date range.</p>
+              ) : (
+                reportRowsByRep.map((row) => (
+                  <article className="crm-engagement-detail sales-portal-report-row" key={row.key}>
+                    <div>
+                      <h3>{row.label}</h3>
+                      <p>{row.email || 'No email stored'}</p>
+                    </div>
+                    <div className="sales-portal-report-row-grid">
+                      <span>{row.engagements} engagements</span>
+                      <span>{row.calls} calls</span>
+                      <span>{row.texts} texts</span>
+                      <span>{row.emails} emails</span>
+                      <span>{row.instagramDms} IG DMs</span>
+                      <span>{row.submittedSales} sales</span>
+                      <span>{formatSalesOrderMoney(row.submittedValue)} submitted</span>
+                      <span>{formatSalesOrderMoney(row.paidValue)} paid</span>
+                      <span>{formatSalesOrderMoney(row.openValue)} open</span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <div className="sales-portal-report-section">
+              <div className="section-heading">
+                <p className="eyebrow">Sales records</p>
+                <h2>{reportSales.length} sales</h2>
+              </div>
+              <div className="sales-dashboard-list">
+                {reportSales.length === 0 ? (
+                  <p className="empty-state">No sales in this range.</p>
+                ) : (
+                  reportSales.map((sale) => (
+                    <article className="sales-dashboard-card" key={sale.key}>
+                      <div>
+                        <span className="profile-type-pill">
+                          {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
+                        </span>
+                        <h3>{sale.payerName || sale.customerName || 'Unnamed sale'}</h3>
+                        <p>{sale.productSummary}</p>
+                        <p>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</p>
+                      </div>
+                      <div className="sales-card-values">
+                        <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                        <span>{formatSalesDashboardDate(sale.submittedAt)}</span>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="sales-portal-report-section">
+              <div className="section-heading">
+                <p className="eyebrow">Engagement log</p>
+                <h2>{reportEngagements.length} entries</h2>
+              </div>
+              <div className="crm-engagement-list">
+                {reportEngagements.length === 0 ? (
+                  <p className="empty-state">No engagements in this range.</p>
+                ) : (
+                  reportEngagements.map(({ contact, touchpoint }, index) => (
+                    <article className="crm-engagement-detail" key={touchpoint.id || `${contact.id}-${index}`}>
+                      <h3>
+                        {index + 1}. {getCrmTouchpointTypeLabel(touchpoint.type)}
+                      </h3>
+                      <p>{contact.name || contact.company || 'Unnamed contact'}</p>
+                      <p>{touchpoint.salesRep || contact.salesOwner || 'Unassigned'}</p>
+                      <p>{formatSalesDashboardDate(touchpoint.contactedAt)}</p>
+                      <p>{touchpoint.summary || 'No summary saved.'}</p>
+                      {touchpoint.nextStep ? <p>Next: {touchpoint.nextStep}</p> : null}
+                    </article>
+                  ))
+                )}
+              </div>
             </div>
           </section>
         </section>

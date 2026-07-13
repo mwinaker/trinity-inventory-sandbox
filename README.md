@@ -39,7 +39,7 @@ Required environment variables:
 - `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN` (analytics collector only; use a token from a separate Shopify custom app so analytics writes do not drain the inventory app's Admin API throttle bucket)
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
 - `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated additional staff contact list for internal manual-order copies; Matt, Jeremy, Stefan, and Keith at `trinitybats.com` are always included)
-- `RESEND_API_KEY` / `TRINITY_RESEND_API_KEY` (optional, preferred provider for internal manual-order copy emails to staff and sales reps; without it, the app sends individual Shopify email copies with no BCC)
+- `RESEND_API_KEY` / `TRINITY_RESEND_API_KEY` (required for live sales portal email-code sign-in; also the preferred provider for internal manual-order copy emails to staff and sales reps)
 - `TRINITY_INTERNAL_EMAIL_FROM` (required when using Resend, for example `Trinity Orders <orders@trinitybats.com>`)
 - `TRINITY_INTERNAL_EMAIL_REPLY_TO` (optional reply-to address when using Resend)
 - Manual-order attachments are uploaded to Shopify Files and linked from the order, production job, and internal order-copy email. Attachments must be 20 MB or smaller.
