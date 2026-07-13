@@ -3179,6 +3179,8 @@ type SalesPortalApiResponse = {
   message?: string
   email?: string
   devCode?: string
+  loginCode?: string
+  expiresAt?: string
   session?: SalesPortalSession
   crmContacts?: CrmContact[]
   orderJobs?: OrderJob[]
@@ -9462,6 +9464,16 @@ function SalesPortalApp() {
   const [loginMessage, setLoginMessage] = useState('')
   const [loginCode, setLoginCode] = useState('')
   const [loginCodeSentTo, setLoginCodeSentTo] = useState('')
+  const [canIssueLoginCode, setCanIssueLoginCode] = useState(false)
+  const [codeIssuerEmail, setCodeIssuerEmail] = useState(
+    seedCrmOwnerOptions.find((owner) => owner.email)?.email ?? '',
+  )
+  const [issuedLoginCode, setIssuedLoginCode] = useState<{
+    email: string
+    code: string
+    expiresAt: string
+  } | null>(null)
+  const [isIssuingLoginCode, setIsIssuingLoginCode] = useState(false)
   const [activeView, setActiveView] = useState<SalesPortalView>('crm')
   const [adminOwnerFilter, setAdminOwnerFilter] = useState('all')
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
@@ -9760,6 +9772,27 @@ function SalesPortalApp() {
   }, [isDemoSession])
 
   useEffect(() => {
+    if (isDemoSession || session) return
+
+    let cancelled = false
+
+    async function checkCodeIssuerAccess() {
+      try {
+        const response = await fetch(getApiPath('/api/internal-session'), { cache: 'no-store' })
+        if (!cancelled) setCanIssueLoginCode(response.ok)
+      } catch {
+        if (!cancelled) setCanIssueLoginCode(false)
+      }
+    }
+
+    void checkCodeIssuerAccess()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDemoSession, session])
+
+  useEffect(() => {
     if (isDemoSession || !session) return
 
     let cancelled = false
@@ -9811,6 +9844,46 @@ function SalesPortalApp() {
       cancelled = true
     }
   }, [isDemoSession, session])
+
+  async function issueSalesPortalLoginCode() {
+    const email = normalizeTrinityEmail(codeIssuerEmail)
+    const owner = getCrmOwnerByEmail(email)
+    if (!owner) {
+      setIssuedLoginCode(null)
+      setLoginMessage('Choose an approved Trinity sales team member.')
+      return
+    }
+
+    try {
+      setIsIssuingLoginCode(true)
+      const response = await fetch(getApiPath('/api/sales-portal/admin-login-code'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      })
+      const payload = (await response.json()) as SalesPortalApiResponse
+      if (!response.ok || !payload.ok || !payload.loginCode) {
+        throw new Error(payload.message ?? 'Could not create a sign-in code.')
+      }
+
+      setIssuedLoginCode({
+        email,
+        code: payload.loginCode,
+        expiresAt: payload.expiresAt ?? '',
+      })
+      setLoginEmail(email)
+      setLoginCode(payload.loginCode)
+      setLoginCodeSentTo(email)
+      setLoginMessage(payload.message ?? `Temporary sign-in code created for ${owner.label}.`)
+    } catch (error) {
+      setIssuedLoginCode(null)
+      setLoginMessage(error instanceof Error ? error.message : 'Could not create a sign-in code.')
+    } finally {
+      setIsIssuingLoginCode(false)
+    }
+  }
 
   async function loginToPortal(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -10133,6 +10206,56 @@ function SalesPortalApp() {
             ) : null}
             <button type="submit">{loginCodeSentTo ? 'Sign in' : 'Send code'}</button>
           </form>
+          {canIssueLoginCode ? (
+            <div className="sales-portal-code-issuer">
+              <div className="form-row">
+                <label>
+                  Admin code
+                  <select
+                    value={codeIssuerEmail}
+                    onChange={(event) => {
+                      setCodeIssuerEmail(event.target.value)
+                      setIssuedLoginCode(null)
+                    }}
+                  >
+                    {seedCrmOwnerOptions
+                      .filter((owner) => owner.email)
+                      .map((owner) => (
+                        <option key={owner.email} value={owner.email}>
+                          {owner.label}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isIssuingLoginCode}
+                  onClick={issueSalesPortalLoginCode}
+                >
+                  {isIssuingLoginCode ? 'Creating...' : 'Create code'}
+                </button>
+              </div>
+              {issuedLoginCode ? (
+                <div className="helper-text sales-portal-issued-code">
+                  Code <strong>{issuedLoginCode.code}</strong>
+                  {issuedLoginCode.expiresAt
+                    ? ` expires at ${new Date(issuedLoginCode.expiresAt).toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}.`
+                    : ' expires in 10 minutes.'}
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void navigator.clipboard?.writeText(issuedLoginCode.code)}
+                  >
+                    Copy
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {isLoadingPortalData && !loginMessage ? <p className="helper-text">Checking session...</p> : null}
           {loginMessage ? <p className="helper-text">{loginMessage}</p> : null}
         </section>

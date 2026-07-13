@@ -821,6 +821,40 @@ button:hover {
   letter-spacing: 0;
 }
 
+.sales-portal-code-issuer {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(50, 79, 53, 0.18);
+}
+
+.sales-portal-code-issuer .form-row {
+  align-items: end;
+}
+
+.sales-portal-code-issuer .secondary-button {
+  min-height: 42px;
+}
+
+.sales-portal-issued-code {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+}
+
+.sales-portal-issued-code strong {
+  color: #14291b;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+}
+
+.sales-portal-issued-code .secondary-button {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 .sales-portal-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

@@ -675,12 +675,7 @@ app.post('/api/sales-portal/login-code', async (request, response) => {
       return
     }
 
-    const code = createSalesPortalLoginCode()
-    salesPortalLoginCodes.set(email, {
-      codeHash: hashSalesPortalLoginCode(email, code),
-      expiresAt: Date.now() + salesPortalLoginCodeMaxAgeMs,
-      attempts: 0,
-    })
+    const { code } = createSalesPortalLoginCodeEntry(email)
 
     let devCode = ''
     if (internalEmailProviderApiKey && internalEmailFrom) {
@@ -688,7 +683,12 @@ app.post('/api/sales-portal/login-code', async (request, response) => {
     } else if (isLocalRequest(request)) {
       devCode = code
     } else {
-      throw new Error('Sales portal email sign-in is not configured on this server.')
+      response.status(503).json({
+        ok: false,
+        message:
+          'Sales portal email delivery is not configured yet. Ask an admin to create a temporary sign-in code.',
+      })
+      return
     }
 
     response.json({
@@ -703,6 +703,27 @@ app.post('/api/sales-portal/login-code', async (request, response) => {
       message: error instanceof Error ? error.message : 'Could not send the sales portal code.',
     })
   }
+})
+
+app.post('/api/sales-portal/admin-login-code', requireInternalAccess, (request, response) => {
+  const email = normalizeSalesPortalEmail(request.body?.email)
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!email || !owner) {
+    response.status(400).json({
+      ok: false,
+      message: 'Choose an approved Trinity sales team member.',
+    })
+    return
+  }
+
+  const { code, expiresAt } = createSalesPortalLoginCodeEntry(email)
+  response.json({
+    ok: true,
+    email,
+    loginCode: code,
+    expiresAt: new Date(expiresAt).toISOString(),
+    message: `Temporary sign-in code created for ${owner.label}.`,
+  })
 })
 
 app.post('/api/sales-portal/verify-code', (request, response) => {
@@ -1753,17 +1774,7 @@ function getSalesPortalOwnerForEmail(email) {
   const normalizedEmail = normalizeSalesPortalEmail(email)
   if (!normalizedEmail) return null
 
-  const knownOwner = salesPortalTeamByEmail.get(normalizedEmail)
-  if (knownOwner) return knownOwner
-
-  const firstName = normalizedEmail.split('@')[0] || 'Team member'
-  const name = firstName.charAt(0).toUpperCase() + firstName.slice(1)
-  return {
-    key: normalizedEmail,
-    label: name,
-    name,
-    email: normalizedEmail,
-  }
+  return salesPortalTeamByEmail.get(normalizedEmail) ?? null
 }
 
 function getSalesPortalOwnerKey(name, email) {
@@ -1842,6 +1853,18 @@ function requireSalesPortalAccess(request, response, next) {
 
 function createSalesPortalLoginCode() {
   return String(crypto.randomInt(100000, 1000000))
+}
+
+function createSalesPortalLoginCodeEntry(email) {
+  const code = createSalesPortalLoginCode()
+  const expiresAt = Date.now() + salesPortalLoginCodeMaxAgeMs
+  salesPortalLoginCodes.set(email, {
+    codeHash: hashSalesPortalLoginCode(email, code),
+    expiresAt,
+    attempts: 0,
+  })
+
+  return { code, expiresAt }
 }
 
 function hashSalesPortalLoginCode(email, code) {
