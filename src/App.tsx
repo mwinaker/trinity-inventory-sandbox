@@ -9347,7 +9347,12 @@ function SalesPortalApp() {
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
   const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
     const stored = window.localStorage.getItem(crmContactStorageKey)
-    if (stored) return (JSON.parse(stored) as CrmContact[]).map((contact) => normalizeCrmContact(contact))
+    if (stored) {
+      const savedContacts = (JSON.parse(stored) as CrmContact[]).map((contact) =>
+        normalizeCrmContact(contact),
+      )
+      return isDemoSession && savedContacts.length === 0 ? createSalesPortalDemoContacts() : savedContacts
+    }
     return isDemoSession ? createSalesPortalDemoContacts() : []
   })
   const [portalOrders, setPortalOrders] = useState<SalesPortalOrder[]>(() => {
