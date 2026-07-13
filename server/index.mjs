@@ -733,15 +733,27 @@ app.get('/api/catalog', async (_request, response) => {
   }
 })
 
-app.get(['/ai/shoply-bat-knowledge.md', '/api/shoply-bat-knowledge.md'], async (request, response) => {
+app.get(['/ai/shoply-bat-knowledge.md', '/api/shoply-bat-knowledge.md'], (_request, response) => {
+  response.set('Cache-Control', 'no-store')
+  response.set('X-Robots-Tag', 'noindex, nofollow')
+  response.status(404).type('text/plain').send('Not found.')
+})
+
+app.get('/api/shoply-bat-knowledge.json', (_request, response) => {
+  response.set('Cache-Control', 'no-store')
+  response.set('X-Robots-Tag', 'noindex, nofollow')
+  response.status(404).json({ ok: false, message: 'Not found.' })
+})
+
+app.get('/api/internal/shoply-bat-knowledge.md', requireInternalAccess, async (_request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).type('text/plain').send('Shopify credentials are not configured.')
       return
     }
 
-    const knowledge = await getShoplyBatKnowledge(request)
-    response.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=1800')
+    const knowledge = await getShoplyBatKnowledge()
+    response.set('Cache-Control', 'no-store')
     response.set('Content-Type', 'text/markdown; charset=utf-8')
     response.set('X-Robots-Tag', 'noindex, nofollow')
     response.send(renderShoplyBatKnowledgeMarkdown(knowledge))
@@ -752,7 +764,7 @@ app.get(['/ai/shoply-bat-knowledge.md', '/api/shoply-bat-knowledge.md'], async (
   }
 })
 
-app.get('/api/shoply-bat-knowledge.json', async (request, response) => {
+app.get('/api/internal/shoply-bat-knowledge.json', requireInternalAccess, async (_request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -762,8 +774,8 @@ app.get('/api/shoply-bat-knowledge.json', async (request, response) => {
       return
     }
 
-    const knowledge = await getShoplyBatKnowledge(request)
-    response.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=1800')
+    const knowledge = await getShoplyBatKnowledge()
+    response.set('Cache-Control', 'no-store')
     response.set('X-Robots-Tag', 'noindex, nofollow')
     response.json({ ok: true, ...knowledge })
   } catch (error) {
@@ -2437,25 +2449,24 @@ async function loadSharedState() {
   }
 }
 
-async function getShoplyBatKnowledge(request) {
+async function getShoplyBatKnowledge() {
   const [state, catalog] = await Promise.all([loadShoplyKnowledgeState(), getCatalogProducts()])
-  const publicBaseUrl = resolvePublicBaseUrl(request, '')
-  const markdownUrl = publicBaseUrl ? `${publicBaseUrl}/ai/shoply-bat-knowledge.md` : ''
 
   return {
     generatedAt: new Date().toISOString(),
     source: {
       shop: shopDomain,
-      markdownUrl,
-      purpose: 'Sanitized Trinity bat-selection knowledge feed for Shoply AI.',
+      access: 'private-internal-export',
+      purpose: 'Sanitized Trinity bat-selection knowledge export for an approved AI agent.',
     },
     usageRules: [
-      'Use this feed as fit and product-selection guidance, not as a public inventory promise.',
-      'Recommend only Trinity products, models, collections, or pages present in this feed or the crawled Trinity storefront.',
+      'Use this private export as fit and product-selection guidance, not as a public inventory promise.',
+      'Recommend only Trinity products, models, collections, or pages present in this export or the crawled Trinity storefront.',
       'Ask concise qualifying questions before recommending a bat when player size, level, current bat, or intended use is missing.',
       'Give one primary recommendation and one alternate when enough information is available.',
       'Do not quote internal counts as guaranteed live stock, and route final custom-build decisions to a Trinity team member.',
       'Do not mention customer names, orders, billet barcodes, billet locations, billing contacts, or internal sales details.',
+      'Do not publish this export to a public page or any unauthenticated crawler URL.',
     ],
     products: sanitizeShoplyProducts(catalog.products),
     customModelGuidance: buildCustomModelGuidance(state.customBatModels),
@@ -2680,15 +2691,17 @@ function formatModelCompatibilityForKnowledge(compatibility = {}) {
 
 function renderShoplyBatKnowledgeMarkdown(knowledge) {
   const lines = [
-    '# Trinity Bat Selector Knowledge Feed',
+    '# Trinity Bat Selector Private Knowledge Export',
     '',
     `Generated: ${knowledge.generatedAt}`,
     `Shop: ${knowledge.source.shop}`,
+    `Access: ${knowledge.source.access}`,
     '',
-    'This is a sanitized feed from the Trinity Billet Inventory system for Shoply AI.',
+    'This is a private sanitized export from the Trinity Billet Inventory system for an approved AI agent.',
     'It intentionally excludes customer records, billing contacts, order details, billet barcodes, billet locations, and raw internal notes.',
+    'Do not publish this export to a public web page, storefront page, or unauthenticated crawler URL.',
     '',
-    '## How Shoply Should Use This',
+    '## How The Agent Should Use This',
     '',
     ...knowledge.usageRules.map((rule) => `- ${singleLine(rule)}`),
     '',
