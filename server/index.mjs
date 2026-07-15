@@ -138,24 +138,30 @@ const internalOrderNotificationEmails = parseEmailList(
   requiredInternalOrderNotificationEmails,
 )
 const salesPortalTeamMembers = [
-  ['Keith', 'keith@trinitybats.com'],
-  ['Daniel', 'daniel@trinitybats.com'],
-  ['Shane', 'shane@trinitybats.com'],
-  ['Steve', 'steve@trinitybats.com'],
-  ['Jeremy McKee', 'jeremy@trinitybats.com'],
-  ['Matt', 'matt@trinitybats.com'],
-  ['Stefan', 'stefan@trinitybats.com'],
-  ['Henry', 'henry@trinitybats.com'],
-  ['Nick', 'nick@trinitybats.com'],
-  ['Scott', 'scott@trinitybats.com'],
-  ['Brandon', 'brandon@trinitybats.com'],
-].map(([name, email]) => ({
-  name,
-  label: name,
-  email,
-  key: email,
+  { name: 'Keith Frye', email: 'keith@trinitybats.com', aliases: ['Keith'] },
+  { name: 'Daniel Cope', email: 'daniel@trinitybats.com', aliases: ['Daniel'] },
+  { name: 'Shane Telfer', email: 'shane@trinitybats.com', aliases: ['Shane'] },
+  {
+    name: 'Steve Panayiotou',
+    email: 'steve@trinitybats.com',
+    aliases: ['Steve', 'Steve P.', 'Steve P'],
+  },
+  { name: 'Jeremy Maddox', email: '', key: 'jeremy-maddox', aliases: [] },
+  { name: 'Jeremy McKee', email: 'jeremy@trinitybats.com', aliases: [] },
+  { name: 'Matt Winaker', email: 'matt@trinitybats.com', aliases: ['Matt'] },
+  { name: 'Stefan', email: 'stefan@trinitybats.com', aliases: [] },
+  { name: 'Henry', email: 'henry@trinitybats.com', aliases: [] },
+  { name: 'Nick', email: 'nick@trinitybats.com', aliases: [] },
+  { name: 'Scott Tubbs', email: 'scott@trinitybats.com', aliases: ['Scott'] },
+  { name: 'Brandon McIlwain', email: 'brandon@trinitybats.com', aliases: ['Brandon'] },
+].map((member) => ({
+  ...member,
+  label: member.name,
+  key: member.key ?? member.email,
 }))
-const salesPortalTeamByEmail = new Map(salesPortalTeamMembers.map((member) => [member.email, member]))
+const salesPortalTeamByEmail = new Map(
+  salesPortalTeamMembers.filter((member) => member.email).map((member) => [member.email, member]),
+)
 const salesPortalAdminEmails = new Set([
   'matt@trinitybats.com',
   'stefan@trinitybats.com',
@@ -1143,7 +1149,7 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
       )
       const nextCrmContacts = mergeRecordsByKey(
         currentState.crmContacts,
-        arrayFromPayload(payload.crmContacts),
+        getManualCrmContactRecords(payload.crmContacts),
         (item) => item.id,
       )
       const nextBillets = reconcileBilletProductionStatuses(
@@ -1832,15 +1838,41 @@ function getSalesPortalOwnerForEmail(email) {
   return salesPortalTeamByEmail.get(normalizedEmail) ?? null
 }
 
+function normalizeSalesPortalOwnerName(value) {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function getSalesPortalOwnerAliases(owner) {
+  return [owner.name, owner.label, ...(owner.aliases ?? [])]
+    .map((value) => normalizeSalesPortalOwnerName(value))
+    .filter(Boolean)
+}
+
+function getSalesPortalOwnerForName(name) {
+  const normalizedName = normalizeSalesPortalOwnerName(name)
+  if (!normalizedName) return null
+
+  return (
+    salesPortalTeamMembers.find((owner) =>
+      getSalesPortalOwnerAliases(owner).includes(normalizedName),
+    ) ?? null
+  )
+}
+
 function getSalesPortalOwnerKey(name, email) {
   const normalizedEmail = normalizeSalesPortalEmail(email)
+  const emailOwner = normalizedEmail ? getSalesPortalOwnerForEmail(normalizedEmail) : null
+  if (emailOwner) return emailOwner.key
+
+  const nameOwner = getSalesPortalOwnerForName(name)
+  if (nameOwner) return nameOwner.key
+
   if (normalizedEmail) return normalizedEmail
 
-  const normalizedName = cleanString(name).toLowerCase()
-  const matchedOwner = salesPortalTeamMembers.find((owner) =>
-    [owner.name, owner.label].map((value) => cleanString(value).toLowerCase()).includes(normalizedName),
-  )
-  if (matchedOwner?.email) return matchedOwner.email
+  const normalizedName = normalizeSalesPortalOwnerName(name)
 
   return normalizedName || 'unassigned'
 }
@@ -2097,11 +2129,50 @@ function isSalesPortalOrderJobOwnedBy(job, owner) {
   return getSalesPortalOwnerKey(job?.salesRep, job?.salesRepEmail) === owner.key
 }
 
+const manualCrmContactSourceLabels = new Set([
+  'manual crm entry',
+  'sales portal',
+  'sales portal demo',
+  'crm assistant',
+])
+const manualCrmContactTagLabels = new Set(['manual entry', 'ai captured'])
+
+function normalizeCrmContactLabel(value) {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function getCrmContactTags(contact) {
+  return arrayFromPayload(contact?.tags).map((tag) => cleanString(tag)).filter(Boolean)
+}
+
+function isManualCrmContactRecord(contact) {
+  const source = normalizeCrmContactLabel(contact?.source)
+  if (manualCrmContactSourceLabels.has(source)) return true
+
+  return getCrmContactTags(contact).some((tag) =>
+    manualCrmContactTagLabels.has(normalizeCrmContactLabel(tag)),
+  )
+}
+
+function getManualCrmContactRecords(contacts) {
+  return arrayFromPayload(contacts).filter(isManualCrmContactRecord)
+}
+
+function getNonManualCrmContactDeleteIds(contacts) {
+  return arrayFromPayload(contacts)
+    .filter((contact) => !isManualCrmContactRecord(contact))
+    .map((contact) => cleanString(contact?.id))
+    .filter(Boolean)
+}
+
 function filterSalesPortalStateForSession(state, session) {
   const internalOrderJobs = arrayFromPayload(state?.orderJobs).filter(
     (job) => job?.origin === 'internal_sales',
   )
-  const crmContacts = arrayFromPayload(state?.crmContacts)
+  const crmContacts = getManualCrmContactRecords(state?.crmContacts)
 
   if (session?.isAdmin) {
     return {
@@ -2128,23 +2199,30 @@ function prepareSalesPortalCrmContactForSession(contact, session) {
   const sessionOwner = getSalesPortalOwnerForEmail(session?.email)
   if (!sessionOwner) return null
   const requestedOwner =
-    session?.isAdmin && normalizeSalesPortalEmail(contact.ownerEmail)
-      ? getSalesPortalOwnerForEmail(contact.ownerEmail)
+    session?.isAdmin
+      ? getSalesPortalOwnerForEmail(contact.ownerEmail) ?? getSalesPortalOwnerForName(contact.salesOwner)
       : sessionOwner
   const owner = requestedOwner || sessionOwner
   const now = new Date().toISOString()
-  const touchpoints = arrayFromPayload(contact.touchpoints).map((touchpoint) => ({
-    ...touchpoint,
-    salesRep: cleanString(touchpoint?.salesRep) || owner.name,
-  }))
+  const touchpoints = arrayFromPayload(contact.touchpoints).map((touchpoint) => {
+    const touchpointOwner = getSalesPortalOwnerForName(touchpoint?.salesRep)
+    return {
+      ...touchpoint,
+      salesRep: touchpointOwner?.name || cleanString(touchpoint?.salesRep) || owner.name,
+    }
+  })
+  const tags = Array.from(new Set([...getCrmContactTags(contact), 'Manual entry']))
 
   return {
     ...contact,
     id: cleanString(contact.id) || createPlainId('crm-contact'),
-    salesOwner: session?.isAdmin ? cleanString(contact.salesOwner) || owner.name : owner.name,
+    salesOwner:
+      session?.isAdmin && !requestedOwner ? cleanString(contact.salesOwner) || owner.name : owner.name,
     ownerEmail: session?.isAdmin
       ? normalizeSalesPortalEmail(contact.ownerEmail) || owner.email
       : owner.email,
+    source: 'Manual CRM entry',
+    tags,
     touchpoints,
     sandboxOnly: false,
     updatedAt: cleanString(contact.updatedAt) || now,
@@ -2762,7 +2840,7 @@ function normalizeStateSnapshot(value) {
     customBatModels: arrayFromPayload(value.customBatModels),
     orderJobs: arrayFromPayload(value.orderJobs),
     billingContacts: arrayFromPayload(value.billingContacts),
-    crmContacts: arrayFromPayload(value.crmContacts),
+    crmContacts: getManualCrmContactRecords(value.crmContacts),
   }
 }
 
@@ -2871,12 +2949,19 @@ function normalizeStatePatch(payload) {
       arrayFromPayload(payload?.[entry.key]).filter(Boolean),
     ]),
   )
+  patch.crmContacts = getManualCrmContactRecords(patch.crmContacts)
   patch.deletes = Object.fromEntries(
     getStateResourcePatchConfigs().map((entry) => [
       entry.key,
       arrayFromPayload(payload?.deletes?.[entry.key])
         .map((id) => cleanString(id))
         .filter(Boolean),
+    ]),
+  )
+  patch.deletes.crmContacts = Array.from(
+    new Set([
+      ...arrayFromPayload(patch.deletes.crmContacts).map((id) => cleanString(id)).filter(Boolean),
+      ...getNonManualCrmContactDeleteIds(payload?.crmContacts),
     ]),
   )
 
@@ -2907,6 +2992,13 @@ function buildStatePatchFromStates(baseState, nextState) {
     )
     if (changedRecords.length > 0) {
       patch[entry.key] = changedRecords
+    }
+  }
+  const deletedCrmContactIds = getNonManualCrmContactDeleteIds(baseState?.crmContacts)
+  if (deletedCrmContactIds.length > 0) {
+    patch.deletes = {
+      ...(patch.deletes ?? {}),
+      crmContacts: deletedCrmContactIds,
     }
   }
 
@@ -2940,6 +3032,7 @@ function applyStatePatchToCachedState(state, patch) {
     if (items.length === 0) continue
     nextState[entry.key] = mergeRecordsByKey(nextState[entry.key], items, entry.getKey)
   }
+  nextState.crmContacts = getManualCrmContactRecords(nextState.crmContacts)
 
   return nextState
 }
@@ -2950,6 +3043,14 @@ async function applyStatePatch(payload, options = {}) {
   }
 
   const patch = normalizeStatePatch(payload)
+  if (patch.crmContacts.length > 0 || patch.deletes.crmContacts.length > 0) {
+    const staleCrmContactIds = getNonManualCrmContactDeleteIds(
+      await listRecords(resourceConfigs.crmContacts),
+    )
+    patch.deletes.crmContacts = Array.from(
+      new Set([...patch.deletes.crmContacts, ...staleCrmContactIds]),
+    )
+  }
   const cachedStateBeforeWrite = stateCacheValue
   const applied = {}
 
@@ -3110,7 +3211,7 @@ async function loadSharedState() {
   const customBatModels = await listRecords(resourceConfigs.customBatModels)
   const orderJobs = await listRecords(resourceConfigs.orderJobs)
   const billingContacts = await listRecords(resourceConfigs.billingContacts)
-  const crmContacts = await listRecords(resourceConfigs.crmContacts)
+  const crmContacts = getManualCrmContactRecords(await listRecords(resourceConfigs.crmContacts))
 
   return {
     ok: true,

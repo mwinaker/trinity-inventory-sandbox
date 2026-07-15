@@ -1161,6 +1161,46 @@ button:hover {
   gap: 10px;
 }
 
+.crm-owner-group {
+  display: grid;
+  gap: 8px;
+}
+
+.crm-owner-group + .crm-owner-group {
+  padding-top: 12px;
+  border-top: 1px solid rgba(72, 50, 31, 0.12);
+}
+
+.crm-owner-group-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 2px 0;
+}
+
+.crm-owner-group-heading div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.crm-owner-group-heading strong {
+  color: #2a1a10;
+  font-size: 0.92rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.crm-owner-group-heading span {
+  color: #766454;
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .crm-contact-card {
   display: grid;
   gap: 6px;
@@ -2231,6 +2271,72 @@ td select {
 @media (max-width: 520px) {
   .app-shell {
     padding: 12px;
+  }
+
+  .app-section-crm .hero-panel {
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .app-section-crm .hero-panel > div:first-child {
+    min-height: auto;
+    padding: 16px;
+  }
+
+  .app-section-crm .eyebrow {
+    margin-bottom: 6px;
+    font-size: 0.68rem;
+  }
+
+  .app-section-crm h1 {
+    max-width: 100%;
+    font-size: 2.3rem;
+    letter-spacing: 0;
+  }
+
+  .app-section-crm .hero-copy {
+    display: none;
+  }
+
+  .app-section-crm .section-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+  }
+
+  .app-section-crm .section-tabs button {
+    width: 100%;
+    min-height: 44px;
+    padding: 0 8px;
+    line-height: 1.1;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .app-section-crm .hero-card {
+    display: grid;
+    gap: 4px;
+    padding: 14px 16px;
+  }
+
+  .app-section-crm .hero-card .status-dot {
+    display: none;
+  }
+
+  .app-section-crm .hero-card strong {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.15;
+  }
+
+  .app-section-crm .hero-card p {
+    font-size: 0.84rem;
+    line-height: 1.35;
+  }
+
+  .app-section-crm .crm-toolbar {
+    gap: 12px;
   }
 
   .public-order-shell {
