@@ -1,4 +1,12 @@
-import { useEffect, useEffectEvent, useRef, useState } from 'react'
+import {
+  type Dispatch,
+  type SetStateAction,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -40,14 +48,14 @@ declare global {
   }
 }
 
-type ActiveSection = 'inventory' | 'orders' | 'players' | 'models' | 'costs'
+type ActiveSection = 'inventory' | 'orders' | 'sales' | 'crm' | 'players' | 'models' | 'costs'
 type BilletStatus = 'storage' | 'production'
 type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'not_required'
 
 type Species = 'Maple' | 'Birch' | 'Ash'
-type Grade = 'Prime' | 'Select' | 'Choice' | 'Trophy' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
+type Grade = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau' | 'Cahan'
@@ -58,6 +66,7 @@ type Billet = {
   barcode: string
   species: Species
   grade: Grade
+  trophyEligible: boolean
   mlbEligible: boolean
   hasBarrelKnot: KnotStatus
   source: Source
@@ -83,6 +92,7 @@ type InventorySort =
 
 type SortDirection = 'asc' | 'desc'
 type InventoryMlbFilter = 'yes' | 'no'
+type InventoryTrophyFilter = 'yes' | 'no'
 
 type CustomBuild = {
   model: string
@@ -98,10 +108,18 @@ type BatVariation = {
   modelNumber: string
   length: number | ''
   weight: string
+  source: Source | ''
+  species: Species
   woodTier: WoodTier
   colorPreferences: string
+  idealBilletWeight: string
   compatibleBilletIds: string[]
   notes: string
+}
+
+type EditingVariantTarget = {
+  profileId: string
+  variantId: string
 }
 
 type PlayerProfile = {
@@ -168,10 +186,22 @@ type OrderSpecs = {
   wood: string
   handleColor: string
   barrelColor: string
+  bandColor: string
   logoColor: string
   engraving: string
   cupped: string
   notes: string
+}
+
+type OrderAttachment = {
+  id: string
+  shopifyFileId: string
+  filename: string
+  downloadUrl: string
+  contentType: string
+  bytes: number
+  uploadedAt: string
+  fileStatus: string
 }
 
 type OrderJob = {
@@ -207,6 +237,9 @@ type OrderJob = {
   assignedBilletId: string
   linkedProducedBatId: string
   salesRep: string
+  salesRepEmail: string
+  salesRepSubmissionNotificationSentAt: string
+  salesRepPaidNotificationSentAt: string
   totalPrice: string
   currency: string
   specs: OrderSpecs
@@ -216,6 +249,7 @@ type OrderJob = {
     variantId: string
     productId: string
   }>
+  internalAttachment: OrderAttachment | null
   notes: string
   internalNotes: string
   createdAt: string
@@ -234,6 +268,7 @@ type SalesOrderLineDraft = {
   targetWeight: string
   handleColor: string
   barrelColor: string
+  bandColor: string
   logoColor: string
   engraving: string
   cupped: 'Yes' | 'No'
@@ -241,8 +276,9 @@ type SalesOrderLineDraft = {
   notes: string
 }
 
-type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast'
+type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast' | 'comped'
 type ProductionTimelineOption = 'normal' | 'rush'
+const maxSalesOrderAttachmentBytes = 20 * 1024 * 1024
 
 type SalesOrderDraft = {
   playerName: string
@@ -254,13 +290,6 @@ type SalesOrderDraft = {
   shippingProvinceCode: string
   shippingZip: string
   shippingCountryCode: string
-  billingAddressDifferent: boolean
-  billingAddress1: string
-  billingAddress2: string
-  billingCity: string
-  billingProvinceCode: string
-  billingZip: string
-  billingCountryCode: string
   billingDifferent: boolean
   requiresShipping: boolean
   shippingSpeed: ShippingSpeedOption
@@ -271,6 +300,8 @@ type SalesOrderDraft = {
   billingCompany: string
   billingRelationship: string
   salesRep: string
+  salesRepEmail: string
+  attachment: OrderAttachment | null
   notes: string
   createDraftOrder: boolean
   sendInvoice: boolean
@@ -312,6 +343,164 @@ type RemoteState = {
   customBatModels: BatModelProduct[]
   orderJobs: OrderJob[]
   billingContacts: BillingContact[]
+  crmContacts: CrmContact[]
+}
+
+type RemoteStateDeletes = Partial<Record<keyof RemoteState, string[]>>
+type RemoteStatePatch = Partial<RemoteState> & {
+  deletes?: RemoteStateDeletes
+}
+
+type SalesDashboardRange = '30' | '90' | 'all'
+
+type SalesDashboardSale = {
+  key: string
+  draftOrderName: string
+  paidOrderName: string
+  salesRep: string
+  salesRepEmail: string
+  customerName: string
+  payerName: string
+  submittedAt: string
+  paidAt: string
+  invoiceStatus: InvoiceStatus
+  isPaid: boolean
+  total: number
+  quantity: number
+  lineCount: number
+  productSummary: string
+}
+
+type SalesRepSummary = {
+  key: string
+  label: string
+  email: string
+  submittedCount: number
+  submittedValue: number
+  paidCount: number
+  paidValue: number
+  openCount: number
+  openValue: number
+  averageDaysToPay: number | null
+}
+
+type CrmStage =
+  | 'lead'
+  | 'qualified'
+  | 'quoted'
+  | 'invoice_sent'
+  | 'active_customer'
+  | 'nurture'
+  | 'lost'
+
+type CrmPriority = 'hot' | 'warm' | 'steady' | 'low'
+type CrmWorkspaceView = 'new_contact' | 'contact_list' | 'engagements' | 'assistant'
+type CrmTouchpointType =
+  | 'call'
+  | 'text'
+  | 'email'
+  | 'instagram_dm'
+  | 'in_person'
+  | 'social'
+  | 'quote'
+  | 'invoice'
+  | 'note'
+type SalesPortalView = 'crm' | 'order_form' | 'orders' | 'reports'
+
+type CrmTouchpoint = {
+  id: string
+  type: CrmTouchpointType
+  contactedAt: string
+  salesRep: string
+  summary: string
+  sentiment: string
+  nextStep: string
+  nextFollowUpAt: string
+  relatedOrderId: string
+}
+
+type CrmContact = {
+  id: string
+  name: string
+  company: string
+  role: string
+  email: string
+  phone: string
+  alternateContacts: string
+  playerNames: string[]
+  salesOwner: string
+  ownerEmail: string
+  stage: CrmStage
+  priority: CrmPriority
+  source: string
+  tags: string[]
+  preferredContactMethod: string
+  buyingContext: string
+  batPreferences: string
+  relationshipNotes: string
+  objections: string
+  opportunities: string
+  followUpAt: string
+  lastContactedAt: string
+  createdAt: string
+  updatedAt: string
+  touchpoints: CrmTouchpoint[]
+  sandboxOnly: boolean
+}
+
+type CrmTouchpointDraft = {
+  type: CrmTouchpointType
+  contactedAt: string
+  salesRep: string
+  summary: string
+  sentiment: string
+  nextStep: string
+  nextFollowUpAt: string
+  relatedOrderId: string
+}
+
+type CrmContactSummary = {
+  contact: CrmContact
+  orders: OrderJob[]
+  orderCount: number
+  submittedValue: number
+  paidValue: number
+  openValue: number
+  openInvoiceCount: number
+  lastOrderAt: string
+  lastActivityAt: string
+  followUpDue: boolean
+}
+
+type CrmOwnerOption = {
+  key: string
+  label: string
+  name: string
+  email: string
+  aliases?: string[]
+}
+
+type SalesPortalSession = {
+  email: string
+  name?: string
+  label?: string
+  isAdmin?: boolean
+  loggedInAt: string
+}
+
+type SalesPortalOrder = {
+  id: string
+  ownerName: string
+  ownerEmail: string
+  submittedAt: string
+  contactId: string
+  playerName: string
+  payerName: string
+  payerEmail: string
+  payerPhone: string
+  total: number
+  status: 'local_saved' | 'submitted'
+  draft: SalesOrderDraft
 }
 
 const billetStorageKey = 'trinity-billet-sandbox-v5'
@@ -320,21 +509,38 @@ const producedBatStorageKey = 'trinity-produced-bats-v1'
 const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
 const orderJobStorageKey = 'trinity-order-jobs-v1'
 const billingContactStorageKey = 'trinity-billing-contacts-v1'
+const crmContactStorageKey = 'trinity-crm-sandbox-contacts-v1'
+const crmActiveOwnerStorageKey = 'trinity-crm-sandbox-active-owner-v1'
+const salesPortalSessionStorageKey = 'trinity-sales-portal-session-v1'
+const salesPortalOrderStorageKey = 'trinity-sales-portal-orders-v1'
+const legacyLocalStateBackupKey = 'trinity-local-recovery-backup-v1'
+const legacyLocalStateKeys = [
+  billetStorageKey,
+  playerStorageKey,
+  producedBatStorageKey,
+  customBatModelStorageKey,
+  orderJobStorageKey,
+  billingContactStorageKey,
+  crmContactStorageKey,
+  crmActiveOwnerStorageKey,
+]
 
 const standardBilletLength = 37
 const standardBilletDiameter = 2.75
 const rjBilletDiameter = 2.79
+const billetDiameterWeightCorrectionOz = 1.75
 const defaultMoisture = 8
 const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
-const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Trophy', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
+const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceGradeOptions: Record<Source, Grade[]> = {
-  "RJ's Tree Farms": ['Prime', 'Select', 'Choice', 'Trophy'],
-  'Great Lakes Veneer': ['Prime', 'Select', 'Choice', 'Trophy'],
-  Cahan: ['Prime', 'Select', 'Choice', 'Trophy'],
+  "RJ's Tree Farms": ['Prime', 'Select', 'Choice'],
+  'Great Lakes Veneer': ['Prime', 'Select', 'Choice'],
+  Cahan: ['Prime', 'Select', 'Choice'],
   Champeau: ['Pro', 'Semi-Pro', 'Promo', 'Blem'],
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Cahan', 'Champeau']
+const oversizedDiameterSources = new Set<Source>(["RJ's Tree Farms", 'Cahan'])
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
 const rushProductionSurchargeUnitAmount = 50
@@ -342,6 +548,7 @@ const shippingSpeedOptions: Array<{ value: ShippingSpeedOption; label: string }>
   { value: 'standard', label: 'Standard' },
   { value: 'fast', label: 'Fast' },
   { value: 'really_fast', label: 'Really fast' },
+  { value: 'comped', label: 'Comped' },
 ]
 const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label: string }> = [
   { value: 'normal', label: 'Normal' },
@@ -350,35 +557,208 @@ const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label:
     label: `Rush production (+${formatSalesOrderMoney(rushProductionSurchargeUnitAmount)}/bat)`,
   },
 ]
-const customizerColorOptions = [
-  'Black',
-  'Dark Gray',
-  'Light Gray',
+const salesDashboardRangeOptions: Array<{ value: SalesDashboardRange; label: string }> = [
+  { value: '30', label: 'Last 30 days' },
+  { value: '90', label: 'Last 90 days' },
+  { value: 'all', label: 'All time' },
+]
+const crmStageOptions: Array<{ value: CrmStage; label: string }> = [
+  { value: 'lead', label: 'Lead' },
+  { value: 'qualified', label: 'Qualified' },
+  { value: 'quoted', label: 'Quoted' },
+  { value: 'invoice_sent', label: 'Invoice sent' },
+  { value: 'active_customer', label: 'Active customer' },
+  { value: 'nurture', label: 'Nurture' },
+  { value: 'lost', label: 'Lost' },
+]
+const crmPriorityOptions: Array<{ value: CrmPriority; label: string }> = [
+  { value: 'hot', label: 'Hot' },
+  { value: 'warm', label: 'Warm' },
+  { value: 'steady', label: 'Steady' },
+  { value: 'low', label: 'Low' },
+]
+const crmTouchpointTypeOptions: Array<{ value: CrmTouchpointType; label: string }> = [
+  { value: 'call', label: 'Call' },
+  { value: 'text', label: 'Text' },
+  { value: 'email', label: 'Email' },
+  { value: 'instagram_dm', label: 'IG DM' },
+  { value: 'in_person', label: 'In person' },
+  { value: 'social', label: 'Social' },
+  { value: 'quote', label: 'Quote' },
+  { value: 'invoice', label: 'Invoice' },
+  { value: 'note', label: 'Note' },
+]
+const crmContactMethodOptions = ['Call', 'Text', 'Email', 'In person', 'Instagram', 'Any']
+const crmWorkspaceViews: Array<{ value: CrmWorkspaceView; label: string }> = [
+  { value: 'new_contact', label: 'New contact' },
+  { value: 'contact_list', label: 'Contact list' },
+  { value: 'engagements', label: 'Engagements' },
+  { value: 'assistant', label: 'CRM assistant' },
+]
+const seedCrmOwnerOptions: CrmOwnerOption[] = [
+  {
+    key: 'keith@trinitybats.com',
+    label: 'Keith Frye',
+    name: 'Keith Frye',
+    email: 'keith@trinitybats.com',
+    aliases: ['Keith'],
+  },
+  {
+    key: 'daniel@trinitybats.com',
+    label: 'Daniel Cope',
+    name: 'Daniel Cope',
+    email: 'daniel@trinitybats.com',
+    aliases: ['Daniel'],
+  },
+  {
+    key: 'shane@trinitybats.com',
+    label: 'Shane Telfer',
+    name: 'Shane Telfer',
+    email: 'shane@trinitybats.com',
+    aliases: ['Shane'],
+  },
+  {
+    key: 'steve@trinitybats.com',
+    label: 'Steve Panayiotou',
+    name: 'Steve Panayiotou',
+    email: 'steve@trinitybats.com',
+    aliases: ['Steve', 'Steve P.', 'Steve P'],
+  },
+  { key: 'jeremy-maddox', label: 'Jeremy Maddox', name: 'Jeremy Maddox', email: '' },
+  {
+    key: 'jeremy@trinitybats.com',
+    label: 'Jeremy McKee',
+    name: 'Jeremy McKee',
+    email: 'jeremy@trinitybats.com',
+  },
+  {
+    key: 'matt@trinitybats.com',
+    label: 'Matt Winaker',
+    name: 'Matt Winaker',
+    email: 'matt@trinitybats.com',
+    aliases: ['Matt'],
+  },
+  { key: 'stefan@trinitybats.com', label: 'Stefan', name: 'Stefan', email: 'stefan@trinitybats.com' },
+  { key: 'henry@trinitybats.com', label: 'Henry', name: 'Henry', email: 'henry@trinitybats.com' },
+  { key: 'nick@trinitybats.com', label: 'Nick', name: 'Nick', email: 'nick@trinitybats.com' },
+  {
+    key: 'scott@trinitybats.com',
+    label: 'Scott Tubbs',
+    name: 'Scott Tubbs',
+    email: 'scott@trinitybats.com',
+    aliases: ['Scott'],
+  },
+  {
+    key: 'brandon@trinitybats.com',
+    label: 'Brandon McIlwain',
+    name: 'Brandon McIlwain',
+    email: 'brandon@trinitybats.com',
+    aliases: ['Brandon'],
+  },
+]
+const salesPortalAdminEmails = new Set([
+  'matt@trinitybats.com',
+  'stefan@trinitybats.com',
+  'jeremy@trinitybats.com',
+  'keith@trinitybats.com',
+])
+const salesPortalViews: Array<{ value: SalesPortalView; label: string; adminOnly?: boolean }> = [
+  { value: 'crm', label: 'CRM' },
+  { value: 'order_form', label: 'Order form' },
+  { value: 'orders', label: 'Orders' },
+  { value: 'reports', label: 'Reports' },
+]
+const handleColorOptions = [
+  'Natural',
+  'Red',
+  'Walnut Stain',
+  'Blood Red',
+  'Crimson Stain',
+  'White Wash',
   'White',
-  'Solid White Gloss',
-  'Solid Black Gloss',
-  'Walker Black',
-  'Cherry',
-  'Flame Temper',
-  'Medium Brown',
-  'Dark Brown',
-  'Walnut',
+  'Gray',
+  'Black',
+  'Clear Gloss',
+  'Matte Black',
+  'Forest Green',
   'Navy Blue',
   'Royal Blue',
-  'Sky Blue',
-  'Seafoam Green',
-  'Forest Green',
+  'Electric Blue',
+  'Spa Blue',
+  'Denim Blue Stain',
+  'Pecan Stain',
+  'Ebony Stain',
+  'Classic Brown Stain',
   'Yellow',
-  'Orange',
-  'Red',
+  'Purple',
+  'Matte Army Tank Green',
   'Maroon',
   'Pink',
-  'Purple',
+  'Orange',
+  'Seaside',
+  'Flamed',
+  'Smoke Flame',
+]
+const barrelColorOptions = [
+  'Natural',
+  'Red',
+  'Walnut Stain',
+  'Black',
+  'Blood Red',
+  'Forest Green',
+  'Crimson Stain',
+  'Gray',
+  'White Wash',
+  'White',
   'Matte Black',
-  'Matte Dark Gray',
+  'Clear Gloss',
+  'Navy Blue',
+  'Royal Blue',
+  'Electric Blue',
+  'Spa Blue',
+  'Denim Blue Stain',
+  'Pecan Stain',
+  'Ebony Stain',
+  'Brown Stain',
+  'Yellow',
+  'Purple',
+  'Matte Army Tank Green',
+  'Maroon',
+  'Pink',
+  'Orange',
+  'Seaside',
+  'Flamed',
+  'Smoke Flame',
+]
+const bandColorOptions = ['Yellow', 'White', 'Red', 'Natural', 'Gray', 'Gold', 'Black']
+const logoColorOptions = [
+  'Black',
+  'Electric Blue',
+  'Forest Green',
+  'Gold',
+  'Gray',
+  'Maroon',
+  'Navy Blue',
+  'Orange',
+  'Pink',
+  'Purple',
+  'Red',
+  'Royal Blue',
+  'Seaside',
+  'Spa Blue',
+  'White',
+  'Yellow',
+  'Silver',
+  'Cosmic-Black',
+  'Iridescent Chrome',
+  'Silver Foil',
+  'Gold Foil',
+  'Red Hologram',
+  'Light Blue Hologram',
+  'Lime Green',
 ]
 const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
-const autoNonMlbGrades = new Set<Grade>(['Choice', 'Trophy', 'Semi-Pro', 'Promo', 'Blem'])
+const autoNonMlbGrades = new Set<Grade>(['Choice', 'Semi-Pro', 'Promo', 'Blem'])
 
 const billetCostReferences: BilletCostReference[] = [
   { id: 'glv-prime-light-mid', source: 'Great Lakes Veneer', species: 'Maple', tier: 'Prime', weightRange: 'Light/Midweight 50/50 mix', price: '$59.95', priceValue: 59.95, notes: 'GLV 2026 Maple Standard Pricing.' },
@@ -487,6 +867,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0001',
     species: 'Birch',
     grade: 'Prime',
+    trophyEligible: false,
     mlbEligible: true,
     hasBarrelKnot: 'No',
     source: 'Great Lakes Veneer',
@@ -503,6 +884,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0002',
     species: 'Birch',
     grade: 'Select',
+    trophyEligible: false,
     mlbEligible: true,
     hasBarrelKnot: 'No',
     source: 'Great Lakes Veneer',
@@ -519,6 +901,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0003',
     species: 'Maple',
     grade: 'Pro',
+    trophyEligible: false,
     mlbEligible: false,
     hasBarrelKnot: 'No',
     source: 'Champeau',
@@ -543,8 +926,11 @@ const seedPlayers: PlayerProfile[] = [
         modelNumber: 'CS271',
         length: 34,
         weight: '32',
+        source: 'Great Lakes Veneer',
+        species: 'Birch',
         woodTier: 'Prime',
         colorPreferences: 'All black',
+        idealBilletWeight: '91',
         compatibleBilletIds: ['billet-001'],
         notes: 'Uses a 91 oz Prime Birch billet for this Trinity CS271 profile.',
       },
@@ -577,6 +963,7 @@ const emptyBillet: Omit<Billet, 'id'> = {
   barcode: '',
   species: 'Maple',
   grade: 'Prime',
+  trophyEligible: false,
   mlbEligible: true,
   hasBarrelKnot: 'No',
   source: "RJ's Tree Farms",
@@ -602,10 +989,28 @@ const emptyBat: Omit<BatVariation, 'id'> = {
   modelNumber: '',
   length: '',
   weight: '',
+  source: '',
+  species: 'Maple',
   woodTier: 'Prime',
   colorPreferences: '',
+  idealBilletWeight: '',
   compatibleBilletIds: [],
   notes: '',
+}
+
+function createBatDraftFromVariation(bat: BatVariation): Omit<BatVariation, 'id'> {
+  return {
+    modelNumber: bat.modelNumber,
+    length: bat.length,
+    weight: bat.weight,
+    source: bat.source,
+    species: bat.species,
+    woodTier: bat.woodTier,
+    colorPreferences: bat.colorPreferences,
+    idealBilletWeight: bat.idealBilletWeight,
+    compatibleBilletIds: [...bat.compatibleBilletIds],
+    notes: bat.notes,
+  }
 }
 
 const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
@@ -637,6 +1042,7 @@ const emptySalesLine = (): SalesOrderLineDraft => ({
   targetWeight: '',
   handleColor: '',
   barrelColor: '',
+  bandColor: '',
   logoColor: '',
   engraving: '',
   cupped: 'No',
@@ -654,13 +1060,6 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   shippingProvinceCode: '',
   shippingZip: '',
   shippingCountryCode: 'US',
-  billingAddressDifferent: false,
-  billingAddress1: '',
-  billingAddress2: '',
-  billingCity: '',
-  billingProvinceCode: '',
-  billingZip: '',
-  billingCountryCode: 'US',
   billingDifferent: false,
   requiresShipping: true,
   shippingSpeed: 'standard',
@@ -671,11 +1070,57 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   billingCompany: '',
   billingRelationship: '',
   salesRep: '',
+  salesRepEmail: '',
+  attachment: null,
   notes: '',
   createDraftOrder: true,
   sendInvoice: false,
   lines: [emptySalesLine()],
 })
+
+const emptyCrmTouchpointDraft = (): CrmTouchpointDraft => ({
+  type: 'call',
+  contactedAt: new Date().toISOString().slice(0, 10),
+  salesRep: '',
+  summary: '',
+  sentiment: '',
+  nextStep: '',
+  nextFollowUpAt: '',
+  relatedOrderId: '',
+})
+
+const emptyCrmContact = (): CrmContact => {
+  const now = new Date().toISOString()
+
+  return {
+    id: createId('crm-contact'),
+    name: '',
+    company: '',
+    role: '',
+    email: '',
+    phone: '',
+    alternateContacts: '',
+    playerNames: [],
+    salesOwner: '',
+    ownerEmail: '',
+    stage: 'lead',
+    priority: 'steady',
+    source: '',
+    tags: [],
+    preferredContactMethod: 'Any',
+    buyingContext: '',
+    batPreferences: '',
+    relationshipNotes: '',
+    objections: '',
+    opportunities: '',
+    followUpAt: '',
+    lastContactedAt: '',
+    createdAt: now,
+    updatedAt: now,
+    touchpoints: [],
+    sandboxOnly: true,
+  }
+}
 
 function normalizeBilletStatus(status: BilletStatus | string | null | undefined): BilletStatus {
   if (status === 'storage' || status === 'production') return status
@@ -697,7 +1142,6 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   if (build.mlbOnly && !billet.mlbEligible) return 0
   if (build.mlbOnly && billet.hasBarrelKnot === 'Yes') return 0
   if (build.grade === 'Prime' && billet.grade !== 'Prime') return 0
-  if (build.grade === 'Trophy' && billet.grade !== 'Trophy') return 0
   if (standardBilletLength < build.length + 2.5) return 0
 
   const targetBilletWeight = build.targetWeight + 18
@@ -708,6 +1152,62 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   const moistureScore = billet.moisture >= 6.5 && billet.moisture <= 9 ? 15 : 5
 
   return Math.round(weightScore + lengthScore + gradeScore + moistureScore)
+}
+
+function getAdjustedTargetBilletWeight(
+  referenceSource: Source,
+  idealWeight: number,
+  candidateSource: Source,
+) {
+  const referenceIsOversized = oversizedDiameterSources.has(referenceSource)
+  const candidateIsOversized = oversizedDiameterSources.has(candidateSource)
+
+  if (referenceIsOversized === candidateIsOversized) return idealWeight
+  return referenceIsOversized
+    ? idealWeight - billetDiameterWeightCorrectionOz
+    : idealWeight + billetDiameterWeightCorrectionOz
+}
+
+function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
+  const idealWeight = Number(bat.idealBilletWeight)
+  if (!bat.source || !Number.isFinite(idealWeight)) return []
+
+  return billets
+    .map((billet) => {
+      const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
+      const adjustedTargetWeight = getAdjustedTargetBilletWeight(
+        bat.source as Source,
+        idealWeight,
+        billet.source,
+      )
+
+      return {
+        billet,
+        billetWeight,
+        adjustedTargetWeight,
+      }
+    })
+    .filter(({ billet, billetWeight, adjustedTargetWeight }) =>
+      (
+        billet.status === 'storage' &&
+        billet.mlbEligible &&
+        billet.hasBarrelKnot !== 'Yes' &&
+        billet.species === bat.species &&
+        billetWeight !== null &&
+        Math.abs(billetWeight - adjustedTargetWeight) <= 0.5
+      ),
+    )
+    .sort((a, b) => {
+      const aDifference = Math.abs((a.billetWeight ?? 0) - a.adjustedTargetWeight)
+      const bDifference = Math.abs((b.billetWeight ?? 0) - b.adjustedTargetWeight)
+      if (aDifference !== bDifference) return aDifference - bDifference
+      return compareText(a.billet.source, b.billet.source) || compareWeight(a.billet, b.billet, 'asc')
+    })
+    .map(({ billet }) => billet)
+}
+
+function isProPlayerProfile(profile: PlayerProfile) {
+  return profile.profileKind === 'Player' && profile.bats.length > 0
 }
 
 function createId(prefix: string) {
@@ -727,13 +1227,34 @@ function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
   return 'No'
 }
 
-function normalizeBillet(billet: Billet): Billet {
+function normalizeTrophyEligible(billet: Partial<Billet> & { grade?: string }) {
+  if (typeof billet.trophyEligible === 'boolean') return billet.trophyEligible
+  return String(billet.grade ?? '').toLowerCase() === 'trophy'
+}
+
+function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)): Billet {
+  const source = sourceOptions.includes(billet.source as Source)
+    ? (billet.source as Source)
+    : "RJ's Tree Farms"
+  const weight = normalizeBilletWeight(billet.weight)
+
   return {
+    ...emptyBillet,
     ...billet,
+    source,
+    weight,
+    grade: normalizeGradeForSource(source, billet.grade),
+    trophyEligible: normalizeTrophyEligible(billet),
     hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
     deliveryDate: billet.deliveryDate ?? '',
     status: normalizeBilletStatus(billet.status),
   }
+}
+
+function normalizeBilletWeight(value: Billet['weight'] | string | null | undefined): Billet['weight'] {
+  if (value === '' || value === null || value === undefined) return ''
+  const weight = Number(value)
+  return Number.isFinite(weight) && weight >= 0 ? weight : ''
 }
 
 function getGradeOptionsForSource(source: Source) {
@@ -756,9 +1277,9 @@ function getDeliveryDateOptionsForSource(
   return Array.from(dates).sort((a, b) => b.localeCompare(a))
 }
 
-function normalizeGradeForSource(source: Source, grade: Grade): Grade {
+function normalizeGradeForSource(source: Source, grade: Grade | string | null | undefined): Grade {
   const validGrades = getGradeOptionsForSource(source)
-  return validGrades.includes(grade) ? grade : validGrades[0]
+  return validGrades.includes(grade as Grade) ? (grade as Grade) : validGrades[0]
 }
 
 function normalizeProducedBatRecord(
@@ -779,7 +1300,9 @@ function normalizeProducedBatRecord(
     sourceModelId: record.sourceModelId ?? '',
     sourceBilletStatuses,
     billetWeight: record.billetWeight ?? '',
-    billetGrade: record.billetGrade ?? 'Prime',
+    billetGrade: allGradeOptions.includes(record.billetGrade as Grade)
+      ? (record.billetGrade as Grade)
+      : 'Prime',
     cupped: record.cupped ?? 'No',
     modifications: record.modifications ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
@@ -809,6 +1332,26 @@ function normalizeInvoiceStatus(status: InvoiceStatus | string | null | undefine
   }
 
   return 'draft'
+}
+
+function normalizeOrderAttachment(
+  attachment: Partial<OrderAttachment> | null | undefined,
+): OrderAttachment | null {
+  if (!attachment || typeof attachment !== 'object') return null
+  const filename = String(attachment.filename ?? '').trim()
+  const downloadUrl = String(attachment.downloadUrl ?? '').trim()
+  if (!filename || !downloadUrl) return null
+
+  return {
+    id: String(attachment.id ?? ''),
+    shopifyFileId: String(attachment.shopifyFileId ?? ''),
+    filename,
+    downloadUrl,
+    contentType: String(attachment.contentType ?? ''),
+    bytes: Number(attachment.bytes ?? 0) || 0,
+    uploadedAt: String(attachment.uploadedAt ?? ''),
+    fileStatus: String(attachment.fileStatus ?? ''),
+  }
 }
 
 function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): OrderJob {
@@ -851,6 +1394,9 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     assignedBilletId: record.assignedBilletId ?? '',
     linkedProducedBatId: record.linkedProducedBatId ?? '',
     salesRep: record.salesRep ?? '',
+    salesRepEmail: record.salesRepEmail ?? '',
+    salesRepSubmissionNotificationSentAt: record.salesRepSubmissionNotificationSentAt ?? '',
+    salesRepPaidNotificationSentAt: record.salesRepPaidNotificationSentAt ?? '',
     totalPrice: record.totalPrice ?? '',
     currency: record.currency ?? '',
     specs: {
@@ -860,12 +1406,14 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
       wood: specs.wood ?? '',
       handleColor: specs.handleColor ?? '',
       barrelColor: specs.barrelColor ?? '',
+      bandColor: specs.bandColor ?? '',
       logoColor: specs.logoColor ?? '',
       engraving: specs.engraving ?? '',
       cupped: specs.cupped ?? '',
       notes: specs.notes ?? '',
     },
     lineItems: record.lineItems ?? [],
+    internalAttachment: normalizeOrderAttachment(record.internalAttachment),
     notes: record.notes ?? '',
     internalNotes: record.internalNotes ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
@@ -887,6 +1435,796 @@ function normalizeBillingContact(
   }
 }
 
+function normalizeCrmStage(value: CrmStage | string | null | undefined): CrmStage {
+  if (crmStageOptions.some((option) => option.value === value)) return value as CrmStage
+  return 'lead'
+}
+
+function normalizeCrmPriority(value: CrmPriority | string | null | undefined): CrmPriority {
+  if (crmPriorityOptions.some((option) => option.value === value)) return value as CrmPriority
+  return 'steady'
+}
+
+function normalizeCrmTouchpointType(
+  value: CrmTouchpointType | string | null | undefined,
+): CrmTouchpointType {
+  if (crmTouchpointTypeOptions.some((option) => option.value === value)) {
+    return value as CrmTouchpointType
+  }
+  return 'note'
+}
+
+function normalizeCrmList(values: string[] | string | null | undefined) {
+  const rawValues = Array.isArray(values)
+    ? values
+    : String(values ?? '')
+        .split(/[,;\n]/)
+        .map((value) => value.trim())
+
+  const seen = new Set<string>()
+  return rawValues
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => {
+      const key = value.toLowerCase()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+function getCrmStageLabel(stage: CrmStage) {
+  return crmStageOptions.find((option) => option.value === stage)?.label ?? 'Lead'
+}
+
+function getCrmPriorityLabel(priority: CrmPriority) {
+  return crmPriorityOptions.find((option) => option.value === priority)?.label ?? 'Steady'
+}
+
+function getCrmTouchpointTypeLabel(type: CrmTouchpointType) {
+  return crmTouchpointTypeOptions.find((option) => option.value === type)?.label ?? 'Note'
+}
+
+function getCrmOwnerAliasValues(owner: CrmOwnerOption) {
+  return [owner.name, owner.label, ...(owner.aliases ?? [])]
+    .map((value) => normalizeCrmSearchText(value))
+    .filter(Boolean)
+}
+
+function getCanonicalCrmOwnerOption(name: string, email: string) {
+  const normalizedEmail = normalizeTrinityEmail(email)
+  if (normalizedEmail) {
+    const ownerByEmail = seedCrmOwnerOptions.find(
+      (owner) => owner.email.toLowerCase() === normalizedEmail,
+    )
+    if (ownerByEmail) return ownerByEmail
+  }
+
+  const normalizedName = normalizeCrmSearchText(name)
+  if (!normalizedName) return null
+
+  return (
+    seedCrmOwnerOptions.find((owner) =>
+      getCrmOwnerAliasValues(owner).includes(normalizedName),
+    ) ?? null
+  )
+}
+
+function getCrmOwnerKey(name: string, email: string) {
+  const canonicalOwner = getCanonicalCrmOwnerOption(name, email)
+  if (canonicalOwner) return canonicalOwner.key
+
+  const normalizedEmail = email.trim().toLowerCase()
+  if (normalizedEmail) return normalizedEmail
+
+  const normalizedName = normalizeCrmSearchText(name)
+  return normalizedName || 'unassigned'
+}
+
+function normalizeTrinityEmail(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function isTrinityEmail(value: string) {
+  return /^[^\s@]+@trinitybats\.com$/i.test(value.trim())
+}
+
+function getCrmOwnerByEmail(email: string) {
+  return getCanonicalCrmOwnerOption('', email)
+}
+
+function createCrmOwnerFromEmail(email: string): CrmOwnerOption {
+  const normalizedEmail = normalizeTrinityEmail(email)
+  const firstName = normalizedEmail.split('@')[0] || 'Team member'
+  const name = firstName.charAt(0).toUpperCase() + firstName.slice(1)
+
+  return {
+    key: normalizedEmail,
+    label: name,
+    name,
+    email: normalizedEmail,
+  }
+}
+
+function getSalesPortalOwnerForEmail(email: string) {
+  return getCrmOwnerByEmail(email) ?? createCrmOwnerFromEmail(email)
+}
+
+function createCrmOwnerOption(name: string, email: string): CrmOwnerOption | null {
+  const canonicalOwner = getCanonicalCrmOwnerOption(name, email)
+  if (canonicalOwner) return canonicalOwner
+
+  const label = name.trim() || email.trim()
+  const key = getCrmOwnerKey(name, email)
+  if (!label || key === 'unassigned') return null
+  return {
+    key,
+    label,
+    name: name.trim() || label,
+    email: email.trim(),
+  }
+}
+
+function getCrmSummaryOwnerKey(summary: CrmContactSummary) {
+  return getCrmOwnerKey(summary.contact.salesOwner, summary.contact.ownerEmail)
+}
+
+function matchesCrmOwnerFilter(summary: CrmContactSummary, ownerFilter: string) {
+  if (ownerFilter === 'all') return true
+  if (ownerFilter === 'unassigned') return getCrmSummaryOwnerKey(summary) === 'unassigned'
+  return getCrmSummaryOwnerKey(summary) === ownerFilter
+}
+
+function groupCrmSummariesByOwner(summaries: CrmContactSummary[]) {
+  const groups = new Map<
+    string,
+    { key: string; label: string; email: string; summaries: CrmContactSummary[] }
+  >()
+
+  for (const summary of summaries) {
+    const owner =
+      createCrmOwnerOption(summary.contact.salesOwner, summary.contact.ownerEmail) ?? {
+        key: 'unassigned',
+        label: 'Unassigned',
+        email: '',
+      }
+    const existing =
+      groups.get(owner.key) ??
+      {
+        key: owner.key,
+        label: owner.label,
+        email: owner.email,
+        summaries: [],
+      }
+    existing.summaries.push(summary)
+    groups.set(owner.key, existing)
+  }
+
+  return Array.from(groups.values())
+    .sort((a, b) => {
+      if (a.key === 'unassigned') return 1
+      if (b.key === 'unassigned') return -1
+      return compareText(a.label, b.label)
+    })
+    .map((group) => ({
+      ...group,
+      summaries: group.summaries.sort((a, b) => {
+        if (a.followUpDue !== b.followUpDue) return a.followUpDue ? -1 : 1
+        return getDateTimestamp(b.lastActivityAt) - getDateTimestamp(a.lastActivityAt)
+      }),
+    }))
+}
+
+function getCrmDateInputValue(value: string) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10)
+  return date.toISOString().slice(0, 10)
+}
+
+function getCrmDateFromInput(value: string) {
+  if (!value) return ''
+  const date = new Date(`${value}T12:00:00`)
+  return Number.isNaN(date.getTime()) ? value : date.toISOString()
+}
+
+function getCrmContactedAtFromInput(value: string) {
+  if (!value) return new Date().toISOString()
+  const now = new Date()
+  const hours = String(now.getHours()).padStart(2, '0')
+  const minutes = String(now.getMinutes()).padStart(2, '0')
+  const seconds = String(now.getSeconds()).padStart(2, '0')
+  const milliseconds = String(now.getMilliseconds()).padStart(3, '0')
+  const date = new Date(`${value}T${hours}:${minutes}:${seconds}.${milliseconds}`)
+  return Number.isNaN(date.getTime()) ? getCrmDateFromInput(value) || now.toISOString() : date.toISOString()
+}
+
+function getCrmTodayInputValue() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function extractCrmEmail(value: string) {
+  return value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ?? ''
+}
+
+function extractCrmPhone(value: string) {
+  const match = value.match(/(?:\+?1[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}/)
+  return match?.[0]?.trim() ?? ''
+}
+
+function extractCrmLabeledValue(value: string, labels: string[]) {
+  for (const label of labels) {
+    const pattern = new RegExp(
+      `(?:^|[\\n,.;])\\s*${label}\\s*(?:is|=|:|-)?\\s*([^\\n,.;]+)`,
+      'i',
+    )
+    const match = value.match(pattern)
+    if (match?.[1]) return match[1].trim()
+  }
+
+  return ''
+}
+
+function inferCrmContactNameFromText(value: string) {
+  const labeled = extractCrmLabeledValue(value, ['contact', 'customer', 'name', 'buyer'])
+  if (labeled) return labeled
+
+  const match = value.match(
+    /\b(?:called|texted|emailed|met with|spoke with|talked to|followed up with)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})/,
+  )
+  return match?.[1]?.trim() ?? ''
+}
+
+function inferCrmTouchpointTypeFromText(value: string): CrmTouchpointType {
+  const normalized = value.toLowerCase()
+  if (/\b(text|sms|message)\b/.test(normalized)) return 'text'
+  if (/\b(email|emailed)\b/.test(normalized)) return 'email'
+  if (/\b(call|called|phone|voicemail)\b/.test(normalized)) return 'call'
+  if (/\b(ig|instagram|dm|direct message)\b/.test(normalized)) return 'instagram_dm'
+  if (/\b(met|meeting|visit|in person|showcase|tournament)\b/.test(normalized)) return 'in_person'
+  if (/\b(facebook|x\.com|social)\b/.test(normalized)) return 'social'
+  if (/\b(quote|quoted|estimate)\b/.test(normalized)) return 'quote'
+  if (/\b(invoice|invoiced|payment link)\b/.test(normalized)) return 'invoice'
+  return 'note'
+}
+
+function inferCrmStageFromText(value: string): CrmStage {
+  const normalized = value.toLowerCase()
+  if (/\b(lost|dead|no longer|not interested|passed)\b/.test(normalized)) return 'lost'
+  if (/\b(customer|paid|ordered|closed|won)\b/.test(normalized)) return 'active_customer'
+  if (/\b(invoice|payment link|sent invoice)\b/.test(normalized)) return 'invoice_sent'
+  if (/\b(quote|quoted|estimate|pricing)\b/.test(normalized)) return 'quoted'
+  if (/\b(qualified|real lead|good lead|strong lead|serious|interested)\b/.test(normalized)) {
+    return 'qualified'
+  }
+  if (/\b(nurture|later|next season|not now)\b/.test(normalized)) return 'nurture'
+  return 'lead'
+}
+
+function inferCrmPriorityFromText(value: string): CrmPriority {
+  const normalized = value.toLowerCase()
+  if (/\b(hot|urgent|ready|asap|this week|strong|serious)\b/.test(normalized)) return 'hot'
+  if (/\b(warm|interested|promising|likely|good fit)\b/.test(normalized)) return 'warm'
+  if (/\b(low|cold|maybe|not now|later)\b/.test(normalized)) return 'low'
+  return 'steady'
+}
+
+function inferCrmFollowUpInputFromText(value: string) {
+  const normalized = value.toLowerCase()
+  const explicit = normalized.match(/\b(?:follow(?:-| )?up|follow up|next step|remind)\D{0,20}(\d{4}-\d{2}-\d{2})/)
+  if (explicit?.[1]) return explicit[1]
+
+  const slashDate = normalized.match(
+    /\b(?:follow(?:-| )?up|follow up|next step|remind)\D{0,20}(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/,
+  )
+  if (slashDate?.[1] && slashDate?.[2]) {
+    const now = new Date()
+    const year = slashDate[3]
+      ? Number(slashDate[3].length === 2 ? `20${slashDate[3]}` : slashDate[3])
+      : now.getFullYear()
+    const date = new Date(year, Number(slashDate[1]) - 1, Number(slashDate[2]), 12)
+    return Number.isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10)
+  }
+
+  const days = normalized.match(/\b(?:in|after)\s+(\d{1,2})\s+days?\b/)
+  if (days?.[1]) {
+    const date = new Date()
+    date.setDate(date.getDate() + Number(days[1]))
+    return date.toISOString().slice(0, 10)
+  }
+
+  if (/\btomorrow\b/.test(normalized)) {
+    const date = new Date()
+    date.setDate(date.getDate() + 1)
+    return date.toISOString().slice(0, 10)
+  }
+
+  if (/\bnext week\b/.test(normalized)) {
+    const date = new Date()
+    date.setDate(date.getDate() + 7)
+    return date.toISOString().slice(0, 10)
+  }
+
+  return ''
+}
+
+function normalizeCrmTouchpoint(
+  record: Partial<CrmTouchpoint> & Pick<CrmTouchpoint, 'id'>,
+): CrmTouchpoint {
+  return {
+    id: record.id,
+    type: normalizeCrmTouchpointType(record.type),
+    contactedAt: record.contactedAt || new Date().toISOString(),
+    salesRep: record.salesRep ?? '',
+    summary: record.summary ?? '',
+    sentiment: record.sentiment ?? '',
+    nextStep: record.nextStep ?? '',
+    nextFollowUpAt: record.nextFollowUpAt ?? '',
+    relatedOrderId: record.relatedOrderId ?? '',
+  }
+}
+
+function normalizeCrmContact(record: Partial<CrmContact> & Pick<CrmContact, 'id'>): CrmContact {
+  const now = new Date().toISOString()
+
+  return {
+    ...emptyCrmContact(),
+    ...record,
+    id: record.id,
+    name: record.name ?? '',
+    company: record.company ?? '',
+    role: record.role ?? '',
+    email: record.email ?? '',
+    phone: record.phone ?? '',
+    alternateContacts: record.alternateContacts ?? '',
+    playerNames: normalizeCrmList(record.playerNames),
+    salesOwner: record.salesOwner ?? '',
+    ownerEmail: record.ownerEmail ?? '',
+    stage: normalizeCrmStage(record.stage),
+    priority: normalizeCrmPriority(record.priority),
+    source: record.source ?? '',
+    tags: normalizeCrmList(record.tags),
+    preferredContactMethod: record.preferredContactMethod ?? 'Any',
+    buyingContext: record.buyingContext ?? '',
+    batPreferences: record.batPreferences ?? '',
+    relationshipNotes: record.relationshipNotes ?? '',
+    objections: record.objections ?? '',
+    opportunities: record.opportunities ?? '',
+    followUpAt: record.followUpAt ?? '',
+    lastContactedAt: record.lastContactedAt ?? '',
+    createdAt: record.createdAt ?? now,
+    updatedAt: record.updatedAt ?? now,
+    touchpoints: Array.isArray(record.touchpoints)
+      ? record.touchpoints.map((touchpoint) => normalizeCrmTouchpoint(touchpoint))
+      : [],
+    sandboxOnly: record.sandboxOnly ?? true,
+  }
+}
+
+function createSalesPortalDemoContacts() {
+  const now = new Date().toISOString()
+  const shane = getSalesPortalOwnerForEmail('shane@trinitybats.com')
+
+  return [
+    normalizeCrmContact({
+      id: 'demo-shane-engagement-review-contact',
+      name: 'Demo Engagement Review',
+      company: 'Trinity Demo Account',
+      role: 'Player family / prospect',
+      email: 'demo-engagement-review@example.com',
+      phone: '555-0100',
+      salesOwner: shane.name,
+      ownerEmail: shane.email,
+      stage: 'qualified',
+      priority: 'warm',
+      source: 'Sales portal demo',
+      preferredContactMethod: 'Call',
+      buyingContext: 'Demo profile for showing how a sales rep reviews stored CRM engagements.',
+      batPreferences: 'Interested in a maple gamer, 33 inch, balanced feel.',
+      lastContactedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      touchpoints: [
+        normalizeCrmTouchpoint({
+          id: 'demo-shane-call-engagement',
+          type: 'call',
+          contactedAt: now,
+          salesRep: shane.name,
+          summary:
+            'Shane called the player and confirmed interest in a maple gamer with a quick follow-up quote.',
+          nextStep: 'Send quote details and follow up tomorrow.',
+        }),
+      ],
+      sandboxOnly: true,
+    }),
+  ]
+}
+
+function normalizeCrmSearchText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function normalizeCrmPhone(value: string) {
+  return value.replace(/\D/g, '')
+}
+
+function getCrmIdentityCandidates(contact: Pick<CrmContact, 'email' | 'phone' | 'name' | 'company'>) {
+  const email = contact.email.trim().toLowerCase()
+  const phone = normalizeCrmPhone(contact.phone)
+  const name = normalizeCrmSearchText(contact.name)
+  const company = normalizeCrmSearchText(contact.company)
+  return [
+    email ? `email:${email}` : '',
+    phone ? `phone:${phone}` : '',
+    name && company ? `name-company:${name}:${company}` : '',
+  ].filter(Boolean)
+}
+
+function hasSharedCrmIdentity(first: CrmContact, second: CrmContact) {
+  const firstCandidates = new Set(getCrmIdentityCandidates(first))
+  return getCrmIdentityCandidates(second).some((candidate) => firstCandidates.has(candidate))
+}
+
+const manualCrmSourceLabels = new Set([
+  'manual crm entry',
+  'sales portal',
+  'sales portal demo',
+  'crm assistant',
+])
+const manualCrmTagLabels = new Set(['manual entry', 'ai captured'])
+
+function isManualCrmContact(contact: Pick<CrmContact, 'source' | 'tags'>) {
+  const source = normalizeCrmSearchText(contact.source)
+  if (manualCrmSourceLabels.has(source)) return true
+
+  return contact.tags.some((tag) => manualCrmTagLabels.has(normalizeCrmSearchText(tag)))
+}
+
+function getManualCrmContacts(contacts: CrmContact[]) {
+  return contacts
+    .map((contact) => normalizeCrmContact(contact))
+    .filter((contact) => isManualCrmContact(contact))
+}
+
+function getNonManualCrmContactIds(contacts: CrmContact[]) {
+  return contacts
+    .map((contact) => normalizeCrmContact(contact))
+    .filter((contact) => !isManualCrmContact(contact))
+    .map((contact) => contact.id.trim())
+    .filter(Boolean)
+}
+
+function mergeCrmContacts(base: CrmContact, incoming: CrmContact): CrmContact {
+  const touchpoints = new Map<string, CrmTouchpoint>()
+  for (const touchpoint of incoming.touchpoints) touchpoints.set(touchpoint.id, touchpoint)
+  for (const touchpoint of base.touchpoints) touchpoints.set(touchpoint.id, touchpoint)
+
+  return normalizeCrmContact({
+    ...incoming,
+    ...base,
+    name: base.name || incoming.name,
+    company: base.company || incoming.company,
+    role: base.role || incoming.role,
+    email: base.email || incoming.email,
+    phone: base.phone || incoming.phone,
+    salesOwner: base.salesOwner || incoming.salesOwner,
+    ownerEmail: base.ownerEmail || incoming.ownerEmail,
+    source: base.source || incoming.source,
+    playerNames: normalizeCrmList([...incoming.playerNames, ...base.playerNames]),
+    tags: normalizeCrmList([...incoming.tags, ...base.tags]),
+    lastContactedAt: getLaterDate(base.lastContactedAt, incoming.lastContactedAt),
+    followUpAt: base.followUpAt || incoming.followUpAt,
+    createdAt: getEarlierDate(base.createdAt, incoming.createdAt),
+    updatedAt: getLaterDate(base.updatedAt, incoming.updatedAt),
+    touchpoints: Array.from(touchpoints.values()).sort(
+      (a, b) => getDateTimestamp(b.contactedAt) - getDateTimestamp(a.contactedAt),
+    ),
+  })
+}
+
+function getCrmOrdersForContact(contact: CrmContact, orderJobs: OrderJob[]) {
+  const contactEmails = new Set(
+    [contact.email]
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  const contactPhone = normalizeCrmPhone(contact.phone)
+  const contactName = normalizeCrmSearchText(contact.name)
+  const contactCompany = normalizeCrmSearchText(contact.company)
+  const playerNames = contact.playerNames.map((value) => normalizeCrmSearchText(value)).filter(Boolean)
+
+  return orderJobs
+    .filter((job) => {
+      const jobEmails = [job.billingEmail, job.customerEmail, job.playerEmail]
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+      if (jobEmails.some((email) => contactEmails.has(email))) return true
+
+      const jobPhone = normalizeCrmPhone(job.billingPhone)
+      if (contactPhone && jobPhone && contactPhone === jobPhone) return true
+
+      const jobNames = [job.billingName, job.customerName, job.playerName]
+        .map((value) => normalizeCrmSearchText(value))
+        .filter(Boolean)
+
+      const jobCompany = normalizeCrmSearchText(job.billingCompany)
+      if (!contactCompany || !jobCompany || contactCompany !== jobCompany) return false
+
+      return Boolean(
+        !contactName ||
+          jobNames.includes(contactName) ||
+          playerNames.some((playerName) => jobNames.includes(playerName)),
+      )
+    })
+    .sort(
+      (a, b) =>
+        getDateTimestamp(b.orderSubmittedAt || b.createdAt) -
+        getDateTimestamp(a.orderSubmittedAt || a.createdAt),
+    )
+}
+
+function buildCrmContactDirectory(savedContacts: CrmContact[]) {
+  const directory: CrmContact[] = []
+
+  function addCandidate(candidate: CrmContact) {
+    const existingIndex = directory.findIndex((contact) => hasSharedCrmIdentity(contact, candidate))
+    if (existingIndex === -1) {
+      directory.push(candidate)
+      return
+    }
+
+    directory[existingIndex] = mergeCrmContacts(directory[existingIndex], candidate)
+  }
+
+  for (const contact of savedContacts) {
+    const normalized = normalizeCrmContact(contact)
+    if (isManualCrmContact(normalized)) addCandidate(normalized)
+  }
+
+  return directory.sort((a, b) => {
+    const aDate = getDateTimestamp(a.followUpAt) || getDateTimestamp(a.updatedAt)
+    const bDate = getDateTimestamp(b.followUpAt) || getDateTimestamp(b.updatedAt)
+    return bDate - aDate
+  })
+}
+
+function buildCrmContactSummaries(
+  directory: CrmContact[],
+  orderJobs: OrderJob[],
+): CrmContactSummary[] {
+  return directory.map((contact) => {
+    const orders = getCrmOrdersForContact(contact, orderJobs)
+    const submittedValue = orders.reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
+    const paidValue = orders
+      .filter((job) => isSalesDashboardPaid(job))
+      .reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
+    const openValue = submittedValue - paidValue
+    const openInvoiceCount = orders.filter((job) => !isSalesDashboardPaid(job)).length
+    const lastOrderAt = orders[0]?.orderSubmittedAt || orders[0]?.createdAt || ''
+    const lastTouchpointAt = contact.touchpoints[0]?.contactedAt || ''
+    const lastActivityAt = getLaterDate(getLaterDate(lastOrderAt, lastTouchpointAt), contact.lastContactedAt)
+    const followUpAt = contact.followUpAt || contact.touchpoints[0]?.nextFollowUpAt || ''
+    const followUpDue = Boolean(followUpAt && getDateTimestamp(followUpAt) <= Date.now())
+
+    return {
+      contact,
+      orders,
+      orderCount: orders.length,
+      submittedValue,
+      paidValue,
+      openValue,
+      openInvoiceCount,
+      lastOrderAt,
+      lastActivityAt,
+      followUpDue,
+    }
+  })
+}
+
+function getSalesPortalOrderTotal(draft: SalesOrderDraft) {
+  return getSalesOrderTotal(draft)
+}
+
+function createSalesPortalOrder(
+  draft: SalesOrderDraft,
+  owner: CrmOwnerOption,
+  contactId: string,
+): SalesPortalOrder {
+  const payerName = draft.billingDifferent ? draft.billingName : draft.playerName
+  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+  const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
+
+  return {
+    id: createId('portal-order'),
+    ownerName: owner.name,
+    ownerEmail: owner.email,
+    submittedAt: new Date().toISOString(),
+    contactId,
+    playerName: draft.playerName,
+    payerName,
+    payerEmail,
+    payerPhone,
+    total: getSalesPortalOrderTotal(draft),
+    status: 'local_saved',
+    draft: cloneSalesOrderDraft(draft),
+  }
+}
+
+function createSalesDashboardSaleFromPortalOrder(order: SalesPortalOrder): SalesDashboardSale {
+  return {
+    key: order.id,
+    draftOrderName: 'Demo order',
+    paidOrderName: '',
+    salesRep: order.ownerName,
+    salesRepEmail: order.ownerEmail,
+    customerName: order.playerName,
+    payerName: order.payerName,
+    submittedAt: order.submittedAt,
+    paidAt: '',
+    invoiceStatus: 'draft',
+    isPaid: false,
+    total: order.total,
+    quantity: order.draft.lines.reduce((total, line) => total + line.quantity, 0),
+    lineCount: order.draft.lines.length,
+    productSummary: order.draft.lines.map((line) => line.title || 'Custom bat').join(', '),
+  }
+}
+
+function isCrmSummaryOwnedBy(summary: CrmContactSummary, owner: CrmOwnerOption) {
+  return getCrmSummaryOwnerKey(summary) === owner.key
+}
+
+function isSalesDashboardSaleOwnedBy(sale: SalesDashboardSale, owner: CrmOwnerOption) {
+  return getCrmOwnerKey(sale.salesRep, sale.salesRepEmail) === owner.key
+}
+
+function salesPortalContactMatchesSearch(
+  summary: CrmContactSummary,
+  sales: SalesDashboardSale[],
+  normalizedQuery: string,
+) {
+  if (!normalizedQuery) return true
+
+  const contactSales = sales.filter((sale) =>
+    [sale.customerName, sale.payerName, sale.salesRep, sale.salesRepEmail].some(
+      (value) =>
+        value &&
+        normalizeCrmSearchText(value) &&
+        [
+          summary.contact.name,
+          summary.contact.company,
+          summary.contact.email,
+          summary.contact.phone,
+          ...summary.contact.playerNames,
+        ]
+          .map((field) => normalizeCrmSearchText(field))
+          .filter(Boolean)
+          .includes(normalizeCrmSearchText(value)),
+    ),
+  )
+  const searchable = normalizeCrmSearchText(
+    [
+      summary.contact.name,
+      summary.contact.company,
+      summary.contact.role,
+      summary.contact.email,
+      summary.contact.phone,
+      summary.contact.alternateContacts,
+      summary.contact.salesOwner,
+      summary.contact.ownerEmail,
+      summary.contact.stage,
+      summary.contact.priority,
+      summary.contact.source,
+      summary.contact.preferredContactMethod,
+      summary.contact.buyingContext,
+      summary.contact.batPreferences,
+      summary.contact.relationshipNotes,
+      summary.contact.objections,
+      summary.contact.opportunities,
+      ...summary.contact.playerNames,
+      ...summary.contact.tags,
+      ...summary.contact.touchpoints.flatMap((touchpoint) => [
+        touchpoint.type,
+        getCrmTouchpointTypeLabel(touchpoint.type),
+        touchpoint.salesRep,
+        touchpoint.summary,
+        touchpoint.sentiment,
+        touchpoint.nextStep,
+      ]),
+      ...contactSales.flatMap((sale) => [
+        sale.customerName,
+        sale.payerName,
+        sale.salesRep,
+        sale.salesRepEmail,
+        sale.draftOrderName,
+        sale.paidOrderName,
+        sale.invoiceStatus,
+        sale.productSummary,
+      ]),
+    ].join(' '),
+  )
+
+  return searchable.includes(normalizedQuery)
+}
+
+function normalizePlayerProfile(
+  record: Partial<PlayerProfile> & Pick<PlayerProfile, 'id'>,
+): PlayerProfile {
+  return {
+    id: record.id,
+    profileKind: record.profileKind === 'Trainer' ? 'Trainer' : 'Player',
+    playerName: record.playerName ?? '',
+    bats: Array.isArray(record.bats) ? record.bats.map((bat) => normalizeBatVariation(bat)) : [],
+  }
+}
+
+function normalizeBatVariation(record: Partial<BatVariation> & Pick<BatVariation, 'id'>): BatVariation {
+  return {
+    id: record.id,
+    modelNumber: record.modelNumber ?? '',
+    length: record.length ?? '',
+    weight: record.weight ?? '',
+    source: sourceOptions.includes(record.source as Source) ? (record.source as Source) : '',
+    species: speciesOptions.includes(record.species as Species) ? (record.species as Species) : 'Maple',
+    woodTier: woodTierOptions.includes(record.woodTier as WoodTier)
+      ? (record.woodTier as WoodTier)
+      : 'Prime',
+    colorPreferences: record.colorPreferences ?? '',
+    idealBilletWeight: record.idealBilletWeight ?? '',
+    compatibleBilletIds: Array.isArray(record.compatibleBilletIds)
+      ? record.compatibleBilletIds
+      : [],
+    notes: record.notes ?? '',
+  }
+}
+
+function inferSpeciesFromText(value: string): Species | null {
+  const normalized = value.toLowerCase()
+  return speciesOptions.find((species) => normalized.includes(species.toLowerCase())) ?? null
+}
+
+function inferSourceFromText(value: string): Source | null {
+  const normalized = value.toLowerCase()
+  if (normalized.includes('great lakes') || normalized.includes('glv')) return 'Great Lakes Veneer'
+  if (normalized.includes('champeau')) return 'Champeau'
+  if (normalized.includes('cahan')) return 'Cahan'
+  if (normalized.includes('rj') || normalized.includes("rj's") || normalized.includes('tree farm')) {
+    return "RJ's Tree Farms"
+  }
+
+  return null
+}
+
+function inferBilletWeightFromText(value: string) {
+  const match = value.match(/\b(\d{2,3}(?:\.\d+)?)\s*(?:oz|ounce|ounces)\b/i)
+  const weight = match?.[1] ? Number(match[1]) : null
+  return weight !== null && weight >= 70 && weight <= 120 ? String(weight) : ''
+}
+
+function hydratePlayerProfileBilletTargets(profile: PlayerProfile, billets: Billet[]): PlayerProfile {
+  return {
+    ...profile,
+    bats: profile.bats.map((bat) => {
+      const legacyBillet = bat.compatibleBilletIds
+        .map((id) => billets.find((billet) => billet.id === id))
+        .find((billet): billet is Billet => Boolean(billet))
+      const inferredWeight =
+        bat.idealBilletWeight.trim() ||
+        (typeof legacyBillet?.weight === 'number'
+          ? String(legacyBillet.weight)
+          : inferBilletWeightFromText(bat.notes))
+      const inferredSource = bat.source || legacyBillet?.source || inferSourceFromText(bat.notes)
+      const inferredSpecies = legacyBillet?.species ?? inferSpeciesFromText(bat.notes)
+
+      return {
+        ...bat,
+        source: inferredSource ?? bat.source,
+        species: inferredSpecies ?? bat.species,
+        idealBilletWeight: inferredWeight,
+      }
+    }),
+  }
+}
+
 function mergeOrderSpecs(primary?: OrderSpecs, fallback?: OrderSpecs): OrderSpecs {
   return {
     model: primary?.model || fallback?.model || '',
@@ -895,6 +2233,7 @@ function mergeOrderSpecs(primary?: OrderSpecs, fallback?: OrderSpecs): OrderSpec
     wood: primary?.wood || fallback?.wood || '',
     handleColor: primary?.handleColor || fallback?.handleColor || '',
     barrelColor: primary?.barrelColor || fallback?.barrelColor || '',
+    bandColor: primary?.bandColor || fallback?.bandColor || '',
     logoColor: primary?.logoColor || fallback?.logoColor || '',
     engraving: primary?.engraving || fallback?.engraving || '',
     cupped: primary?.cupped || fallback?.cupped || '',
@@ -916,6 +2255,323 @@ function formatOrderDateTime(value: string) {
   })
 }
 
+function getDateTimestamp(value: string) {
+  if (!value) return 0
+  const time = new Date(value).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+function getEarlierDate(first: string, second: string) {
+  if (!first) return second
+  if (!second) return first
+  return getDateTimestamp(second) < getDateTimestamp(first) ? second : first
+}
+
+function getLaterDate(first: string, second: string) {
+  if (!first) return second
+  if (!second) return first
+  return getDateTimestamp(second) > getDateTimestamp(first) ? second : first
+}
+
+function formatSalesDashboardDate(value: string) {
+  if (!value) return 'Not recorded'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function formatSalesDashboardSyncTime(value: string) {
+  if (!value) return 'Not synced'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function formatSalesDashboardPercent(value: number, total: number) {
+  if (!total) return '0%'
+  return `${Math.round((value / total) * 100)}%`
+}
+
+function parseSalesDashboardAmount(value: string) {
+  const normalized = String(value ?? '').replace(/[^0-9.-]/g, '')
+  const amount = Number(normalized)
+  return Number.isFinite(amount) ? amount : 0
+}
+
+function getSalesDashboardLineValue(job: OrderJob) {
+  const unitAmount = parseSalesDashboardAmount(job.totalPrice)
+  const quantity = Number.isFinite(job.quantity) && job.quantity > 0 ? job.quantity : 1
+  return unitAmount * quantity
+}
+
+function isSalesDashboardPaid(job: OrderJob) {
+  return (
+    job.invoiceStatus === 'paid' ||
+    job.financialStatus.toLowerCase().includes('paid') ||
+    Boolean(job.salesRepPaidNotificationSentAt)
+  )
+}
+
+function getInvoiceStatusPriority(status: InvoiceStatus) {
+  if (status === 'paid') return 3
+  if (status === 'sent') return 2
+  if (status === 'draft') return 1
+  return 0
+}
+
+function getSalesDashboardOrderKey(job: OrderJob) {
+  return (
+    job.intakeId ||
+    job.shopifyDraftOrderId ||
+    job.shopifyOrderId ||
+    job.shopifyDraftOrderName ||
+    job.shopifyOrderName ||
+    job.id
+  )
+}
+
+function getSalesDashboardRowKey(job: OrderJob, orderKey: string, isPaid: boolean) {
+  return (
+    job.id ||
+    job.lineItemId ||
+    [
+      orderKey,
+      isPaid ? 'paid' : 'draft',
+      job.productTitle,
+      job.variantTitle,
+      job.quantity,
+      job.totalPrice,
+      job.invoiceStatus,
+    ].join('|')
+  )
+}
+
+function getSalesRepSummaryKey(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
+  const owner = createCrmOwnerOption(sale.salesRep, sale.salesRepEmail)
+  if (owner) return owner.key
+
+  const email = sale.salesRepEmail.trim().toLowerCase()
+  if (email) return email
+
+  const name = sale.salesRep.trim().toLowerCase()
+  return name || 'unassigned'
+}
+
+function getSalesRepSummaryLabel(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
+  return createCrmOwnerOption(sale.salesRep, sale.salesRepEmail)?.label ||
+    sale.salesRep.trim() ||
+    sale.salesRepEmail.trim() ||
+    'Unassigned'
+}
+
+function getSalesRepSummaryEmail(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
+  return createCrmOwnerOption(sale.salesRep, sale.salesRepEmail)?.email || sale.salesRepEmail.trim()
+}
+
+function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
+  const sales = new Map<
+    string,
+    SalesDashboardSale & {
+      draftLineCount: number
+      draftProductTitles: Set<string>
+      draftQuantity: number
+      draftTotal: number
+      countedRowKeys: Set<string>
+      paidLineCount: number
+      paidProductTitles: Set<string>
+      paidQuantity: number
+      paidTotal: number
+    }
+  >()
+
+  for (const job of orderJobs) {
+    if (job.origin !== 'internal_sales') continue
+
+    const key = getSalesDashboardOrderKey(job)
+    const jobIsPaid = isSalesDashboardPaid(job)
+    const jobQuantity = Number.isFinite(job.quantity) && job.quantity > 0 ? job.quantity : 1
+    const jobValue = getSalesDashboardLineValue(job)
+    const existing =
+      sales.get(key) ??
+      ({
+        key,
+        draftOrderName: '',
+        paidOrderName: '',
+        salesRep: '',
+        salesRepEmail: '',
+        customerName: '',
+        payerName: '',
+        submittedAt: '',
+        paidAt: '',
+        invoiceStatus: 'draft',
+        isPaid: false,
+        total: 0,
+        quantity: 0,
+        lineCount: 0,
+        productSummary: '',
+        draftLineCount: 0,
+        draftProductTitles: new Set<string>(),
+        draftQuantity: 0,
+        draftTotal: 0,
+        countedRowKeys: new Set<string>(),
+        paidLineCount: 0,
+        paidProductTitles: new Set<string>(),
+        paidQuantity: 0,
+        paidTotal: 0,
+      } satisfies SalesDashboardSale & {
+        draftLineCount: number
+        draftProductTitles: Set<string>
+        draftQuantity: number
+        draftTotal: number
+        countedRowKeys: Set<string>
+        paidLineCount: number
+        paidProductTitles: Set<string>
+        paidQuantity: number
+        paidTotal: number
+      })
+
+    const rowKey = getSalesDashboardRowKey(job, key, jobIsPaid)
+    if (existing.countedRowKeys.has(rowKey)) continue
+    existing.countedRowKeys.add(rowKey)
+
+    existing.draftOrderName ||= job.shopifyDraftOrderName
+    existing.paidOrderName ||= job.shopifyOrderName
+    existing.salesRep ||= job.salesRep
+    existing.salesRepEmail ||= job.salesRepEmail
+    existing.customerName ||= job.playerName || job.customerName
+    existing.payerName ||= job.billingName || job.customerName
+    existing.submittedAt = getEarlierDate(existing.submittedAt, job.orderSubmittedAt || job.createdAt)
+    if (jobIsPaid) {
+      existing.paidTotal += jobValue
+      existing.paidQuantity += jobQuantity
+      existing.paidLineCount += 1
+      if (job.productTitle) existing.paidProductTitles.add(job.productTitle)
+    } else {
+      existing.draftTotal += jobValue
+      existing.draftQuantity += jobQuantity
+      existing.draftLineCount += 1
+      if (job.productTitle) existing.draftProductTitles.add(job.productTitle)
+    }
+
+    if (getInvoiceStatusPriority(job.invoiceStatus) > getInvoiceStatusPriority(existing.invoiceStatus)) {
+      existing.invoiceStatus = job.invoiceStatus
+    }
+
+    if (jobIsPaid) {
+      existing.isPaid = true
+      existing.invoiceStatus = 'paid'
+      existing.paidAt = getLaterDate(
+        existing.paidAt,
+        job.salesRepPaidNotificationSentAt || job.updatedAt || job.createdAt,
+      )
+    }
+
+    sales.set(key, existing)
+  }
+
+  return Array.from(sales.values())
+    .map(
+      ({
+        draftLineCount,
+        draftProductTitles,
+        draftQuantity,
+        draftTotal,
+        countedRowKeys,
+        paidLineCount,
+        paidProductTitles,
+        paidQuantity,
+        paidTotal,
+        ...sale
+      }) => {
+        void countedRowKeys
+        const hasDraftBasis = draftLineCount > 0
+        const productTitles = hasDraftBasis ? draftProductTitles : paidProductTitles
+        return {
+          ...sale,
+          lineCount: hasDraftBasis ? draftLineCount : paidLineCount,
+          productSummary: Array.from(productTitles).join(', ') || 'Custom bat order',
+          quantity: hasDraftBasis ? draftQuantity : paidQuantity,
+          total: hasDraftBasis ? draftTotal : paidTotal,
+        }
+      },
+    )
+    .sort((a, b) => {
+      const first = getDateTimestamp(a.paidAt || a.submittedAt)
+      const second = getDateTimestamp(b.paidAt || b.submittedAt)
+      return second - first
+    })
+}
+
+function buildSalesRepSummaries(sales: SalesDashboardSale[]): SalesRepSummary[] {
+  const summaries = new Map<string, SalesRepSummary & { daysToPay: number[] }>()
+
+  for (const sale of sales) {
+    const key = getSalesRepSummaryKey(sale)
+    const existing =
+      summaries.get(key) ??
+      ({
+        key,
+        label: getSalesRepSummaryLabel(sale),
+        email: getSalesRepSummaryEmail(sale),
+        submittedCount: 0,
+        submittedValue: 0,
+        paidCount: 0,
+        paidValue: 0,
+        openCount: 0,
+        openValue: 0,
+        averageDaysToPay: null,
+        daysToPay: [],
+      } satisfies SalesRepSummary & { daysToPay: number[] })
+
+    existing.submittedCount += 1
+    existing.submittedValue += sale.total
+
+    if (sale.isPaid) {
+      existing.paidCount += 1
+      existing.paidValue += sale.total
+
+      const submittedAt = getDateTimestamp(sale.submittedAt)
+      const paidAt = getDateTimestamp(sale.paidAt)
+      if (submittedAt && paidAt && paidAt >= submittedAt) {
+        existing.daysToPay.push((paidAt - submittedAt) / (1000 * 60 * 60 * 24))
+      }
+    } else {
+      existing.openCount += 1
+      existing.openValue += sale.total
+    }
+
+    summaries.set(key, existing)
+  }
+
+  return Array.from(summaries.values())
+    .map(({ daysToPay, ...summary }) => ({
+      ...summary,
+      averageDaysToPay:
+        daysToPay.length > 0
+          ? daysToPay.reduce((total, days) => total + days, 0) / daysToPay.length
+          : null,
+    }))
+    .sort((a, b) => b.paidValue - a.paidValue || b.submittedValue - a.submittedValue)
+}
+
+function isSaleInsideDashboardRange(sale: SalesDashboardSale, range: SalesDashboardRange) {
+  if (range === 'all') return true
+
+  const days = Number(range)
+  const submittedAt = getDateTimestamp(sale.submittedAt)
+  if (!submittedAt) return true
+
+  return submittedAt >= Date.now() - days * 24 * 60 * 60 * 1000
+}
+
 function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
   const merged = new Map<string, OrderJob>()
 
@@ -934,6 +2590,13 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
       orderSubmittedAt: job.orderSubmittedAt || existing?.orderSubmittedAt || job.createdAt,
       internalNotes: job.internalNotes || existing?.internalNotes || '',
       salesRep: job.salesRep || existing?.salesRep || '',
+      salesRepEmail: job.salesRepEmail || existing?.salesRepEmail || '',
+      salesRepSubmissionNotificationSentAt:
+        job.salesRepSubmissionNotificationSentAt ||
+        existing?.salesRepSubmissionNotificationSentAt ||
+        '',
+      salesRepPaidNotificationSentAt:
+        job.salesRepPaidNotificationSentAt || existing?.salesRepPaidNotificationSentAt || '',
       playerName: job.playerName || existing?.playerName || '',
       playerEmail: job.playerEmail || existing?.playerEmail || '',
       billingDifferent: job.billingDifferent || existing?.billingDifferent || false,
@@ -959,12 +2622,26 @@ function createNextBilletDraft(current: Omit<Billet, 'id'>, allBillets: Billet[]
   }
 }
 
-function safeReadStorage<T>(key: string, fallback: T): T {
+function backupLegacyLocalState() {
   try {
-    const stored = window.localStorage.getItem(key)
-    return stored ? (JSON.parse(stored) as T) : fallback
+    if (window.localStorage.getItem(legacyLocalStateBackupKey)) return
+
+    const values = Object.fromEntries(
+      legacyLocalStateKeys
+        .map((key) => [key, window.localStorage.getItem(key)] as const)
+        .filter(([, value]) => value !== null),
+    )
+    if (Object.keys(values).length === 0) return
+
+    window.localStorage.setItem(
+      legacyLocalStateBackupKey,
+      JSON.stringify({
+        backedUpAt: new Date().toISOString(),
+        values,
+      }),
+    )
   } catch {
-    return fallback
+    // Recovery backups are best-effort and should never block live sync.
   }
 }
 
@@ -980,6 +2657,206 @@ function mergeRecordsByKey<T>(base: T[], overrides: T[], getKey: (item: T) => st
   }
 
   return Array.from(merged.values())
+}
+
+function createEmptyRemoteState(): RemoteState {
+  return {
+    billets: [],
+    players: [],
+    producedBats: [],
+    customBatModels: [],
+    orderJobs: [],
+    billingContacts: [],
+    crmContacts: [],
+  }
+}
+
+function getRemoteStateRecordKey(collection: keyof RemoteState, item: unknown) {
+  const record = item as {
+    id?: string
+    barcode?: string
+    profileKind?: string
+    playerName?: string
+    createdAt?: string
+  }
+
+  switch (collection) {
+    case 'billets':
+      return record.barcode || record.id || ''
+    case 'players':
+      return record.id || `${record.profileKind ?? ''}:${record.playerName ?? ''}`
+    case 'producedBats':
+      return record.id || record.createdAt || ''
+    default:
+      return record.id || ''
+  }
+}
+
+function getChangedRemoteRecords<T>(
+  current: T[],
+  base: T[],
+  getKey: (item: T) => string,
+) {
+  const baseRecords = new Map<string, string>()
+
+  for (const item of base) {
+    const key = getKey(item).trim()
+    if (key) baseRecords.set(key, JSON.stringify(item))
+  }
+
+  return current.filter((item) => {
+    const key = getKey(item).trim()
+    if (!key) return false
+    return baseRecords.get(key) !== JSON.stringify(item)
+  })
+}
+
+function getDeletedRemoteRecordIds<T>(
+  current: T[],
+  base: T[],
+  getKey: (item: T) => string,
+) {
+  const currentKeys = new Set(current.map((item) => getKey(item).trim()).filter(Boolean))
+
+  return base
+    .filter((item) => {
+      const key = getKey(item).trim()
+      return key && !currentKeys.has(key)
+    })
+    .map((item) => {
+      const record = item as { id?: string }
+      return (record.id || getKey(item)).trim()
+    })
+    .filter(Boolean)
+}
+
+function buildRemoteStatePatch(current: RemoteState, base: RemoteState | null): RemoteStatePatch {
+  const baseState = base ?? createEmptyRemoteState()
+  const patch: RemoteStatePatch = {}
+  const changedBillets = getChangedRemoteRecords(current.billets, baseState.billets, (item) =>
+    getRemoteStateRecordKey('billets', item),
+  )
+  const changedPlayers = getChangedRemoteRecords(current.players, baseState.players, (item) =>
+    getRemoteStateRecordKey('players', item),
+  )
+  const changedProducedBats = getChangedRemoteRecords(
+    current.producedBats,
+    baseState.producedBats,
+    (item) => getRemoteStateRecordKey('producedBats', item),
+  )
+  const changedCustomBatModels = getChangedRemoteRecords(
+    current.customBatModels,
+    baseState.customBatModels,
+    (item) => getRemoteStateRecordKey('customBatModels', item),
+  )
+  const changedOrderJobs = getChangedRemoteRecords(current.orderJobs, baseState.orderJobs, (item) =>
+    getRemoteStateRecordKey('orderJobs', item),
+  )
+  const changedBillingContacts = getChangedRemoteRecords(
+    current.billingContacts,
+    baseState.billingContacts,
+    (item) => getRemoteStateRecordKey('billingContacts', item),
+  )
+  const changedCrmContacts = getChangedRemoteRecords(
+    current.crmContacts,
+    baseState.crmContacts,
+    (item) => getRemoteStateRecordKey('crmContacts', item),
+  )
+  const deletedProducedBatIds = getDeletedRemoteRecordIds(
+    current.producedBats,
+    baseState.producedBats,
+    (item) => getRemoteStateRecordKey('producedBats', item),
+  )
+  const deletedCrmContactIds = getNonManualCrmContactIds(baseState.crmContacts)
+
+  if (changedBillets.length > 0) patch.billets = changedBillets
+  if (changedPlayers.length > 0) patch.players = changedPlayers
+  if (changedProducedBats.length > 0) patch.producedBats = changedProducedBats
+  if (changedCustomBatModels.length > 0) patch.customBatModels = changedCustomBatModels
+  if (changedOrderJobs.length > 0) patch.orderJobs = changedOrderJobs
+  if (changedBillingContacts.length > 0) patch.billingContacts = changedBillingContacts
+  if (changedCrmContacts.length > 0) patch.crmContacts = changedCrmContacts
+  if (deletedProducedBatIds.length > 0 || deletedCrmContactIds.length > 0) {
+    patch.deletes = {}
+    if (deletedProducedBatIds.length > 0) patch.deletes.producedBats = deletedProducedBatIds
+    if (deletedCrmContactIds.length > 0) patch.deletes.crmContacts = deletedCrmContactIds
+  }
+
+  return patch
+}
+
+function hasRemoteStatePatchChanges(patch: RemoteStatePatch) {
+  const hasUpserts = (Object.keys(createEmptyRemoteState()) as Array<keyof RemoteState>).some(
+    (collection) => (patch[collection]?.length ?? 0) > 0,
+  )
+  const hasDeletes = Object.values(patch.deletes ?? {}).some(
+    (deletedIds) => (deletedIds?.length ?? 0) > 0,
+  )
+
+  return hasUpserts || hasDeletes
+}
+
+function countRemoteStatePatchRecords(patch: RemoteStatePatch) {
+  const upsertCount = (Object.keys(createEmptyRemoteState()) as Array<keyof RemoteState>).reduce(
+    (total, collection) => total + (patch[collection]?.length ?? 0),
+    0,
+  )
+  const deleteCount = Object.values(patch.deletes ?? {}).reduce(
+    (total, deletedIds) => total + (deletedIds?.length ?? 0),
+    0,
+  )
+
+  return upsertCount + deleteCount
+}
+
+function applyRemoteStatePatchToSnapshot(
+  base: RemoteState | null,
+  patch: RemoteStatePatch,
+): RemoteState {
+  const nextState = base ?? createEmptyRemoteState()
+  const deletedProducedBatIds = new Set(patch.deletes?.producedBats ?? [])
+  const deletedCrmContactIds = new Set(patch.deletes?.crmContacts ?? [])
+  const nextCrmContacts = patch.crmContacts
+    ? mergeRecordsByKey(nextState.crmContacts, patch.crmContacts, (item) =>
+        getRemoteStateRecordKey('crmContacts', item),
+      )
+    : nextState.crmContacts
+
+  return {
+    billets: patch.billets
+      ? mergeRecordsByKey(nextState.billets, patch.billets, (item) =>
+          getRemoteStateRecordKey('billets', item),
+        )
+      : nextState.billets,
+    players: patch.players
+      ? mergeRecordsByKey(nextState.players, patch.players, (item) =>
+          getRemoteStateRecordKey('players', item),
+        )
+      : nextState.players,
+    producedBats: patch.producedBats
+      ? mergeRecordsByKey(nextState.producedBats, patch.producedBats, (item) =>
+          getRemoteStateRecordKey('producedBats', item),
+        ).filter((record) => !deletedProducedBatIds.has(record.id))
+      : nextState.producedBats.filter((record) => !deletedProducedBatIds.has(record.id)),
+    customBatModels: patch.customBatModels
+      ? mergeRecordsByKey(nextState.customBatModels, patch.customBatModels, (item) =>
+          getRemoteStateRecordKey('customBatModels', item),
+        )
+      : nextState.customBatModels,
+    orderJobs: patch.orderJobs
+      ? mergeRecordsByKey(nextState.orderJobs, patch.orderJobs, (item) =>
+          getRemoteStateRecordKey('orderJobs', item),
+        )
+      : nextState.orderJobs,
+    billingContacts: patch.billingContacts
+      ? mergeRecordsByKey(nextState.billingContacts, patch.billingContacts, (item) =>
+          getRemoteStateRecordKey('billingContacts', item),
+        )
+      : nextState.billingContacts,
+    crmContacts: getManualCrmContacts(nextCrmContacts).filter(
+      (record) => !deletedCrmContactIds.has(record.id),
+    ),
+  }
 }
 
 function compareText(a: string, b: string) {
@@ -1074,7 +2951,6 @@ function detectGrade(text: string) {
     { grade: 'Semi-Pro', pattern: /\bsemi[-\s]?pro\b/ },
     { grade: 'Blem', pattern: /\bblem\b/ },
     { grade: 'Pro', pattern: /\bpro\b/ },
-    { grade: 'Trophy', pattern: /\btrophy\b/ },
     { grade: 'Choice', pattern: /\bchoice\b/ },
     { grade: 'Select', pattern: /\bselect\b/ },
     { grade: 'Prime', pattern: /\bprime\b/ },
@@ -1178,6 +3054,11 @@ function parseQuickEntry(
 
   if (hasAnyPhrase(normalized, mlbYesPhrases)) next.mlbEligible = true
   if (hasAnyPhrase(normalized, mlbNoPhrases)) next.mlbEligible = false
+  if (/\b(no|not|non)\b[^.\n]{0,20}\btrophy\b/.test(normalized)) {
+    next.trophyEligible = false
+  } else if (/\btrophy\b/.test(normalized)) {
+    next.trophyEligible = true
+  }
   const describesNoBarrelKnot = hasAnyPhrase(normalized, noBarrelKnotPhrases)
   const describesYesBarrelKnot = hasAnyPhrase(normalized, yesBarrelKnotPhrases)
 
@@ -1204,7 +3085,8 @@ function parseQuickEntry(
 }
 
 function getBilletLabel(billet: Billet) {
-  return `${billet.barcode} - ${billet.species} ${billet.grade}, ${billet.weight || 'no weight'} oz`
+  const trophyText = billet.trophyEligible ? ', trophy capable' : ''
+  return `${billet.barcode} - ${billet.source}, ${billet.species} ${billet.grade}${trophyText}, ${billet.weight || 'no weight'} oz`
 }
 
 function getBatModelName(modelId: string, models: BatModelProduct[]) {
@@ -1216,21 +3098,26 @@ function normalizeContactSearchText(value: string) {
 }
 
 function getBillingContactOptionLabel(contact: BillingContact) {
-  return [contact.email, contact.phone, contact.relationship]
+  return [contact.company, contact.email, contact.phone, contact.relationship]
     .filter(Boolean)
     .join(' · ')
 }
 
 function getBillingContactSearchOptions(contact: BillingContact): BillingContactSearchOption[] {
   const label = getBillingContactOptionLabel(contact)
-  const value = [contact.name, contact.company].filter(Boolean).join(' · ')
+  const values = [
+    [contact.name, contact.company].filter(Boolean).join(' · '),
+    contact.email,
+    contact.phone,
+    contact.company,
+  ].filter(Boolean)
 
-  return [{
-    id: contact.id,
+  return Array.from(new Set(values)).map((value, index) => ({
+    id: `${contact.id}-${index}`,
     value,
     label,
     contactId: contact.id,
-  }]
+  }))
 }
 
 function getBillingContactForSearchValue(
@@ -1282,7 +3169,15 @@ type SalesOrderApiResponse = {
   invoiceSendTokenExpiresAt?: string
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
+  payerNotificationRecipient?: string
+  internalOrderNotificationSent?: boolean
+  internalOrderNotificationMethod?: string
+  internalOrderNotificationError?: string
+  salesRepSubmissionNotificationSent?: boolean
+  salesRepSubmissionNotificationError?: string
   orderJobs?: OrderJob[]
+  players?: PlayerProfile[]
+  billingContacts?: BillingContact[]
   draftOrder?: {
     id?: string
     name?: string
@@ -1306,6 +3201,19 @@ type SalesOrderApiResponse = {
   internalNotificationRecipients?: string[]
 }
 
+type SalesPortalApiResponse = {
+  ok?: boolean
+  message?: string
+  email?: string
+  devCode?: string
+  loginCode?: string
+  accessCode?: string
+  expiresAt?: string
+  session?: SalesPortalSession
+  crmContacts?: CrmContact[]
+  orderJobs?: OrderJob[]
+}
+
 type PublicDraftInvoiceReview = {
   draft: SalesOrderDraft
   draftOrder: NonNullable<SalesOrderApiResponse['draftOrder']>
@@ -1320,7 +3228,38 @@ const publicOrderFormPaths = new Set([
   '/trinity-order-from',
 ])
 
+const salesPortalPaths = new Set(['/sales-portal', '/sales-crm'])
 const internalToolPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
+const defaultDemoEmail = 'keith@trinitybats.com'
+const salesPortalDemoOnly =
+  import.meta.env.VITE_SALES_PORTAL_DEMO_ONLY === 'true' ||
+  window.location.hostname.includes('trinity-sales-portal-demo')
+
+function getSalesPortalDemoEmail() {
+  const params = new URLSearchParams(window.location.search)
+  const demoValue = (params.get('demo') ?? params.get('demoUser') ?? '').trim().toLowerCase()
+  const demoEmails = new Map([
+    ['keith', 'keith@trinitybats.com'],
+    ['keith@trinitybats.com', 'keith@trinitybats.com'],
+    ['shane', 'shane@trinitybats.com'],
+    ['shane@trinitybats.com', 'shane@trinitybats.com'],
+  ])
+  const requestedEmail = demoEmails.get(demoValue)
+
+  if (requestedEmail) return requestedEmail
+  return salesPortalDemoOnly ? defaultDemoEmail : ''
+}
+
+function createDemoSalesPortalSession(email: string): SalesPortalSession {
+  const owner = getSalesPortalOwnerForEmail(email)
+  return {
+    email,
+    name: owner.name,
+    label: owner.label,
+    isAdmin: salesPortalAdminEmails.has(normalizeTrinityEmail(email)),
+    loggedInAt: new Date().toISOString(),
+  }
+}
 
 function getCurrentAppPath() {
   return window.location.pathname.replace(/\/+$/, '') || '/'
@@ -1330,8 +3269,26 @@ function isPublicOrderFormRoute() {
   return publicOrderFormPaths.has(getCurrentAppPath())
 }
 
+function isSalesPortalRoute() {
+  return salesPortalPaths.has(getCurrentAppPath())
+}
+
 function isInternalToolRoute() {
   return internalToolPaths.has(getCurrentAppPath())
+}
+
+function isLocalPreviewHost() {
+  return ['localhost', '127.0.0.1', ''].includes(window.location.hostname)
+}
+
+function isCrmSandboxPreviewRoute() {
+  const params = new URLSearchParams(window.location.search)
+  return isLocalPreviewHost() && params.get('crmSandbox') === '1'
+}
+
+function getInitialActiveSection(): ActiveSection {
+  const params = new URLSearchParams(window.location.search)
+  return isCrmSandboxPreviewRoute() && params.get('section') === 'crm' ? 'crm' : 'inventory'
 }
 
 function getEmbeddedAuthSearch() {
@@ -1366,37 +3323,44 @@ function getSalesOrderSuccessMessage(
   const emailMessage = payload.invoiceSent
     ? payload.emailNotificationMethod === 'order_receipt'
       ? ' and documentation email sent'
-      : ' and invoice sent'
+      : ` and invoice sent${payload.payerNotificationRecipient ? ` to ${payload.payerNotificationRecipient}` : ''}`
     : ''
   const draftReviewMessage =
     draft.createDraftOrder && payload.draftInvoiceReadyForReview
       ? ' and the draft invoice is ready for review'
       : ''
-  const notificationNames = payload.internalNotificationRecipients?.length
-    ? ' and Jeremy, Stefan, and Keith copied through Shopify'
-    : ''
+  const internalCopyMessage = payload.internalOrderNotificationError
+    ? `, but internal order-copy emails failed: ${payload.internalOrderNotificationError}`
+    : payload.internalOrderNotificationSent
+      ? ' and internal order-copy emails sent'
+      : ''
 
-  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${notificationNames}.`
+  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`
+}
+
+function getCrmTouchpointDayTimestamp(touchpoint: CrmTouchpoint) {
+  const dateValue = getCrmDateInputValue(touchpoint.contactedAt)
+  return getDateTimestamp(getCrmDateFromInput(dateValue)) || getDateTimestamp(touchpoint.contactedAt)
+}
+
+function getCrmTouchpointSequenceTimestamp(touchpoint: CrmTouchpoint, fallbackIndex: number) {
+  const idTimestamp = Number(touchpoint.id.match(/-(\d{12,})-/)?.[1] ?? '')
+  if (Number.isFinite(idTimestamp) && idTimestamp > 0) return idTimestamp
+
+  const contactedTimestamp = getDateTimestamp(touchpoint.contactedAt)
+  return contactedTimestamp || fallbackIndex
 }
 
 function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
-  const isDirectBillOrder = !draft.billingDifferent
-  const hasMissingDirectContact =
-    isDirectBillOrder &&
-    (!draft.playerPhone.trim() ||
-      (draft.requiresShipping &&
-        (!draft.shippingAddress1.trim() ||
-          !draft.shippingCity.trim() ||
-          !draft.shippingProvinceCode.trim() ||
-          !draft.shippingZip.trim() ||
-          !draft.shippingCountryCode.trim() ||
-          (draft.billingAddressDifferent &&
-            (!draft.billingAddress1.trim() ||
-              !draft.billingCity.trim() ||
-              !draft.billingProvinceCode.trim() ||
-              !draft.billingZip.trim() ||
-              !draft.billingCountryCode.trim())))))
+  const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
+  const hasMissingShippingAddress =
+    draft.requiresShipping &&
+    (!draft.shippingAddress1.trim() ||
+      !draft.shippingCity.trim() ||
+      !draft.shippingProvinceCode.trim() ||
+      !draft.shippingZip.trim() ||
+      !draft.shippingCountryCode.trim())
   const hasInvalidLine = draft.lines.some(
     (line) =>
       !line.title.trim() ||
@@ -1407,14 +3371,768 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
       line.quantity < 1,
   )
 
-  return !draft.playerName.trim() || !payerEmail.trim() || hasMissingDirectContact || hasInvalidLine
+  return (
+    !draft.playerName.trim() ||
+    !payerEmail.trim() ||
+    !payerPhone.trim() ||
+    hasMissingShippingAddress ||
+    hasInvalidLine
+  )
+}
+
+function ContactEngagementReview({
+  touchpoints,
+  emptyMessage = 'No engagements have been saved for this contact yet.',
+}: {
+  touchpoints: CrmTouchpoint[]
+  emptyMessage?: string
+}) {
+  const sortedTouchpoints = touchpoints
+    .map((touchpoint, originalIndex) => ({
+      touchpoint,
+      originalIndex,
+      dayTimestamp: getCrmTouchpointDayTimestamp(touchpoint),
+      sequenceTimestamp: getCrmTouchpointSequenceTimestamp(touchpoint, originalIndex),
+    }))
+    .sort(
+      (first, second) =>
+        first.dayTimestamp - second.dayTimestamp ||
+        first.sequenceTimestamp - second.sequenceTimestamp ||
+        first.originalIndex - second.originalIndex,
+    )
+    .map(({ touchpoint }) => touchpoint)
+
+  if (sortedTouchpoints.length === 0) {
+    return <p className="empty-state">{emptyMessage}</p>
+  }
+
+  return (
+    <div className="crm-contact-engagement-list">
+      {sortedTouchpoints.map((touchpoint, index) => (
+        <details className="crm-contact-engagement-item" key={touchpoint.id}>
+          <summary>
+            <span className="crm-engagement-number">{index + 1}</span>
+            <strong>{getCrmTouchpointTypeLabel(touchpoint.type)}</strong>
+            <small>{formatSalesDashboardDate(touchpoint.contactedAt)}</small>
+          </summary>
+          <div className="crm-contact-engagement-summary">
+            <p>{touchpoint.summary || 'No summary was saved for this engagement.'}</p>
+            {touchpoint.nextStep ? (
+              <p>
+                <strong>Next step:</strong> {touchpoint.nextStep}
+              </p>
+            ) : null}
+            {touchpoint.nextFollowUpAt ? (
+              <small>Follow up {formatSalesDashboardDate(touchpoint.nextFollowUpAt)}</small>
+            ) : null}
+          </div>
+        </details>
+      ))}
+    </div>
+  )
+}
+
+type SalesOrderDraftFieldUpdater = <K extends keyof SalesOrderDraft>(
+  key: K,
+  value: SalesOrderDraft[K],
+) => void
+
+function SalesOrderShippingAddressFields({
+  draft,
+  updateField,
+}: {
+  draft: SalesOrderDraft
+  updateField: SalesOrderDraftFieldUpdater
+}) {
+  return (
+    <div className="billing-panel">
+      <div className="form-row">
+        <label>
+          {draft.billingDifferent ? 'Shipping recipient phone' : 'Payer phone'}
+          <input
+            type="tel"
+            value={draft.playerPhone}
+            placeholder="Example: (321) 652-1800"
+            onChange={(event) => updateField('playerPhone', event.target.value)}
+          />
+        </label>
+        {draft.requiresShipping ? (
+          <label>
+            Shipping country code
+            <input
+              value={draft.shippingCountryCode}
+              placeholder="US"
+              onChange={(event) =>
+                updateField('shippingCountryCode', event.target.value.toUpperCase())
+              }
+            />
+          </label>
+        ) : null}
+      </div>
+
+      {draft.requiresShipping ? (
+        <>
+          <div className="form-row">
+            <label>
+              Shipping address
+              <input
+                value={draft.shippingAddress1}
+                placeholder="Street address"
+                onChange={(event) => updateField('shippingAddress1', event.target.value)}
+              />
+            </label>
+            <label>
+              Apartment, suite, etc.
+              <input
+                value={draft.shippingAddress2}
+                placeholder="Optional"
+                onChange={(event) => updateField('shippingAddress2', event.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              Shipping city
+              <input
+                value={draft.shippingCity}
+                placeholder="City"
+                onChange={(event) => updateField('shippingCity', event.target.value)}
+              />
+            </label>
+            <label>
+              Shipping state
+              <input
+                value={draft.shippingProvinceCode}
+                placeholder="Example: CO"
+                onChange={(event) =>
+                  updateField('shippingProvinceCode', event.target.value.toUpperCase())
+                }
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              Shipping ZIP
+              <input
+                value={draft.shippingZip}
+                placeholder="ZIP code"
+                onChange={(event) => updateField('shippingZip', event.target.value)}
+              />
+            </label>
+          </div>
+
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+type SalesOrderFormFieldsProps = {
+  draft: SalesOrderDraft
+  setDraft: Dispatch<SetStateAction<SalesOrderDraft>>
+  updateField: SalesOrderDraftFieldUpdater
+  updateLine: (id: string, patch: Partial<SalesOrderLineDraft>) => void
+  addLine: () => void
+  removeLine: (id: string) => void
+  shopifyCatalog: ShopifyCatalogProduct[]
+  productDatalistId: string
+  playerNameDatalistId?: string
+  billingContactDatalistId?: string
+  updateBillingName?: (value: string) => void
+  billingContacts?: BillingContact[]
+  applyBillingContact?: (contact: BillingContact) => void
+  attachmentFile: File | null
+  setAttachmentFile: Dispatch<SetStateAction<File | null>>
+  isSubmitting: boolean
+  hideSalesRepFields?: boolean
+}
+
+function SalesOrderFormFields({
+  draft,
+  setDraft,
+  updateField,
+  updateLine,
+  addLine,
+  removeLine,
+  shopifyCatalog,
+  productDatalistId,
+  playerNameDatalistId,
+  billingContactDatalistId,
+  updateBillingName,
+  billingContacts = [],
+  applyBillingContact,
+  attachmentFile,
+  setAttachmentFile,
+  isSubmitting,
+  hideSalesRepFields = false,
+}: SalesOrderFormFieldsProps) {
+  return (
+    <>
+      <div className={`form-row ${draft.billingDifferent ? 'single-field-row' : ''}`}>
+        <label>
+          Player name
+          <input
+            list={playerNameDatalistId}
+            value={draft.playerName}
+            placeholder="Example: Jordan Smith"
+            onChange={(event) => updateField('playerName', event.target.value)}
+          />
+        </label>
+        {!draft.billingDifferent ? (
+          <label>
+            Payer email
+            <input
+              type="email"
+              value={draft.playerEmail}
+              placeholder="payer@example.com"
+              onChange={(event) => updateField('playerEmail', event.target.value)}
+            />
+          </label>
+        ) : null}
+      </div>
+
+      <label className="checkbox-row billing-toggle">
+        <input
+          type="checkbox"
+          checked={draft.billingDifferent}
+          onChange={(event) => {
+            const billingDifferent = event.target.checked
+            setDraft((current) => ({
+              ...current,
+              billingDifferent,
+            }))
+          }}
+        />
+        <span>Bill a team, agent, or other payer</span>
+      </label>
+
+      <label className="checkbox-row billing-toggle">
+        <input
+          type="checkbox"
+          checked={!draft.requiresShipping}
+          onChange={(event) => {
+            const requiresShipping = !event.target.checked
+            setDraft((current) => ({
+              ...current,
+              requiresShipping,
+              shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
+              shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
+              shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
+              shippingCity: requiresShipping ? current.shippingCity : '',
+              shippingProvinceCode: requiresShipping ? current.shippingProvinceCode : '',
+              shippingZip: requiresShipping ? current.shippingZip : '',
+              shippingCountryCode: requiresShipping ? current.shippingCountryCode : 'US',
+            }))
+          }}
+        />
+        <span>Local delivery / no shipping required</span>
+      </label>
+
+      <div className="form-row fulfillment-options-row">
+        <label>
+          Shipping speed
+          <select
+            value={draft.shippingSpeed}
+            disabled={!draft.requiresShipping}
+            onChange={(event) =>
+              updateField('shippingSpeed', event.target.value as ShippingSpeedOption)
+            }
+          >
+            {shippingSpeedOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Production timeline
+          <select
+            value={draft.productionTimeline}
+            onChange={(event) =>
+              updateField('productionTimeline', event.target.value as ProductionTimelineOption)
+            }
+          >
+            {productionTimelineOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {draft.billingDifferent ? (
+        <div className="billing-panel">
+          <div className="form-row">
+            <label>
+              Payer name
+              <input
+                list={billingContactDatalistId}
+                value={draft.billingName}
+                placeholder={
+                  billingContactDatalistId
+                    ? 'Search name, team, agent, or agency'
+                    : 'Team, agent, agency, or payer name'
+                }
+                onChange={(event) => {
+                  const value = event.target.value
+                  if (updateBillingName) {
+                    updateBillingName(value)
+                  } else {
+                    updateField('billingName', value)
+                  }
+                }}
+              />
+            </label>
+            <label>
+              Payer email
+              <input
+                type="email"
+                value={draft.billingEmail}
+                placeholder="billing@example.com"
+                onChange={(event) => updateField('billingEmail', event.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              Payer phone
+              <input
+                type="tel"
+                value={draft.billingPhone}
+                placeholder="Example: (321) 652-1800"
+                onChange={(event) => updateField('billingPhone', event.target.value)}
+              />
+            </label>
+            <label>
+              Team or agency
+              <input
+                value={draft.billingCompany}
+                placeholder="Example: New York Mets"
+                onChange={(event) => updateField('billingCompany', event.target.value)}
+              />
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
+              Billing relationship
+              <input
+                value={draft.billingRelationship}
+                placeholder="Example: Minor league clubhouse manager"
+                onChange={(event) => updateField('billingRelationship', event.target.value)}
+              />
+            </label>
+          </div>
+
+          {billingContacts.length > 0 && applyBillingContact ? (
+            <div className="saved-contact-panel">
+              <span>Saved payer contacts</span>
+              <div className="saved-contact-list">
+                {billingContacts.map((contact) => (
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    key={contact.id}
+                    onClick={() => applyBillingContact(contact)}
+                  >
+                    {[contact.name, contact.company].filter(Boolean).join(' · ') ||
+                      contact.email ||
+                      contact.phone}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <SalesOrderShippingAddressFields draft={draft} updateField={updateField} />
+
+      {!hideSalesRepFields ? (
+        <>
+          <label>
+            Sales rep
+            <input
+              value={draft.salesRep}
+              placeholder="Example: Matt"
+              onChange={(event) => updateField('salesRep', event.target.value)}
+            />
+          </label>
+
+          <label>
+            Sales rep email
+            <input
+              type="email"
+              value={draft.salesRepEmail}
+              placeholder="rep@trinitybats.com"
+              onChange={(event) => updateField('salesRepEmail', event.target.value)}
+            />
+          </label>
+        </>
+      ) : null}
+
+      <div className="sales-line-list">
+        {draft.lines.map((line, index) => {
+          const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
+          const productInputValue = line.isProOrder
+            ? line.title
+            : (lineProduct?.name ?? line.title)
+          const lineTitle = line.isProOrder
+            ? line.title || 'Pro custom bat'
+            : lineProduct?.name || line.title || 'Custom bat'
+
+          return (
+            <article className="sales-line-card" key={line.id}>
+              <div className="split-heading">
+                <div>
+                  <span className="profile-type-pill">Line {index + 1}</span>
+                  <h3>{lineTitle}</h3>
+                </div>
+                {draft.lines.length > 1 ? (
+                  <button
+                    type="button"
+                    className="secondary-button destructive-button compact-button"
+                    onClick={() => removeLine(line.id)}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+
+              <label className="checkbox-row pro-order-toggle">
+                <input
+                  type="checkbox"
+                  checked={line.isProOrder}
+                  onChange={(event) => {
+                    const isProOrder = event.target.checked
+                    if (isProOrder) {
+                      updateLine(line.id, {
+                        isProOrder,
+                        productId: '',
+                        variantId: '',
+                        title: line.title || lineProduct?.name || '',
+                      })
+                      return
+                    }
+
+                    updateLine(line.id, {
+                      isProOrder,
+                      ...getTypedBatModelPatch(shopifyCatalog, line.title, line),
+                    })
+                  }}
+                />
+                <span>Pro order</span>
+              </label>
+
+              <div className="form-row">
+                <label>
+                  Bat model
+                  <input
+                    list={line.isProOrder ? undefined : productDatalistId}
+                    value={productInputValue}
+                    placeholder={
+                      line.isProOrder
+                        ? 'Example: T141 pro custom'
+                        : 'Type a model or choose a Shopify product'
+                    }
+                    onChange={(event) => {
+                      const typedProduct = event.target.value
+                      if (line.isProOrder) {
+                        updateLine(line.id, {
+                          productId: '',
+                          variantId: '',
+                          title: typedProduct,
+                        })
+                        return
+                      }
+
+                      updateLine(line.id, getTypedBatModelPatch(shopifyCatalog, typedProduct, line))
+                    }}
+                  />
+                </label>
+                <label>
+                  Wood species
+                  <select
+                    value={line.wood}
+                    onChange={(event) =>
+                      updateLine(line.id, {
+                        wood: event.target.value as SalesOrderLineDraft['wood'],
+                      })
+                    }
+                  >
+                    {speciesOptions.map((species) => (
+                      <option key={species}>{species}</option>
+                    ))}
+                    <option>Other</option>
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Unit price
+                  <input
+                    inputMode="decimal"
+                    value={line.unitPrice}
+                    placeholder="Example: 189.00"
+                    onChange={(event) => updateLine(line.id, { unitPrice: event.target.value })}
+                  />
+                </label>
+                <label>
+                  Quantity
+                  <input
+                    type="number"
+                    min="1"
+                    value={line.quantity}
+                    onChange={(event) => updateLine(line.id, { quantity: Number(event.target.value) })}
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Length
+                  <input
+                    value={line.length}
+                    placeholder="Example: 34"
+                    onChange={(event) => updateLine(line.id, { length: event.target.value })}
+                  />
+                </label>
+                <label>
+                  Weight
+                  <input
+                    value={line.targetWeight}
+                    placeholder="Example: 31.5"
+                    onChange={(event) => updateLine(line.id, { targetWeight: event.target.value })}
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Handle color
+                  <select
+                    value={line.handleColor}
+                    onChange={(event) => updateLine(line.id, { handleColor: event.target.value })}
+                  >
+                    <option value="">Select handle color</option>
+                    {handleColorOptions.map((color) => (
+                      <option key={color}>{color}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Barrel color
+                  <select
+                    value={line.barrelColor}
+                    onChange={(event) => updateLine(line.id, { barrelColor: event.target.value })}
+                  >
+                    <option value="">Select barrel color</option>
+                    {barrelColorOptions.map((color) => (
+                      <option key={color}>{color}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Band color
+                  <select
+                    value={line.bandColor}
+                    onChange={(event) => updateLine(line.id, { bandColor: event.target.value })}
+                  >
+                    <option value="">Select band color</option>
+                    {bandColorOptions.map((color) => (
+                      <option key={color}>{color}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Logo color
+                  <select
+                    value={line.logoColor}
+                    onChange={(event) => updateLine(line.id, { logoColor: event.target.value })}
+                  >
+                    <option value="">Select logo color</option>
+                    {logoColorOptions.map((color) => (
+                      <option key={color}>{color}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Cup
+                  <select
+                    value={line.cupped}
+                    onChange={(event) =>
+                      updateLine(line.id, {
+                        cupped: event.target.value as SalesOrderLineDraft['cupped'],
+                      })
+                    }
+                  >
+                    {manualCupOptions.map((cup) => (
+                      <option key={cup} value={cup}>
+                        {cup === 'Yes' ? 'Cup' : 'No cup'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Engraving
+                  <input
+                    value={line.engraving}
+                    placeholder="Player name, signature, or custom text"
+                    onChange={(event) => updateLine(line.id, { engraving: event.target.value })}
+                  />
+                </label>
+              </div>
+            </article>
+          )
+        })}
+      </div>
+
+      <button type="button" className="secondary-button" onClick={addLine}>
+        Add another line
+      </button>
+
+      <div className="attachment-field">
+        <label>
+          Internal attachment
+          <input
+            type="file"
+            onChange={(event) => setAttachmentFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+        {attachmentFile ? (
+          <div className="attachment-chip">
+            <span>{attachmentFile.name}</span>
+            <button
+              type="button"
+              className="secondary-button compact-button"
+              onClick={() => setAttachmentFile(null)}
+            >
+              Remove
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      <label className="notes-field">
+        Internal order notes
+        <textarea
+          value={draft.notes}
+          placeholder="Payment terms, delivery promise, team contact, or packaging notes"
+          onChange={(event) => updateField('notes', event.target.value)}
+        />
+      </label>
+
+      <label className="checkbox-row invoice-toggle">
+        <input
+          type="checkbox"
+          checked={draft.createDraftOrder}
+          onChange={(event) => {
+            const createDraftOrder = event.target.checked
+            setDraft((current) => ({
+              ...current,
+              createDraftOrder,
+              sendInvoice: createDraftOrder ? false : current.sendInvoice,
+            }))
+          }}
+        />
+        <span>Create and send Shopify draft invoice</span>
+      </label>
+
+      {!draft.createDraftOrder ? (
+        <label className="checkbox-row invoice-toggle">
+          <input
+            type="checkbox"
+            checked={draft.sendInvoice}
+            onChange={(event) => updateField('sendInvoice', event.target.checked)}
+          />
+          <span>Send Shopify invoice/documentation after order creation</span>
+        </label>
+      ) : null}
+
+      <button type="submit" disabled={isSubmitting}>
+        {isSubmitting
+          ? draft.createDraftOrder
+            ? 'Creating draft...'
+            : 'Creating order...'
+          : draft.createDraftOrder
+            ? 'Create and send Shopify draft invoice'
+            : 'Create Shopify order'}
+      </button>
+    </>
+  )
+}
+
+function findShopifyCatalogProductByName(
+  catalog: ShopifyCatalogProduct[],
+  typedModelName: string,
+) {
+  const normalizedModelName = typedModelName.trim().toLowerCase()
+  if (!normalizedModelName) return undefined
+
+  return catalog.find((product) => product.name.trim().toLowerCase() === normalizedModelName)
+}
+
+function getTypedBatModelPatch(
+  catalog: ShopifyCatalogProduct[],
+  typedModelName: string,
+  currentLine: SalesOrderLineDraft,
+): Partial<SalesOrderLineDraft> {
+  const product = findShopifyCatalogProductByName(catalog, typedModelName)
+  const firstVariant = product?.variants[0]
+
+  return {
+    productId: product?.id ?? '',
+    variantId: '',
+    title: product?.name ?? typedModelName,
+    unitPrice: firstVariant?.price ?? currentLine.unitPrice,
+  }
 }
 
 function cloneSalesOrderDraft(draft: SalesOrderDraft): SalesOrderDraft {
   return {
     ...draft,
+    attachment: draft.attachment ? { ...draft.attachment } : null,
     lines: draft.lines.map((line) => ({ ...line })),
   }
+}
+
+async function uploadSalesOrderAttachment(file: File): Promise<OrderAttachment> {
+  if (file.size > maxSalesOrderAttachmentBytes) {
+    throw new Error('Attachment must be 20 MB or smaller.')
+  }
+
+  const response = await fetch(getApiPath('/api/order-attachments'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream',
+      'x-trinity-attachment-name': encodeURIComponent(file.name),
+      'x-trinity-attachment-type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  })
+  const payload = (await response.json()) as {
+    ok?: boolean
+    message?: string
+    attachment?: Partial<OrderAttachment>
+  }
+  const attachment = normalizeOrderAttachment(payload.attachment)
+  if (!response.ok || !payload.ok || !attachment) {
+    throw new Error(payload.message ?? 'Could not upload attachment.')
+  }
+
+  return attachment
 }
 
 function getPublicDraftPayerName(draft: SalesOrderDraft) {
@@ -1453,7 +4171,7 @@ function getDraftOrderTotal(review: PublicDraftInvoiceReview) {
 
 function getDraftOrderShippingLine(review: PublicDraftInvoiceReview) {
   const amount = Number(review.draftOrder.shippingLine?.originalPriceSet?.shopMoney?.amount)
-  if (!Number.isFinite(amount) || amount <= 0) return null
+  if (!review.draftOrder.shippingLine?.title || !Number.isFinite(amount) || amount < 0) return null
 
   return {
     title: review.draftOrder.shippingLine?.title || 'Shipping',
@@ -1504,6 +4222,7 @@ function PublicSalesOrderForm() {
     emptySalesOrderDraft(),
   )
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
+  const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
   const [isLoadingCatalog, setIsLoadingCatalog] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSendingInvoice, setIsSendingInvoice] = useState(false)
@@ -1580,7 +4299,7 @@ function PublicSalesOrderForm() {
 
     if (hasInvalidSalesOrderDraft(salesOrderDraft)) {
       setMessage(
-        'Add the player, payer email, direct-bill contact/address details, bat model, unit price, and complete each line before submitting.',
+        'Add the player, payer email, payer phone, shipping address, bat model, unit price, and complete each line before submitting.',
       )
       return
     }
@@ -1589,16 +4308,26 @@ function PublicSalesOrderForm() {
       setIsSubmitting(true)
       setMessage(
         salesOrderDraft.createDraftOrder
-          ? 'Creating Shopify draft invoice...'
-          : 'Creating Shopify order...',
+          ? salesOrderAttachmentFile
+            ? 'Uploading attachment and creating/sending Shopify draft invoice...'
+            : 'Creating and sending Shopify draft invoice...'
+          : salesOrderAttachmentFile
+            ? 'Uploading attachment and creating Shopify order...'
+            : 'Creating Shopify order...',
       )
-      const submittedDraft = cloneSalesOrderDraft(salesOrderDraft)
+      const attachment = salesOrderAttachmentFile
+        ? await uploadSalesOrderAttachment(salesOrderAttachmentFile)
+        : null
+      const submittedDraft = {
+        ...cloneSalesOrderDraft(salesOrderDraft),
+        attachment,
+      }
       const response = await fetch(getApiPath('/api/sales-orders'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(salesOrderDraft),
+        body: JSON.stringify(submittedDraft),
       })
       const payload = (await response.json()) as SalesOrderApiResponse
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
@@ -1621,6 +4350,7 @@ function PublicSalesOrderForm() {
         setMessage(getSalesOrderSuccessMessage(submittedDraft, payload))
       }
       setSalesOrderDraft(emptySalesOrderDraft())
+      setSalesOrderAttachmentFile(null)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not submit the order.')
@@ -1659,7 +4389,9 @@ function PublicSalesOrderForm() {
   return (
     <main className="public-order-shell">
       <section className="public-order-heading">
-        <p className="eyebrow">Trinity Bat Company</p>
+        <div className="public-order-logo" aria-label="Trinity Bat Company">
+          Trinity Bat Company
+        </div>
         <h1>Sales order submission</h1>
         <p>
           Submit phone, team, pro, and custom bat orders into the same Shopify and production
@@ -1793,696 +4525,19 @@ function PublicSalesOrderForm() {
             <h2>Create a Shopify invoice order</h2>
           </div>
 
-          <div className={`form-row ${salesOrderDraft.billingDifferent ? 'single-field-row' : ''}`}>
-            <label>
-              Player name
-              <input
-                value={salesOrderDraft.playerName}
-                placeholder="Example: Jordan Smith"
-                onChange={(event) => updateSalesDraftField('playerName', event.target.value)}
-              />
-            </label>
-            {!salesOrderDraft.billingDifferent ? (
-              <label>
-                Player email
-                <input
-                  type="email"
-                  value={salesOrderDraft.playerEmail}
-                  placeholder="player@example.com"
-                  onChange={(event) => updateSalesDraftField('playerEmail', event.target.value)}
-                />
-              </label>
-            ) : null}
-          </div>
-
-          <label className="checkbox-row billing-toggle">
-            <input
-              type="checkbox"
-              checked={salesOrderDraft.billingDifferent}
-              onChange={(event) => {
-                const billingDifferent = event.target.checked
-                setSalesOrderDraft((current) => ({
-                  ...current,
-                  billingDifferent,
-                  playerEmail: billingDifferent ? '' : current.playerEmail,
-                  playerPhone: billingDifferent ? '' : current.playerPhone,
-                  shippingAddress1: billingDifferent ? '' : current.shippingAddress1,
-                  shippingAddress2: billingDifferent ? '' : current.shippingAddress2,
-                  shippingCity: billingDifferent ? '' : current.shippingCity,
-                  shippingProvinceCode: billingDifferent ? '' : current.shippingProvinceCode,
-                  shippingZip: billingDifferent ? '' : current.shippingZip,
-                  shippingCountryCode: billingDifferent ? 'US' : current.shippingCountryCode,
-                  billingAddressDifferent: billingDifferent
-                    ? false
-                    : current.billingAddressDifferent,
-                  billingAddress1: billingDifferent ? '' : current.billingAddress1,
-                  billingAddress2: billingDifferent ? '' : current.billingAddress2,
-                  billingCity: billingDifferent ? '' : current.billingCity,
-                  billingProvinceCode: billingDifferent ? '' : current.billingProvinceCode,
-                  billingZip: billingDifferent ? '' : current.billingZip,
-                  billingCountryCode: billingDifferent ? 'US' : current.billingCountryCode,
-                }))
-              }}
-            />
-            <span>Bill a team, agent, or other payer</span>
-          </label>
-
-          <label className="checkbox-row billing-toggle">
-            <input
-              type="checkbox"
-              checked={!salesOrderDraft.requiresShipping}
-              onChange={(event) => {
-                const requiresShipping = !event.target.checked
-                setSalesOrderDraft((current) => ({
-                  ...current,
-                  requiresShipping,
-                  shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
-                  shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
-                  shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
-                  shippingCity: requiresShipping ? current.shippingCity : '',
-                  shippingProvinceCode: requiresShipping ? current.shippingProvinceCode : '',
-                  shippingZip: requiresShipping ? current.shippingZip : '',
-                  shippingCountryCode: requiresShipping ? current.shippingCountryCode : 'US',
-                  billingAddressDifferent: requiresShipping
-                    ? current.billingAddressDifferent
-                    : false,
-                  billingAddress1: requiresShipping ? current.billingAddress1 : '',
-                  billingAddress2: requiresShipping ? current.billingAddress2 : '',
-                  billingCity: requiresShipping ? current.billingCity : '',
-                  billingProvinceCode: requiresShipping ? current.billingProvinceCode : '',
-                  billingZip: requiresShipping ? current.billingZip : '',
-                  billingCountryCode: requiresShipping ? current.billingCountryCode : 'US',
-                }))
-              }}
-            />
-            <span>Local delivery / no shipping required</span>
-          </label>
-
-          <div className="form-row fulfillment-options-row">
-            <label>
-              Shipping speed
-              <select
-                value={salesOrderDraft.shippingSpeed}
-                disabled={!salesOrderDraft.requiresShipping}
-                onChange={(event) =>
-                  updateSalesDraftField(
-                    'shippingSpeed',
-                    event.target.value as ShippingSpeedOption,
-                  )
-                }
-              >
-                {shippingSpeedOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Production timeline
-              <select
-                value={salesOrderDraft.productionTimeline}
-                onChange={(event) =>
-                  updateSalesDraftField(
-                    'productionTimeline',
-                    event.target.value as ProductionTimelineOption,
-                  )
-                }
-              >
-                {productionTimelineOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {salesOrderDraft.billingDifferent ? (
-            <div className="billing-panel">
-              <div className="form-row">
-                <label>
-                  Payer name
-                  <input
-                    value={salesOrderDraft.billingName}
-                    placeholder="Team, agent, agency, or payer name"
-                    onChange={(event) => updateSalesDraftField('billingName', event.target.value)}
-                  />
-                </label>
-                <label>
-                  Payer email
-                  <input
-                    type="email"
-                    value={salesOrderDraft.billingEmail}
-                    placeholder="billing@example.com"
-                    onChange={(event) => updateSalesDraftField('billingEmail', event.target.value)}
-                  />
-                </label>
-              </div>
-
-              <div className="form-row">
-                <label>
-                  Payer phone
-                  <input
-                    type="tel"
-                    value={salesOrderDraft.billingPhone}
-                    placeholder="Example: (321) 652-1800"
-                    onChange={(event) => updateSalesDraftField('billingPhone', event.target.value)}
-                  />
-                </label>
-                <label>
-                  Team or agency
-                  <input
-                    value={salesOrderDraft.billingCompany}
-                    placeholder="Example: New York Mets"
-                    onChange={(event) =>
-                      updateSalesDraftField('billingCompany', event.target.value)
-                    }
-                  />
-                </label>
-              </div>
-
-              <label>
-                Billing relationship
-                <input
-                  value={salesOrderDraft.billingRelationship}
-                  placeholder="Example: Minor league clubhouse manager"
-                  onChange={(event) =>
-                    updateSalesDraftField('billingRelationship', event.target.value)
-                  }
-                />
-              </label>
-            </div>
-          ) : (
-            <div className="billing-panel">
-              <div className="form-row">
-                <label>
-                  Player phone
-                  <input
-                    type="tel"
-                    value={salesOrderDraft.playerPhone}
-                    placeholder="Example: (321) 652-1800"
-                    onChange={(event) => updateSalesDraftField('playerPhone', event.target.value)}
-                  />
-                </label>
-                <label>
-                  Shipping country code
-                  <input
-                    value={salesOrderDraft.shippingCountryCode}
-                    placeholder="US"
-                    onChange={(event) =>
-                      updateSalesDraftField(
-                        'shippingCountryCode',
-                        event.target.value.toUpperCase(),
-                      )
-                    }
-                  />
-                </label>
-              </div>
-
-              {salesOrderDraft.requiresShipping ? (
-                <>
-                  <div className="form-row">
-                    <label>
-                      Shipping address
-                      <input
-                        value={salesOrderDraft.shippingAddress1}
-                        placeholder="Street address"
-                        onChange={(event) =>
-                          updateSalesDraftField('shippingAddress1', event.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      Apartment, suite, etc.
-                      <input
-                        value={salesOrderDraft.shippingAddress2}
-                        placeholder="Optional"
-                        onChange={(event) =>
-                          updateSalesDraftField('shippingAddress2', event.target.value)
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Shipping city
-                      <input
-                        value={salesOrderDraft.shippingCity}
-                        placeholder="City"
-                        onChange={(event) =>
-                          updateSalesDraftField('shippingCity', event.target.value)
-                        }
-                      />
-                    </label>
-                    <label>
-                      Shipping state
-                      <input
-                        value={salesOrderDraft.shippingProvinceCode}
-                        placeholder="Example: CO"
-                        onChange={(event) =>
-                          updateSalesDraftField(
-                            'shippingProvinceCode',
-                            event.target.value.toUpperCase(),
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <label>
-                    Shipping ZIP
-                    <input
-                      value={salesOrderDraft.shippingZip}
-                      placeholder="ZIP code"
-                      onChange={(event) => updateSalesDraftField('shippingZip', event.target.value)}
-                    />
-                  </label>
-
-                  <label className="checkbox-row billing-toggle">
-                    <input
-                      type="checkbox"
-                      checked={salesOrderDraft.billingAddressDifferent}
-                      onChange={(event) =>
-                        updateSalesDraftField('billingAddressDifferent', event.target.checked)
-                      }
-                    />
-                    <span>Billing address is different from shipping address</span>
-                  </label>
-
-                  {salesOrderDraft.billingAddressDifferent ? (
-                    <>
-                      <div className="form-row">
-                        <label>
-                          Billing country code
-                          <input
-                            value={salesOrderDraft.billingCountryCode}
-                            placeholder="US"
-                            onChange={(event) =>
-                              updateSalesDraftField(
-                                'billingCountryCode',
-                                event.target.value.toUpperCase(),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      <div className="form-row">
-                        <label>
-                          Billing address
-                          <input
-                            value={salesOrderDraft.billingAddress1}
-                            placeholder="Street address"
-                            onChange={(event) =>
-                              updateSalesDraftField('billingAddress1', event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Apartment, suite, etc.
-                          <input
-                            value={salesOrderDraft.billingAddress2}
-                            placeholder="Optional"
-                            onChange={(event) =>
-                              updateSalesDraftField('billingAddress2', event.target.value)
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      <div className="form-row">
-                        <label>
-                          Billing city
-                          <input
-                            value={salesOrderDraft.billingCity}
-                            placeholder="City"
-                            onChange={(event) =>
-                              updateSalesDraftField('billingCity', event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          Billing state
-                          <input
-                            value={salesOrderDraft.billingProvinceCode}
-                            placeholder="Example: CO"
-                            onChange={(event) =>
-                              updateSalesDraftField(
-                                'billingProvinceCode',
-                                event.target.value.toUpperCase(),
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      <label>
-                        Billing ZIP
-                        <input
-                          value={salesOrderDraft.billingZip}
-                          placeholder="ZIP code"
-                          onChange={(event) =>
-                            updateSalesDraftField('billingZip', event.target.value)
-                          }
-                        />
-                      </label>
-                    </>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          )}
-
-          <label>
-            Sales rep
-            <input
-              value={salesOrderDraft.salesRep}
-              placeholder="Example: Matt"
-              onChange={(event) => updateSalesDraftField('salesRep', event.target.value)}
-            />
-          </label>
-
-          <div className="sales-line-list">
-            {salesOrderDraft.lines.map((line, index) => {
-              const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
-              const lineVariant = lineProduct?.variants.find(
-                (variant) => variant.id === line.variantId,
-              )
-              const productInputValue = line.isProOrder
-                ? line.title
-                : (lineProduct?.name ?? line.title)
-              const lineTitle = line.isProOrder
-                ? line.title || 'Pro custom bat'
-                : lineProduct?.name || line.title || 'Custom bat'
-
-              return (
-                <article className="sales-line-card" key={line.id}>
-                  <div className="split-heading">
-                    <div>
-                      <span className="profile-type-pill">Line {index + 1}</span>
-                      <h3>{lineTitle}</h3>
-                    </div>
-                    {salesOrderDraft.lines.length > 1 ? (
-                      <button
-                        type="button"
-                        className="secondary-button destructive-button compact-button"
-                        onClick={() => removeSalesLine(line.id)}
-                      >
-                        Remove
-                      </button>
-                    ) : null}
-                  </div>
-
-                  <label className="checkbox-row pro-order-toggle">
-                    <input
-                      type="checkbox"
-                      checked={line.isProOrder}
-                      onChange={(event) => {
-                        const isProOrder = event.target.checked
-                        if (isProOrder) {
-                          updateSalesLine(line.id, {
-                            isProOrder,
-                            productId: '',
-                            variantId: '',
-                            title: line.title || lineProduct?.name || '',
-                          })
-                          return
-                        }
-
-                        const matchedProduct = shopifyCatalog.find(
-                          (item) => item.name.toLowerCase() === line.title.trim().toLowerCase(),
-                        )
-                        updateSalesLine(line.id, {
-                          isProOrder,
-                          productId: matchedProduct?.id ?? '',
-                          variantId: matchedProduct?.variants[0]?.id ?? '',
-                          title: matchedProduct?.name ?? line.title,
-                          unitPrice: matchedProduct?.variants[0]?.price ?? line.unitPrice,
-                        })
-                      }}
-                    />
-                    <span>Pro order</span>
-                  </label>
-
-                  <div className={`form-row ${line.isProOrder ? 'single-field-row' : ''}`}>
-                    <label>
-                      {line.isProOrder ? 'Bat model' : 'Shopify product / bat model'}
-                      <input
-                        list={line.isProOrder ? undefined : 'public-shopify-bat-products'}
-                        value={productInputValue}
-                        placeholder={
-                          line.isProOrder ? 'Example: T141 pro custom' : 'Start typing a bat model'
-                        }
-                        onChange={(event) => {
-                          const typedProduct = event.target.value
-                          if (line.isProOrder) {
-                            updateSalesLine(line.id, {
-                              productId: '',
-                              variantId: '',
-                              title: typedProduct,
-                            })
-                            return
-                          }
-
-                          const product = shopifyCatalog.find(
-                            (item) => item.name.toLowerCase() === typedProduct.trim().toLowerCase(),
-                          )
-                          updateSalesLine(line.id, {
-                            productId: product?.id ?? '',
-                            variantId: product?.variants[0]?.id ?? '',
-                            title: product?.name ?? typedProduct,
-                            unitPrice: product?.variants[0]?.price ?? line.unitPrice,
-                          })
-                        }}
-                      />
-                    </label>
-                    {!line.isProOrder ? (
-                      <label>
-                        Variant
-                        <select
-                          value={line.variantId}
-                          disabled={!lineProduct}
-                          onChange={(event) => {
-                            const variant = lineProduct?.variants.find(
-                              (item) => item.id === event.target.value,
-                            )
-                            updateSalesLine(line.id, {
-                              variantId: event.target.value,
-                              unitPrice: variant?.price ?? line.unitPrice,
-                            })
-                          }}
-                        >
-                          <option value="">
-                            {lineProduct ? 'Select variant' : 'Choose a product first'}
-                          </option>
-                          {lineProduct?.variants.map((variant) => (
-                            <option key={variant.id} value={variant.id}>
-                              {variant.title}
-                              {variant.sku ? ` / ${variant.sku}` : ''}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    ) : null}
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Unit price
-                      <input
-                        inputMode="decimal"
-                        value={line.unitPrice}
-                        placeholder={lineVariant ? 'Adjust Shopify price' : 'Example: 189.00'}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { unitPrice: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      Quantity
-                      <input
-                        type="number"
-                        min="1"
-                        value={line.quantity}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { quantity: Number(event.target.value) })
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Length
-                      <input
-                        value={line.length}
-                        placeholder="Example: 34"
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { length: event.target.value })
-                        }
-                      />
-                    </label>
-                    <label>
-                      Weight
-                      <input
-                        value={line.targetWeight}
-                        placeholder="Example: 31.5"
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { targetWeight: event.target.value })
-                        }
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Handle color
-                      <select
-                        value={line.handleColor}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { handleColor: event.target.value })
-                        }
-                      >
-                        <option value="">Select handle color</option>
-                        {customizerColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Barrel color
-                      <select
-                        value={line.barrelColor}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { barrelColor: event.target.value })
-                        }
-                      >
-                        <option value="">Select barrel color</option>
-                        {customizerColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Logo color
-                      <select
-                        value={line.logoColor}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { logoColor: event.target.value })
-                        }
-                      >
-                        <option value="">Select logo color</option>
-                        {customizerColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Wood species
-                      <select
-                        value={line.wood}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, {
-                            wood: event.target.value as SalesOrderLineDraft['wood'],
-                          })
-                        }
-                      >
-                        {speciesOptions.map((species) => (
-                          <option key={species}>{species}</option>
-                        ))}
-                        <option>Other</option>
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label>
-                      Cup
-                      <select
-                        value={line.cupped}
-                        onChange={(event) =>
-                          updateSalesLine(line.id, {
-                            cupped: event.target.value as SalesOrderLineDraft['cupped'],
-                          })
-                        }
-                      >
-                        {manualCupOptions.map((cup) => (
-                          <option key={cup} value={cup}>
-                            {cup === 'Yes' ? 'Cup' : 'No cup'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Engraving
-                      <input
-                        value={line.engraving}
-                        placeholder="Player name, signature, or custom text"
-                        onChange={(event) =>
-                          updateSalesLine(line.id, { engraving: event.target.value })
-                        }
-                      />
-                    </label>
-                  </div>
-                </article>
-              )
-            })}
-          </div>
-
-          <button type="button" className="secondary-button" onClick={addSalesLine}>
-            Add another line
-          </button>
-
-          <label className="notes-field">
-            Internal order notes
-            <textarea
-              value={salesOrderDraft.notes}
-              placeholder="Payment terms, delivery promise, team contact, or packaging notes"
-              onChange={(event) => updateSalesDraftField('notes', event.target.value)}
-            />
-          </label>
-
-          <label className="checkbox-row invoice-toggle">
-            <input
-              type="checkbox"
-              checked={salesOrderDraft.createDraftOrder}
-              onChange={(event) => {
-                const createDraftOrder = event.target.checked
-                setSalesOrderDraft((current) => ({
-                  ...current,
-                  createDraftOrder,
-                  sendInvoice: createDraftOrder ? false : current.sendInvoice,
-                }))
-              }}
-            />
-            <span>Create Shopify draft invoice for manual review</span>
-          </label>
-
-          {!salesOrderDraft.createDraftOrder ? (
-            <label className="checkbox-row invoice-toggle">
-              <input
-                type="checkbox"
-                checked={salesOrderDraft.sendInvoice}
-                onChange={(event) => updateSalesDraftField('sendInvoice', event.target.checked)}
-              />
-              <span>Send Shopify invoice/documentation after order creation</span>
-            </label>
-          ) : null}
-
-          <button type="submit" disabled={isSubmitting}>
-            {isSubmitting
-              ? salesOrderDraft.createDraftOrder
-                ? 'Creating draft...'
-                : 'Creating order...'
-              : salesOrderDraft.createDraftOrder
-                ? 'Create Shopify draft invoice'
-                : 'Create Shopify order'}
-          </button>
+          <SalesOrderFormFields
+            draft={salesOrderDraft}
+            setDraft={setSalesOrderDraft}
+            updateField={updateSalesDraftField}
+            updateLine={updateSalesLine}
+            addLine={addSalesLine}
+            removeLine={removeSalesLine}
+            shopifyCatalog={shopifyCatalog}
+            productDatalistId="public-shopify-bat-products"
+            attachmentFile={salesOrderAttachmentFile}
+            setAttachmentFile={setSalesOrderAttachmentFile}
+            isSubmitting={isSubmitting}
+          />
         </form>
       </section>
     </main>
@@ -2490,7 +4545,8 @@ function PublicSalesOrderForm() {
 }
 
 function InternalApp() {
-  const [activeSection, setActiveSection] = useState<ActiveSection>('inventory')
+  const crmSandboxPreviewEnabled = isCrmSandboxPreviewRoute()
+  const [activeSection, setActiveSection] = useState<ActiveSection>(() => getInitialActiveSection())
   const [billets, setBillets] = useState<Billet[]>(() => {
     const stored = window.localStorage.getItem(billetStorageKey)
     const parsed = stored ? (JSON.parse(stored) as Billet[]) : seedBillets
@@ -2498,7 +4554,10 @@ function InternalApp() {
   })
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
     const stored = window.localStorage.getItem(playerStorageKey)
-    return stored ? (JSON.parse(stored) as PlayerProfile[]) : seedPlayers
+    const parsed = stored ? (JSON.parse(stored) as PlayerProfile[]) : seedPlayers
+    return parsed
+      .map((player) => normalizePlayerProfile(player))
+      .map((player) => hydratePlayerProfileBilletTargets(player, billets))
   })
   const [producedBats, setProducedBats] = useState<ProducedBatRecord[]>(() => {
     const stored = window.localStorage.getItem(producedBatStorageKey)
@@ -2523,10 +4582,34 @@ function InternalApp() {
       normalizeBillingContact(contact),
     )
   })
+  const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
+    const stored = window.localStorage.getItem(crmContactStorageKey)
+    return stored ? getManualCrmContacts(JSON.parse(stored) as CrmContact[]) : []
+  })
   const [draft, setDraft] = useState(emptyBillet)
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
     emptySalesOrderDraft(),
   )
+  const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
+  const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
+  const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState('all')
+  const [activeCrmView, setActiveCrmView] = useState<CrmWorkspaceView>('new_contact')
+  const [crmQuery, setCrmQuery] = useState('')
+  const [crmStageFilter, setCrmStageFilter] = useState<'all' | CrmStage>('all')
+  const [crmOwnerFilter, setCrmOwnerFilter] = useState(
+    () => window.localStorage.getItem(crmActiveOwnerStorageKey) || 'all',
+  )
+  const [selectedCrmContactId, setSelectedCrmContactId] = useState('')
+  const [selectedCrmEngagementId, setSelectedCrmEngagementId] = useState('')
+  const [newCrmContactDraft, setNewCrmContactDraft] = useState<CrmContact>(() =>
+    emptyCrmContact(),
+  )
+  const [crmTouchpointDraft, setCrmTouchpointDraft] = useState<CrmTouchpointDraft>(() =>
+    emptyCrmTouchpointDraft(),
+  )
+  const [crmAssistantInput, setCrmAssistantInput] = useState('')
+  const [crmAssistantResult, setCrmAssistantResult] = useState('')
+  const [crmMessage, setCrmMessage] = useState('')
   const [orderQuery, setOrderQuery] = useState('')
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
@@ -2541,6 +4624,7 @@ function InternalApp() {
   const [sourceFilters, setSourceFilters] = useState<Source[]>([])
   const [gradeFilters, setGradeFilters] = useState<Grade[]>([])
   const [mlbFilters, setMlbFilters] = useState<InventoryMlbFilter[]>([])
+  const [trophyFilters, setTrophyFilters] = useState<InventoryTrophyFilter[]>([])
   const [knotFilters, setKnotFilters] = useState<KnotStatus[]>([])
   const [deliveryDateFilters, setDeliveryDateFilters] = useState<string[]>([])
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
@@ -2551,6 +4635,7 @@ function InternalApp() {
   const [playerNameDraft, setPlayerNameDraft] = useState('')
   const [batDraft, setBatDraft] = useState(emptyBat)
   const [variantTargetProfileId, setVariantTargetProfileId] = useState<string | null>(null)
+  const [editingVariantTarget, setEditingVariantTarget] = useState<EditingVariantTarget | null>(null)
   const [playerQuery, setPlayerQuery] = useState('')
   const [scannerMessage, setScannerMessage] = useState('')
   const [isScanning, setIsScanning] = useState(false)
@@ -2563,13 +4648,27 @@ function InternalApp() {
   const [backendStatus, setBackendStatus] = useState<
     'connecting' | 'connected' | 'offline' | 'unauthorized'
   >(
-    'connecting',
+    crmSandboxPreviewEnabled ? 'offline' : 'connecting',
   )
-  const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(true)
-  const [syncMessage, setSyncMessage] = useState('Connecting to Shopify backend...')
+  const [syncRetryNonce, setSyncRetryNonce] = useState(0)
+  const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(!crmSandboxPreviewEnabled)
+  const [syncMessage, setSyncMessage] = useState(
+    crmSandboxPreviewEnabled
+      ? 'CRM sandbox preview is local-only and not connected to live Shopify sync.'
+      : 'Connecting to Shopify backend...',
+  )
+  const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState('')
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const hasLoadedRemoteState = useRef(false)
+  const skipNextRemoteSync = useRef(false)
+  const hasPendingLocalSync = useRef(false)
+  const syncInFlight = useRef(false)
+  const lastSyncedState = useRef<RemoteState | null>(null)
+
+  useEffect(() => {
+    backupLegacyLocalState()
+  }, [])
 
   useEffect(() => {
     window.localStorage.setItem(billetStorageKey, JSON.stringify(billets))
@@ -2595,9 +4694,112 @@ function InternalApp() {
     window.localStorage.setItem(billingContactStorageKey, JSON.stringify(billingContacts))
   }, [billingContacts])
 
-  const loadRemoteState = useEffectEvent(async () => {
+  useEffect(() => {
+    window.localStorage.setItem(crmContactStorageKey, JSON.stringify(getManualCrmContacts(crmContacts)))
+  }, [crmContacts])
+
+  useEffect(() => {
+    window.localStorage.setItem(crmActiveOwnerStorageKey, crmOwnerFilter)
+  }, [crmOwnerFilter])
+
+  function getCurrentRemoteState(): RemoteState {
+    return {
+      billets,
+      players,
+      producedBats,
+      customBatModels,
+      orderJobs,
+      billingContacts,
+      crmContacts: getManualCrmContacts(crmContacts),
+    }
+  }
+
+  const syncRemoteState = useEffectEvent(async () => {
+    if (syncInFlight.current) {
+      hasPendingLocalSync.current = true
+      return false
+    }
+
+    syncInFlight.current = true
+
     try {
-      const response = await fetch(getApiPath('/api/state'), { cache: 'no-store' })
+      const snapshot = getCurrentRemoteState()
+      const patch = buildRemoteStatePatch(snapshot, lastSyncedState.current)
+      const changeCount = countRemoteStatePatchRecords(patch)
+
+      if (!hasRemoteStatePatchChanges(patch)) {
+        hasPendingLocalSync.current = false
+        if (backendStatus !== 'connected') {
+          skipNextRemoteSync.current = true
+        }
+        setBackendStatus('connected')
+        setSyncMessage('Connected to Shopify. Live records are the source of truth.')
+        return true
+      }
+
+      setSyncMessage(`Syncing ${changeCount} changed record${changeCount === 1 ? '' : 's'} to Shopify...`)
+      const response = await fetch(getApiPath('/api/state'), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ...patch, stateSnapshot: snapshot }),
+      })
+      const payload = (await response.json().catch(() => ({}))) as {
+        ok?: boolean
+        message?: string
+        syncedAt?: string
+      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Sync failed')
+
+      const syncedAt = payload.syncedAt
+        ? new Date(payload.syncedAt).toLocaleTimeString([], {
+            hour: 'numeric',
+            minute: '2-digit',
+          })
+        : 'just now'
+
+      lastSyncedState.current = applyRemoteStatePatchToSnapshot(lastSyncedState.current, patch)
+      if (backendStatus !== 'connected') {
+        skipNextRemoteSync.current = true
+      }
+      setBackendStatus('connected')
+      setSyncMessage(
+        `Shopify sync complete at ${syncedAt}. Saved ${changeCount} changed record${
+          changeCount === 1 ? '' : 's'
+        }.`,
+      )
+
+      const remainingPatch = buildRemoteStatePatch(getCurrentRemoteState(), lastSyncedState.current)
+      if (hasRemoteStatePatchChanges(remainingPatch)) {
+        hasPendingLocalSync.current = true
+        setSyncRetryNonce((current) => current + 1)
+      } else {
+        hasPendingLocalSync.current = false
+      }
+
+      return true
+    } catch (error) {
+      setBackendStatus('offline')
+      setSyncMessage(
+        `Shopify sync failed: ${
+          error instanceof Error ? error.message : 'Unknown sync error'
+        }. Keep this tab open; the app will retry this record-level save.`,
+      )
+      return false
+    } finally {
+      syncInFlight.current = false
+    }
+  })
+
+  const loadRemoteState = useEffectEvent(async (options?: { quiet?: boolean }) => {
+    try {
+      const response = await fetch(getApiPath('/api/state'), {
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-store',
+        },
+      })
       if (response.status === 401) {
         setBackendStatus('unauthorized')
         setSyncMessage('Use the secure internal access link or launch from Shopify admin.')
@@ -2608,26 +4810,14 @@ function InternalApp() {
       if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
       const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
 
-      const localBillets = safeReadStorage<Billet[]>(billetStorageKey, []).map((billet) =>
-        normalizeBillet(billet),
-      )
-      const localPlayers = safeReadStorage<PlayerProfile[]>(playerStorageKey, [])
-      const localProducedBats = safeReadStorage<ProducedBatRecord[]>(producedBatStorageKey, []).map(
-        (record) => normalizeProducedBatRecord(record),
-      )
-      const localCustomBatModels = safeReadStorage<BatModelProduct[]>(customBatModelStorageKey, [])
-      const localOrderJobs = safeReadStorage<OrderJob[]>(orderJobStorageKey, []).map((job) =>
-        normalizeOrderJob(job),
-      )
-      const localBillingContacts = safeReadStorage<BillingContact[]>(
-        billingContactStorageKey,
-        seedBillingContacts,
-      ).map((contact) => normalizeBillingContact(contact))
-
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
         : []
-      const remotePlayers = Array.isArray(remote.players) ? remote.players : []
+      const remotePlayers = Array.isArray(remote.players)
+        ? remote.players
+            .map((player) => normalizePlayerProfile(player))
+            .map((player) => hydratePlayerProfileBilletTargets(player, remoteBillets))
+        : []
       const remoteProducedBats = Array.isArray(remote.producedBats)
         ? remote.producedBats.map((record) => normalizeProducedBatRecord(record))
         : []
@@ -2640,45 +4830,45 @@ function InternalApp() {
       const remoteBillingContacts = Array.isArray(remote.billingContacts)
         ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
         : []
-
-      setBillets(
-        mergeRecordsByKey(localBillets, remoteBillets, (billet) => billet.barcode || billet.id),
-      )
-      setPlayers(
-        mergeRecordsByKey(
-          localPlayers,
-          remotePlayers,
-          (profile) => profile.id || `${profile.profileKind}:${profile.playerName}`,
-        ),
-      )
-      setProducedBats(
-        mergeRecordsByKey(
-          localProducedBats,
-          remoteProducedBats,
-          (record) => record.id || record.createdAt,
-        ),
-      )
-      setCustomBatModels(
-        mergeRecordsByKey(localCustomBatModels, remoteCustomBatModels, (model) => model.id),
-      )
-      setOrderJobs(mergeOrderJobs(localOrderJobs, remoteOrderJobs))
-      setBillingContacts(
-        mergeRecordsByKey(
+      const remoteCrmContacts = Array.isArray(remote.crmContacts)
+        ? getManualCrmContacts(remote.crmContacts.map((contact) => normalizeCrmContact(contact)))
+        : []
+      const remoteState: RemoteState = {
+        billets: remoteBillets,
+        players: remotePlayers,
+        producedBats: remoteProducedBats,
+        customBatModels: remoteCustomBatModels,
+        orderJobs: remoteOrderJobs,
+        billingContacts: mergeRecordsByKey(
           seedBillingContacts,
-          mergeRecordsByKey(localBillingContacts, remoteBillingContacts, (contact) => contact.id),
+          remoteBillingContacts,
           (contact) => contact.id,
-        ),
-      )
+        ).map((contact) => normalizeBillingContact(contact)),
+        crmContacts: remoteCrmContacts,
+      }
+
+      skipNextRemoteSync.current = true
+      lastSyncedState.current = remoteState
+      setBillets(remoteState.billets)
+      setPlayers(remoteState.players)
+      setProducedBats(remoteState.producedBats)
+      setCustomBatModels(remoteState.customBatModels)
+      setOrderJobs(remoteState.orderJobs)
+      setBillingContacts(remoteState.billingContacts)
+      setCrmContacts(remoteState.crmContacts)
+      setLastLiveRefreshAt(new Date().toISOString())
 
       setBackendStatus('connected')
-      setSyncMessage('Connected to Shopify. Internal records will sync automatically.')
+      if (!options?.quiet) {
+        setSyncMessage('Connected to Shopify. Live records are the source of truth.')
+      }
       hasLoadedRemoteState.current = true
       setIsLoadingRemoteState(false)
       return true
     } catch {
       setBackendStatus('offline')
       setSyncMessage(
-        'Shopify sync is offline. Device changes are safe here and retrying automatically.',
+        'Live Shopify sync is unavailable. Editing is paused so local-only data cannot be created.',
       )
       hasLoadedRemoteState.current = true
       setIsLoadingRemoteState(false)
@@ -2687,21 +4877,52 @@ function InternalApp() {
   })
 
   useEffect(() => {
+    if (crmSandboxPreviewEnabled) {
+      hasLoadedRemoteState.current = true
+      return
+    }
+
     const timeout = window.setTimeout(() => {
       void loadRemoteState()
     }, 0)
 
     return () => window.clearTimeout(timeout)
-  }, [])
+  }, [crmSandboxPreviewEnabled])
 
   useEffect(() => {
     if (backendStatus !== 'offline') return
+    if (crmSandboxPreviewEnabled) return
 
     const retry = window.setInterval(() => {
-      void loadRemoteState()
+      if (hasPendingLocalSync.current) {
+        void syncRemoteState()
+      } else {
+        void loadRemoteState()
+      }
     }, 10000)
 
     return () => window.clearInterval(retry)
+  }, [backendStatus, crmSandboxPreviewEnabled])
+
+  useEffect(() => {
+    if (!hasLoadedRemoteState.current || backendStatus !== 'connected') return
+    if (!hasPendingLocalSync.current || syncInFlight.current) return
+
+    const retry = window.setTimeout(() => {
+      void syncRemoteState()
+    }, 0)
+
+    return () => window.clearTimeout(retry)
+  }, [backendStatus, syncRetryNonce])
+
+  useEffect(() => {
+    if (backendStatus !== 'connected') return
+
+    const refresh = window.setInterval(() => {
+      if (!hasPendingLocalSync.current) void loadRemoteState({ quiet: true })
+    }, 30000)
+
+    return () => window.clearInterval(refresh)
   }, [backendStatus])
 
   useEffect(() => {
@@ -2731,45 +4952,27 @@ function InternalApp() {
 
   useEffect(() => {
     if (!hasLoadedRemoteState.current || backendStatus !== 'connected') return
+    if (skipNextRemoteSync.current) {
+      skipNextRemoteSync.current = false
+      return
+    }
 
+    hasPendingLocalSync.current = true
     const timeout = window.setTimeout(async () => {
-      try {
-        setSyncMessage('Syncing to Shopify...')
-        const response = await fetch(getApiPath('/api/state'), {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            billets,
-            players,
-            producedBats,
-            customBatModels,
-            orderJobs,
-            billingContacts,
-          } satisfies RemoteState),
-        })
-        if (!response.ok) throw new Error('Sync failed')
-
-        const payload = (await response.json()) as { syncedAt?: string }
-        const syncedAt = payload.syncedAt
-          ? new Date(payload.syncedAt).toLocaleTimeString([], {
-              hour: 'numeric',
-              minute: '2-digit',
-            })
-          : 'just now'
-
-        setSyncMessage(`Shopify sync complete at ${syncedAt}.`)
-      } catch {
-        setBackendStatus('offline')
-        setSyncMessage(
-          'Shopify sync paused. Local changes are saved on this device and retrying automatically.',
-        )
-      }
+      void syncRemoteState()
     }, 700)
 
     return () => window.clearTimeout(timeout)
-  }, [backendStatus, billets, players, producedBats, customBatModels, orderJobs, billingContacts])
+  }, [
+    backendStatus,
+    billets,
+    players,
+    producedBats,
+    customBatModels,
+    orderJobs,
+    billingContacts,
+    crmContacts,
+  ])
 
   const deliveryDateOptions = Array.from(
     new Set(billets.map((billet) => billet.deliveryDate).filter(Boolean)),
@@ -2787,6 +4990,7 @@ function InternalApp() {
     setSourceFilters([])
     setGradeFilters([])
     setMlbFilters([])
+    setTrophyFilters([])
     setKnotFilters([])
     setDeliveryDateFilters([])
     setMinWeightFilter('')
@@ -2799,6 +5003,7 @@ function InternalApp() {
       billet.barcode,
       billet.species,
       billet.grade,
+      billet.trophyEligible ? 'trophy capable' : 'not trophy capable',
       billet.mlbEligible ? 'MLB eligible' : 'not MLB eligible',
       billet.hasBarrelKnot === 'Yes'
         ? 'barrel knot'
@@ -2819,6 +5024,11 @@ function InternalApp() {
     const matchesMlb =
       mlbFilters.length === 0 ||
       mlbFilters.some((filter) => (filter === 'yes' ? billet.mlbEligible : !billet.mlbEligible))
+    const matchesTrophy =
+      trophyFilters.length === 0 ||
+      trophyFilters.some((filter) =>
+        filter === 'yes' ? billet.trophyEligible : !billet.trophyEligible,
+      )
     const matchesKnot = knotFilters.length === 0 || knotFilters.includes(billet.hasBarrelKnot)
     const matchesDelivery =
       deliveryDateFilters.length === 0 || deliveryDateFilters.includes(billet.deliveryDate)
@@ -2837,6 +5047,7 @@ function InternalApp() {
       matchesSource &&
       matchesGrade &&
       matchesMlb &&
+      matchesTrophy &&
       matchesKnot &&
       matchesDelivery &&
       matchesVisibility &&
@@ -2861,18 +5072,20 @@ function InternalApp() {
   }
 
   const filteredPlayers = players.filter((player) => {
+    if (!isProPlayerProfile(player)) return false
+
     const searchable = [
       player.playerName,
       player.profileKind,
       ...player.bats.flatMap((bat) => [
         bat.modelNumber,
         bat.weight,
+        bat.source,
+        bat.species,
         bat.woodTier,
+        bat.idealBilletWeight,
         bat.colorPreferences,
         bat.notes,
-        ...bat.compatibleBilletIds.map(
-          (id) => billets.find((billet) => billet.id === id)?.barcode ?? id,
-        ),
       ]),
     ]
       .join(' ')
@@ -2885,96 +5098,319 @@ function InternalApp() {
     getBillingContactSearchOptions(contact),
   )
 
-  const shopifyBatModels: BatModelProduct[] = shopifyCatalog.map((product) => ({
-    id: product.id,
-    name: product.name,
-    category: product.category,
-    url: product.url,
-    source: 'shopify',
-    status: product.status,
-    handle: product.handle,
-    tags: product.tags,
-    variantCount: product.variants.length,
-    inventoryOnHand: product.variants.reduce(
-      (total, variant) => total + variant.inventoryQuantity,
-      0,
-    ),
-  }))
+  const shopifyBatModels: BatModelProduct[] = useMemo(
+    () =>
+      shopifyCatalog.map((product) => ({
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        url: product.url,
+        source: 'shopify',
+        status: product.status,
+        handle: product.handle,
+        tags: product.tags,
+        variantCount: product.variants.length,
+        inventoryOnHand: product.variants.reduce(
+          (total, variant) => total + variant.inventoryQuantity,
+          0,
+        ),
+      })),
+    [shopifyCatalog],
+  )
 
-  const batModelMap = new Map<string, BatModelProduct>()
-  ;[...seedBatModels, ...shopifyBatModels, ...customBatModels].forEach((model) => {
-    const key = model.source === 'shopify' ? model.id : model.name.toLowerCase()
-    if (!batModelMap.has(key) || model.source === 'shopify' || model.source === 'custom') {
-      batModelMap.set(key, model)
+  const allBatModels = useMemo(() => {
+    const batModelMap = new Map<string, BatModelProduct>()
+    ;[...seedBatModels, ...shopifyBatModels, ...customBatModels].forEach((model) => {
+      const key = model.source === 'shopify' ? model.id : model.name.toLowerCase()
+      if (!batModelMap.has(key) || model.source === 'shopify' || model.source === 'custom') {
+        batModelMap.set(key, model)
+      }
+    })
+    return Array.from(batModelMap.values())
+  }, [customBatModels, shopifyBatModels])
+  const trainerBatModels = useMemo(
+    () => allBatModels.filter((model) => isTrainerModel(model)),
+    [allBatModels],
+  )
+  const nonTrainerBatModels = useMemo(
+    () => allBatModels.filter((model) => !isTrainerModel(model)),
+    [allBatModels],
+  )
+  const billetById = useMemo(
+    () => new Map(billets.map((billet) => [billet.id, billet])),
+    [billets],
+  )
+  const selectableBillets = useMemo(() => {
+    const selectedBilletIds = new Set(producedBatDraft.billetIds)
+    return billets.filter(
+      (billet) => billet.status === 'storage' || selectedBilletIds.has(billet.id),
+    )
+  }, [billets, producedBatDraft.billetIds])
+  const selectedShopifyProduct = useMemo(
+    () =>
+      shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null,
+    [producedBatDraft.shopifyProductId, shopifyCatalog],
+  )
+  const selectedShopifyVariant = useMemo(
+    () =>
+      selectedShopifyProduct?.variants.find(
+        (variant) => variant.id === producedBatDraft.shopifyVariantId,
+      ) ?? null,
+    [producedBatDraft.shopifyVariantId, selectedShopifyProduct],
+  )
+  const openOrderJobs = useMemo(
+    () =>
+      orderJobs.filter(
+        (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
+      ),
+    [orderJobs],
+  )
+  const readyOrderJobs = useMemo(
+    () =>
+      orderJobs.filter(
+        (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
+      ),
+    [orderJobs],
+  )
+  const normalizedOrderQuery = orderQuery.toLowerCase()
+  const filteredOrderJobs = useMemo(
+    () =>
+      orderJobs.filter((job) => {
+        const matchesStatus =
+          orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
+        if (!matchesStatus) return false
+        if (!normalizedOrderQuery) return true
+
+        const assignedBillet = job.assignedBilletId
+          ? billetById.get(job.assignedBilletId)?.barcode ?? job.assignedBilletId
+          : ''
+        const searchable = [
+          job.shopifyOrderName,
+          job.shopifyDraftOrderName,
+          job.customerName,
+          job.customerEmail,
+          job.playerName,
+          job.playerEmail,
+          job.billingName,
+          job.billingEmail,
+          job.billingPhone,
+          job.billingCompany,
+          job.billingRelationship,
+          job.productTitle,
+          job.variantTitle,
+          job.origin,
+          job.financialStatus,
+          job.fulfillmentStatus,
+          job.invoiceStatus,
+          job.productionStatus,
+          job.salesRep,
+          job.salesRepEmail,
+          job.orderSubmittedAt,
+          assignedBillet,
+          job.specs.model,
+          job.specs.length,
+          job.specs.targetWeight,
+          job.specs.wood,
+          job.specs.handleColor,
+          job.specs.barrelColor,
+          job.specs.bandColor,
+          job.specs.logoColor,
+          job.specs.engraving,
+          job.specs.cupped,
+          job.specs.notes,
+          job.notes,
+          job.internalNotes,
+        ]
+          .join(' ')
+          .toLowerCase()
+
+        return searchable.includes(normalizedOrderQuery)
+      }),
+    [billetById, normalizedOrderQuery, orderJobs, orderStatusFilter],
+  )
+  const salesDashboardAllSales = useMemo(() => buildSalesDashboardSales(orderJobs), [orderJobs])
+  const salesDashboardRepOptions = useMemo(
+    () => buildSalesRepSummaries(salesDashboardAllSales),
+    [salesDashboardAllSales],
+  )
+  const salesDashboardSales = useMemo(
+    () =>
+      salesDashboardAllSales.filter((sale) => {
+        const matchesRange = isSaleInsideDashboardRange(sale, salesDashboardRange)
+        const matchesRep =
+          salesDashboardRepFilter === 'all' ||
+          getSalesRepSummaryKey(sale) === salesDashboardRepFilter
+
+        return matchesRange && matchesRep
+      }),
+    [salesDashboardAllSales, salesDashboardRange, salesDashboardRepFilter],
+  )
+  const salesDashboardSummaries = useMemo(
+    () => buildSalesRepSummaries(salesDashboardSales),
+    [salesDashboardSales],
+  )
+  const {
+    paidSales: salesDashboardPaidSales,
+    openSales: salesDashboardOpenSales,
+    submittedValue: salesDashboardSubmittedValue,
+    paidValue: salesDashboardPaidValue,
+    openValue: salesDashboardOpenValue,
+  } = useMemo(() => {
+    const paidSales: SalesDashboardSale[] = []
+    const openSales: SalesDashboardSale[] = []
+    let submittedValue = 0
+    let paidValue = 0
+    let openValue = 0
+
+    for (const sale of salesDashboardSales) {
+      submittedValue += sale.total
+      if (sale.isPaid) {
+        paidSales.push(sale)
+        paidValue += sale.total
+      } else {
+        openSales.push(sale)
+        openValue += sale.total
+      }
     }
-  })
-  const allBatModels = Array.from(batModelMap.values())
-  const trainerBatModels = allBatModels.filter((model) => isTrainerModel(model))
-  const nonTrainerBatModels = allBatModels.filter((model) => !isTrainerModel(model))
-  const selectableBillets = billets.filter(
-    (billet) =>
-      billet.status === 'storage' ||
-      producedBatDraft.billetIds.includes(billet.id),
-  )
-  const selectedShopifyProduct =
-    shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null
-  const selectedShopifyVariant =
-    selectedShopifyProduct?.variants.find(
-      (variant) => variant.id === producedBatDraft.shopifyVariantId,
-    ) ?? null
-  const openOrderJobs = orderJobs.filter(
-    (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
-  )
-  const readyOrderJobs = orderJobs.filter(
-    (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
-  )
-  const filteredOrderJobs = orderJobs.filter((job) => {
-    const searchable = [
-      job.shopifyOrderName,
-      job.shopifyDraftOrderName,
-      job.customerName,
-      job.customerEmail,
-      job.playerName,
-      job.playerEmail,
-      job.billingName,
-      job.billingEmail,
-      job.billingPhone,
-      job.billingCompany,
-      job.billingRelationship,
-      job.productTitle,
-      job.variantTitle,
-      job.origin,
-      job.financialStatus,
-      job.fulfillmentStatus,
-      job.invoiceStatus,
-      job.productionStatus,
-      job.salesRep,
-      job.orderSubmittedAt,
-      job.assignedBilletId
-        ? billets.find((billet) => billet.id === job.assignedBilletId)?.barcode ?? job.assignedBilletId
-        : '',
-      job.specs.model,
-      job.specs.length,
-      job.specs.targetWeight,
-      job.specs.wood,
-      job.specs.handleColor,
-      job.specs.barrelColor,
-      job.specs.logoColor,
-      job.specs.engraving,
-      job.specs.cupped,
-      job.specs.notes,
-      job.notes,
-      job.internalNotes,
-    ]
-      .join(' ')
-      .toLowerCase()
 
-    const matchesQuery = searchable.includes(orderQuery.toLowerCase())
-    const matchesStatus =
-      orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
+    return { paidSales, openSales, submittedValue, paidValue, openValue }
+  }, [salesDashboardSales])
+  const salesDashboardRecentSales = useMemo(
+    () =>
+      [...salesDashboardSales]
+        .sort(
+          (first, second) =>
+            getDateTimestamp(second.paidAt || second.submittedAt) -
+            getDateTimestamp(first.paidAt || first.submittedAt),
+        )
+        .slice(0, 8),
+    [salesDashboardSales],
+  )
+  const salesDashboardAwaitingPayment = useMemo(
+    () =>
+      [...salesDashboardOpenSales]
+        .sort(
+          (first, second) =>
+            getDateTimestamp(first.submittedAt) - getDateTimestamp(second.submittedAt),
+        )
+        .slice(0, 8),
+    [salesDashboardOpenSales],
+  )
+  const crmDirectory = useMemo(
+    () => buildCrmContactDirectory(crmContacts),
+    [crmContacts],
+  )
+  const crmContactSummaries = useMemo(
+    () => buildCrmContactSummaries(crmDirectory, orderJobs),
+    [crmDirectory, orderJobs],
+  )
+  const crmOwnerOptions = useMemo(
+    () => [...seedCrmOwnerOptions].sort((a, b) => compareText(a.label, b.label)),
+    [],
+  )
+  const resolvedCrmOwnerFilter =
+    crmOwnerFilter === 'all' ||
+    crmOwnerFilter === 'unassigned' ||
+    crmOwnerOptions.some((owner) => owner.key === crmOwnerFilter)
+      ? crmOwnerFilter
+      : 'all'
+  const activeCrmOwnerOption =
+    crmOwnerOptions.find((owner) => owner.key === resolvedCrmOwnerFilter) ?? null
+  const crmOwnerScopedSummaries = useMemo(
+    () =>
+      crmContactSummaries.filter((summary) => matchesCrmOwnerFilter(summary, resolvedCrmOwnerFilter)),
+    [crmContactSummaries, resolvedCrmOwnerFilter],
+  )
+  const filteredCrmSummaries = useMemo(() => {
+    const normalizedQuery = normalizeCrmSearchText(crmQuery)
 
-    return matchesQuery && matchesStatus
-  })
+    return crmOwnerScopedSummaries
+      .filter((summary) => {
+        const matchesStage =
+          crmStageFilter === 'all' || summary.contact.stage === crmStageFilter
+        if (!matchesStage) return false
+        if (!normalizedQuery) return true
+
+        const searchable = normalizeCrmSearchText(
+          [
+            summary.contact.name,
+            summary.contact.company,
+            summary.contact.role,
+            summary.contact.email,
+            summary.contact.phone,
+            summary.contact.salesOwner,
+            summary.contact.source,
+            summary.contact.preferredContactMethod,
+            summary.contact.buyingContext,
+            summary.contact.batPreferences,
+            summary.contact.relationshipNotes,
+            summary.contact.objections,
+            summary.contact.opportunities,
+            ...summary.contact.playerNames,
+            ...summary.contact.tags,
+            ...summary.orders.flatMap((job) => [
+              job.shopifyOrderName,
+              job.shopifyDraftOrderName,
+              job.productTitle,
+              job.specs.model,
+              job.specs.wood,
+              job.salesRep,
+            ]),
+          ].join(' '),
+        )
+
+        return searchable.includes(normalizedQuery)
+      })
+      .sort((a, b) => {
+        if (a.followUpDue !== b.followUpDue) return a.followUpDue ? -1 : 1
+        const priorityOrder: Record<CrmPriority, number> = { hot: 0, warm: 1, steady: 2, low: 3 }
+        if (a.contact.priority !== b.contact.priority) {
+          return priorityOrder[a.contact.priority] - priorityOrder[b.contact.priority]
+        }
+        return getDateTimestamp(b.lastActivityAt) - getDateTimestamp(a.lastActivityAt)
+      })
+  }, [crmOwnerScopedSummaries, crmQuery, crmStageFilter])
+  const groupedFilteredCrmSummaries = useMemo(
+    () => groupCrmSummariesByOwner(filteredCrmSummaries),
+    [filteredCrmSummaries],
+  )
+  const selectedCrmSummary =
+    filteredCrmSummaries.find((summary) => summary.contact.id === selectedCrmContactId) ??
+    crmOwnerScopedSummaries.find((summary) => summary.contact.id === selectedCrmContactId) ??
+    filteredCrmSummaries[0] ??
+    crmOwnerScopedSummaries[0] ??
+    null
+  const crmMetricTotals = useMemo(() => {
+    const dueFollowUps = crmOwnerScopedSummaries.filter((summary) => summary.followUpDue).length
+    const hotContacts = crmOwnerScopedSummaries.filter(
+      (summary) => summary.contact.priority === 'hot' || summary.contact.stage === 'invoice_sent',
+    ).length
+    const openValue = crmOwnerScopedSummaries.reduce((total, summary) => total + summary.openValue, 0)
+    const repeatCustomers = crmOwnerScopedSummaries.filter((summary) => summary.orderCount > 1).length
+
+    return { dueFollowUps, hotContacts, openValue, repeatCustomers }
+  }, [crmOwnerScopedSummaries])
+  const crmEngagements = useMemo(
+    () =>
+      crmOwnerScopedSummaries
+        .flatMap((summary) =>
+          summary.contact.touchpoints.map((touchpoint) => ({
+            contact: summary.contact,
+            summary,
+            touchpoint,
+          })),
+        )
+        .sort(
+          (a, b) =>
+            getDateTimestamp(b.touchpoint.contactedAt) -
+            getDateTimestamp(a.touchpoint.contactedAt),
+        ),
+    [crmOwnerScopedSummaries],
+  )
+  const selectedCrmEngagement =
+    crmEngagements.find((item) => item.touchpoint.id === selectedCrmEngagementId) ??
+    crmEngagements[0] ??
+    null
 
   const filteredBatModels = allBatModels.filter((model) => {
     const modelText = [
@@ -3061,6 +5497,14 @@ function InternalApp() {
     )
   }
 
+  function updateBilletWeight(id: string, weight: Billet['weight']) {
+    setBillets((current) =>
+      current.map((billet) =>
+        billet.id === id ? { ...billet, weight: normalizeBilletWeight(weight) } : billet,
+      ),
+    )
+  }
+
   function updateSalesDraftField<K extends keyof SalesOrderDraft>(
     key: K,
     value: SalesOrderDraft[K],
@@ -3131,28 +5575,46 @@ function InternalApp() {
     )
   }
 
+  function mergeIncomingPlayers(incomingPlayers: PlayerProfile[]) {
+    if (incomingPlayers.length === 0) return
+
+    setPlayers((current) =>
+      mergeRecordsByKey(
+        current,
+        incomingPlayers.map((player) => normalizePlayerProfile(player)),
+        (player) => player.id || `${player.profileKind}:${player.playerName}`,
+      ),
+    )
+  }
+
+  function mergeIncomingBillingContacts(incomingContacts: BillingContact[]) {
+    if (incomingContacts.length === 0) return
+
+    setBillingContacts((current) =>
+      mergeRecordsByKey(
+        current,
+        incomingContacts.map((contact) => normalizeBillingContact(contact)),
+        (contact) => contact.id,
+      ).map((contact) => normalizeBillingContact(contact)),
+    )
+  }
+
   async function createSalesDraftOrder(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const payerEmail = salesOrderDraft.billingDifferent
       ? salesOrderDraft.billingEmail
       : salesOrderDraft.playerEmail
-    const isDirectBillOrder = !salesOrderDraft.billingDifferent
+    const payerPhone = salesOrderDraft.billingDifferent
+      ? salesOrderDraft.billingPhone
+      : salesOrderDraft.playerPhone
     const requiresShipping = salesOrderDraft.requiresShipping
-    const hasMissingDirectContact =
-      isDirectBillOrder &&
-      (!salesOrderDraft.playerPhone.trim() ||
-        (requiresShipping &&
-          (!salesOrderDraft.shippingAddress1.trim() ||
-            !salesOrderDraft.shippingCity.trim() ||
-            !salesOrderDraft.shippingProvinceCode.trim() ||
-            !salesOrderDraft.shippingZip.trim() ||
-            !salesOrderDraft.shippingCountryCode.trim() ||
-            (salesOrderDraft.billingAddressDifferent &&
-              (!salesOrderDraft.billingAddress1.trim() ||
-                !salesOrderDraft.billingCity.trim() ||
-                !salesOrderDraft.billingProvinceCode.trim() ||
-                !salesOrderDraft.billingZip.trim() ||
-                !salesOrderDraft.billingCountryCode.trim())))))
+    const hasMissingShippingAddress =
+      requiresShipping &&
+      (!salesOrderDraft.shippingAddress1.trim() ||
+        !salesOrderDraft.shippingCity.trim() ||
+        !salesOrderDraft.shippingProvinceCode.trim() ||
+        !salesOrderDraft.shippingZip.trim() ||
+        !salesOrderDraft.shippingCountryCode.trim())
     const hasInvalidLine = salesOrderDraft.lines.some(
       (line) =>
         !line.title.trim() ||
@@ -3166,11 +5628,12 @@ function InternalApp() {
     if (
       !salesOrderDraft.playerName.trim() ||
       !payerEmail.trim() ||
-      hasMissingDirectContact ||
+      !payerPhone.trim() ||
+      hasMissingShippingAddress ||
       hasInvalidLine
     ) {
       setOrderActionMessage(
-        'Add the player, payer email, direct-bill contact/address details, bat model, unit price, and complete each line before creating the order.',
+        'Add the player, payer email, payer phone, shipping address, bat model, unit price, and complete each line before creating the order.',
       )
       return
     }
@@ -3179,46 +5642,36 @@ function InternalApp() {
       setIsCreatingDraftOrder(true)
       setOrderActionMessage(
         salesOrderDraft.createDraftOrder
-          ? 'Creating Shopify draft invoice...'
-          : 'Creating Shopify order...',
+          ? salesOrderAttachmentFile
+            ? 'Uploading attachment and creating/sending Shopify draft invoice...'
+            : 'Creating and sending Shopify draft invoice...'
+          : salesOrderAttachmentFile
+            ? 'Uploading attachment and creating Shopify order...'
+            : 'Creating Shopify order...',
       )
+      const attachment = salesOrderAttachmentFile
+        ? await uploadSalesOrderAttachment(salesOrderAttachmentFile)
+        : null
+      const draftToSubmit = {
+        ...cloneSalesOrderDraft(salesOrderDraft),
+        attachment,
+      }
       const response = await fetch(getApiPath('/api/sales-orders'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(salesOrderDraft),
+        body: JSON.stringify(draftToSubmit),
       })
-      const payload = (await response.json()) as {
-        ok?: boolean
-        message?: string
-        invoiceSent?: boolean
-        emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
-        draftInvoiceReadyForReview?: boolean
-        orderJobs?: OrderJob[]
-        draftOrder?: { name?: string; invoiceUrl?: string }
-        order?: { name?: string }
-        internalNotificationRecipients?: string[]
-      }
+      const payload = (await response.json()) as SalesOrderApiResponse
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
 
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      mergeIncomingPlayers(payload.players ?? [])
+      mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setSalesOrderDraft(emptySalesOrderDraft())
-      const notificationNames = payload.internalNotificationRecipients?.length
-        ? ' and Jeremy, Stefan, and Keith copied through Shopify'
-        : ''
-      const emailMessage = payload.invoiceSent
-        ? payload.emailNotificationMethod === 'order_receipt'
-          ? ' and documentation email sent'
-          : ' and invoice sent'
-        : ''
-      const draftReviewMessage =
-        salesOrderDraft.createDraftOrder && payload.draftInvoiceReadyForReview
-          ? ' and the draft invoice is ready for review'
-          : ''
-      setOrderActionMessage(
-        `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${notificationNames}.`,
-      )
+      setSalesOrderAttachmentFile(null)
+      setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
     } finally {
@@ -3242,10 +5695,14 @@ function InternalApp() {
         message?: string
         importedOrders?: number
         orderJobs?: OrderJob[]
+        players?: PlayerProfile[]
+        billingContacts?: BillingContact[]
       }
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Order import failed')
 
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      mergeIncomingPlayers(payload.players ?? [])
+      mergeIncomingBillingContacts(payload.billingContacts ?? [])
       setOrderActionMessage(
         `Imported ${payload.importedOrders ?? 0} recent Shopify order${
           payload.importedOrders === 1 ? '' : 's'
@@ -3322,6 +5779,213 @@ function InternalApp() {
     )
   }
 
+  function getActiveCrmOwnerAssignment(fallback?: Pick<CrmContact, 'salesOwner' | 'ownerEmail'>) {
+    return {
+      salesOwner: fallback?.salesOwner || activeCrmOwnerOption?.name || '',
+      ownerEmail: fallback?.ownerEmail || activeCrmOwnerOption?.email || '',
+    }
+  }
+
+  function saveCrmContact(contact: CrmContact) {
+    const normalized = normalizeCrmContact({
+      ...contact,
+      updatedAt: new Date().toISOString(),
+      sandboxOnly: true,
+    })
+
+    setCrmContacts((current) => {
+      const manualContacts = getManualCrmContacts(current)
+      const existingIndex = manualContacts.findIndex(
+        (savedContact) =>
+          savedContact.id === normalized.id || hasSharedCrmIdentity(savedContact, normalized),
+      )
+      if (existingIndex === -1) return [...manualContacts, normalized]
+
+      return manualContacts.map((savedContact, index) =>
+        index === existingIndex ? mergeCrmContacts(normalized, savedContact) : savedContact,
+      )
+    })
+    setSelectedCrmContactId(normalized.id)
+  }
+
+  function updateSelectedCrmContact(patch: Partial<CrmContact>) {
+    if (!selectedCrmSummary) return
+    saveCrmContact({
+      ...selectedCrmSummary.contact,
+      ...patch,
+    })
+  }
+
+  function createCrmContact() {
+    const contact = normalizeCrmContact({
+      ...emptyCrmContact(),
+      ...getActiveCrmOwnerAssignment(),
+      source: 'Manual CRM entry',
+      tags: ['Manual entry'],
+    })
+    saveCrmContact(contact)
+    setSelectedCrmContactId(contact.id)
+    setCrmMessage('New sandbox customer profile created.')
+  }
+
+  function saveNewCrmContact(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!newCrmContactDraft.name.trim() && !newCrmContactDraft.company.trim()) {
+      setCrmMessage('Add at least a name or organization before saving a contact.')
+      return
+    }
+
+    const now = new Date().toISOString()
+    const ownerAssignment = getActiveCrmOwnerAssignment(newCrmContactDraft)
+    const firstNote = newCrmContactDraft.buyingContext.trim()
+    const firstTouchpoint = firstNote
+      ? normalizeCrmTouchpoint({
+          id: createId('crm-touchpoint'),
+          type: 'note',
+          contactedAt: now,
+          salesRep: ownerAssignment.salesOwner,
+          summary: firstNote,
+          sentiment: '',
+          nextStep: '',
+          nextFollowUpAt: newCrmContactDraft.followUpAt,
+          relatedOrderId: '',
+        })
+      : null
+    const contact = normalizeCrmContact({
+      ...newCrmContactDraft,
+      ...ownerAssignment,
+      stage: newCrmContactDraft.stage || 'lead',
+      source: newCrmContactDraft.source || 'Manual CRM entry',
+      tags: normalizeCrmList([...newCrmContactDraft.tags, 'Manual entry']),
+      lastContactedAt: firstTouchpoint ? now : newCrmContactDraft.lastContactedAt,
+      createdAt: newCrmContactDraft.createdAt || now,
+      updatedAt: now,
+      touchpoints: firstTouchpoint
+        ? [firstTouchpoint, ...newCrmContactDraft.touchpoints]
+        : newCrmContactDraft.touchpoints,
+    })
+    saveCrmContact(contact)
+    setNewCrmContactDraft(emptyCrmContact())
+    setActiveCrmView('contact_list')
+    setCrmMessage('Contact saved to the CRM sandbox.')
+  }
+
+  function addCrmTouchpoint(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedCrmSummary) return
+    if (!crmTouchpointDraft.summary.trim()) {
+      setCrmMessage('Add a short conversation summary before saving the touchpoint.')
+      return
+    }
+
+    const contactedAt = getCrmContactedAtFromInput(crmTouchpointDraft.contactedAt)
+    const nextFollowUpAt = getCrmDateFromInput(crmTouchpointDraft.nextFollowUpAt)
+    const ownerAssignment = getActiveCrmOwnerAssignment(selectedCrmSummary.contact)
+    const touchpoint = normalizeCrmTouchpoint({
+      id: createId('crm-touchpoint'),
+      type: crmTouchpointDraft.type,
+      contactedAt,
+      salesRep: crmTouchpointDraft.salesRep || ownerAssignment.salesOwner,
+      summary: crmTouchpointDraft.summary,
+      sentiment: '',
+      nextStep: crmTouchpointDraft.nextStep,
+      nextFollowUpAt,
+      relatedOrderId: crmTouchpointDraft.relatedOrderId,
+    })
+
+    saveCrmContact({
+      ...selectedCrmSummary.contact,
+      ...ownerAssignment,
+      lastContactedAt: contactedAt,
+      followUpAt: nextFollowUpAt || selectedCrmSummary.contact.followUpAt,
+      touchpoints: [touchpoint, ...selectedCrmSummary.contact.touchpoints],
+    })
+    setCrmTouchpointDraft({
+      ...emptyCrmTouchpointDraft(),
+      salesRep: crmTouchpointDraft.salesRep || ownerAssignment.salesOwner,
+    })
+    setCrmMessage('Touchpoint saved to this sandbox CRM profile.')
+  }
+
+  function applyCrmAssistantRequest(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const text = crmAssistantInput.trim()
+    if (!text) {
+      setCrmAssistantResult('Describe the customer, conversation, or follow-up to store.')
+      return
+    }
+
+    const email = extractCrmEmail(text)
+    const phone = extractCrmPhone(text)
+    const name = inferCrmContactNameFromText(text)
+    const company = extractCrmLabeledValue(text, ['team', 'company', 'organization', 'org', 'agency'])
+    const player = extractCrmLabeledValue(text, ['player', 'athlete'])
+    const owner = extractCrmLabeledValue(text, ['rep', 'owner', 'sales rep'])
+    const ownerAssignment = getActiveCrmOwnerAssignment({
+      salesOwner: owner,
+      ownerEmail: '',
+    })
+    const nextStep = extractCrmLabeledValue(text, ['next step', 'todo', 'to do'])
+    const followUpInput = inferCrmFollowUpInputFromText(text)
+    const followUpAt = getCrmDateFromInput(followUpInput)
+    const now = new Date().toISOString()
+    const existingContact =
+      crmContactSummaries.find((summary) => {
+        const contact = summary.contact
+        if (email && contact.email.trim().toLowerCase() === email.toLowerCase()) return true
+        if (phone && normalizeCrmPhone(contact.phone) === normalizeCrmPhone(phone)) return true
+        if (name && normalizeCrmSearchText(contact.name) === normalizeCrmSearchText(name)) return true
+        return false
+      })?.contact ?? null
+
+    const contact = normalizeCrmContact({
+      ...(existingContact ?? emptyCrmContact()),
+      name: existingContact?.name || name,
+      company: existingContact?.company || company,
+      email: existingContact?.email || email,
+      phone: existingContact?.phone || phone,
+      playerNames: normalizeCrmList([
+        ...(existingContact?.playerNames ?? []),
+        player,
+      ]),
+      salesOwner: existingContact?.salesOwner || ownerAssignment.salesOwner,
+      ownerEmail: existingContact?.ownerEmail || ownerAssignment.ownerEmail,
+      stage: inferCrmStageFromText(text),
+      priority: inferCrmPriorityFromText(text),
+      source: existingContact?.source || 'CRM assistant',
+      tags: normalizeCrmList([...(existingContact?.tags ?? []), 'Manual entry', 'AI captured']),
+      buyingContext: existingContact?.buyingContext || text,
+      followUpAt: followUpAt || existingContact?.followUpAt || '',
+      lastContactedAt: now,
+      updatedAt: now,
+    })
+    const touchpoint = normalizeCrmTouchpoint({
+      id: createId('crm-touchpoint'),
+      type: inferCrmTouchpointTypeFromText(text),
+      contactedAt: now,
+      salesRep: ownerAssignment.salesOwner || contact.salesOwner,
+      summary: text,
+      sentiment: extractCrmLabeledValue(text, ['sentiment', 'tone', 'vibe']),
+      nextStep,
+      nextFollowUpAt: followUpAt,
+      relatedOrderId: '',
+    })
+
+    saveCrmContact({
+      ...contact,
+      touchpoints: [touchpoint, ...contact.touchpoints],
+    })
+    setCrmAssistantResult(
+      `Saved ${contact.name || contact.company || 'new contact'} as ${getCrmStageLabel(
+        contact.stage,
+      )} with a ${getCrmTouchpointTypeLabel(touchpoint.type).toLowerCase()} note${
+        followUpAt ? ` and follow-up on ${formatSalesDashboardDate(followUpAt)}` : ''
+      }.`,
+    )
+    setCrmAssistantInput('')
+    setActiveCrmView('contact_list')
+  }
+
   function applyQuickEntry() {
     if (!quickEntry.trim()) return
     setDraft((current) => parseQuickEntry(quickEntry, current, billets))
@@ -3359,19 +6023,50 @@ function InternalApp() {
       !profileName ||
       !batDraft.modelNumber.trim() ||
       batDraft.length === '' ||
-      !batDraft.weight.trim()
+      !batDraft.weight.trim() ||
+      !batDraft.source ||
+      !batDraft.idealBilletWeight.trim()
     ) {
       return
     }
 
-    const newBat = {
+    const savedBat: BatVariation = {
       ...batDraft,
-      id: createId('bat'),
+      id: editingVariantTarget?.variantId ?? createId('bat'),
       modelNumber: batDraft.modelNumber.trim(),
       weight: batDraft.weight.trim(),
+      source: batDraft.source,
+      idealBilletWeight: batDraft.idealBilletWeight.trim(),
+    }
+
+    if (editingVariantTarget) {
+      setPlayers((current) =>
+        current.map((player) =>
+          player.id === editingVariantTarget.profileId
+            ? {
+                ...player,
+                playerName: profileName,
+                bats: player.bats.map((bat) =>
+                  bat.id === editingVariantTarget.variantId ? savedBat : bat,
+                ),
+              }
+            : player,
+        ),
+      )
+
+      resetProfileDraft()
+      return
     }
 
     setPlayers((current) => {
+      if (variantTargetProfileId) {
+        return current.map((player) =>
+          player.id === variantTargetProfileId
+            ? { ...player, bats: [savedBat, ...player.bats] }
+            : player,
+        )
+      }
+
       const existingProfile = current.find(
         (player) =>
           player.profileKind === profileKindDraft &&
@@ -3381,7 +6076,7 @@ function InternalApp() {
       if (existingProfile) {
         return current.map((player) =>
           player.id === existingProfile.id
-            ? { ...player, bats: [newBat, ...player.bats] }
+            ? { ...player, bats: [savedBat, ...player.bats] }
             : player,
         )
       }
@@ -3391,15 +6086,20 @@ function InternalApp() {
           id: createId('profile'),
           profileKind: profileKindDraft,
           playerName: profileName,
-          bats: [newBat],
+          bats: [savedBat],
         },
         ...current,
       ]
     })
 
+    resetProfileDraft()
+  }
+
+  function resetProfileDraft() {
     setPlayerNameDraft('')
     setBatDraft(emptyBat)
     setVariantTargetProfileId(null)
+    setEditingVariantTarget(null)
   }
 
   function startAddVariant(profile: PlayerProfile) {
@@ -3408,19 +6108,18 @@ function InternalApp() {
     setPlayerNameDraft(profile.playerName)
     setBatDraft(emptyBat)
     setVariantTargetProfileId(profile.id)
+    setEditingVariantTarget(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function toggleCompatibleBillet(id: string) {
-    setBatDraft((current) => {
-      const exists = current.compatibleBilletIds.includes(id)
-      return {
-        ...current,
-        compatibleBilletIds: exists
-          ? current.compatibleBilletIds.filter((billetId) => billetId !== id)
-          : [...current.compatibleBilletIds, id],
-      }
-    })
+  function startEditVariant(profile: PlayerProfile, bat: BatVariation) {
+    setActiveSection('players')
+    setProfileKindDraft(profile.profileKind)
+    setPlayerNameDraft(profile.playerName)
+    setBatDraft(createBatDraftFromVariation(bat))
+    setVariantTargetProfileId(null)
+    setEditingVariantTarget({ profileId: profile.id, variantId: bat.id })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
@@ -3580,7 +6279,7 @@ function InternalApp() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell app-section-${activeSection}`}>
       <section className="hero-panel">
         <div>
           <p className="eyebrow">Trinity Bat Company internal tool</p>
@@ -3603,6 +6302,20 @@ function InternalApp() {
               onClick={() => setActiveSection('orders')}
             >
               Orders
+            </button>
+            <button
+              type="button"
+              className={activeSection === 'sales' ? 'active' : ''}
+              onClick={() => setActiveSection('sales')}
+            >
+              Sales Dashboard
+            </button>
+            <button
+              type="button"
+              className={activeSection === 'crm' ? 'active' : ''}
+              onClick={() => setActiveSection('crm')}
+            >
+              CRM
             </button>
             <button
               type="button"
@@ -3634,7 +6347,7 @@ function InternalApp() {
               ? 'Shopify-backed internal tool'
               : backendStatus === 'unauthorized'
                 ? 'Secure internal access required'
-                : 'Internal offline mode'}
+                : 'Live sync unavailable'}
           </strong>
           <p>{syncMessage}</p>
         </div>
@@ -3659,6 +6372,17 @@ function InternalApp() {
             the secure internal link we issued for Trinity or launch the tool from Shopify admin.
           </p>
         </section>
+      ) : backendStatus !== 'connected' && !(crmSandboxPreviewEnabled && activeSection === 'crm') ? (
+        <section className="panel inventory-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Live sync paused</p>
+            <h2>Editing is temporarily locked</h2>
+          </div>
+          <p className="empty-state">
+            This tool could not reach the live Shopify-backed inventory state. To prevent local-only
+            records, data entry is disabled until sync reconnects.
+          </p>
+        </section>
       ) : activeSection === 'inventory' ? (
         <>
           <section className="intake-first">
@@ -3673,7 +6397,7 @@ function InternalApp() {
                   Quick entry by typing or dictation
                   <textarea
                     value={quickEntry}
-                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB yes, no barrel knot, 48.5 ounces, rack A2"
+                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB yes, trophy no, no barrel knot, 48.5 ounces, rack A2"
                     onChange={(event) => setQuickEntry(event.target.value)}
                   />
                 </label>
@@ -3829,6 +6553,16 @@ function InternalApp() {
                     <option value="yes">Yes</option>
                     <option value="no">No</option>
                   </select>
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={draft.trophyEligible}
+                    onChange={(event) =>
+                      setDraft({ ...draft, trophyEligible: event.target.checked })
+                    }
+                  />
+                  <span>Trophy billet?</span>
                 </label>
                 <label>
                   Knot in barrel?
@@ -4136,6 +6870,31 @@ function InternalApp() {
                   </div>
                 </div>
                 <div className="filter-group">
+                  <p className="filter-group-label">Trophy</p>
+                  <div className="filter-chip-row">
+                    {[
+                      ['yes', 'Trophy capable'],
+                      ['no', 'Not trophy capable'],
+                    ].map(([value, label]) => (
+                      <label
+                        key={value}
+                        className={`filter-chip ${trophyFilters.includes(value as InventoryTrophyFilter) ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={trophyFilters.includes(value as InventoryTrophyFilter)}
+                          onChange={() =>
+                            setTrophyFilters((current) =>
+                              toggleSelectedValue(current, value as InventoryTrophyFilter),
+                            )
+                          }
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="filter-group">
                   <p className="filter-group-label">Knot in barrel</p>
                   <div className="filter-chip-row">
                     {(['No', 'Yes', 'N/A'] as KnotStatus[]).map((status) => (
@@ -4232,6 +6991,7 @@ function InternalApp() {
                       </button>
                     </th>
                     <th>MLB</th>
+                    <th>Trophy</th>
                     <th>Barrel knot</th>
                     <th>
                       <button
@@ -4265,6 +7025,11 @@ function InternalApp() {
                         </span>
                       </td>
                       <td>
+                        <span className={billet.trophyEligible ? 'pill yes' : 'pill no'}>
+                          {billet.trophyEligible ? 'Yes' : 'No'}
+                        </span>
+                      </td>
+                      <td>
                         <span
                           className={
                             billet.hasBarrelKnot === 'Yes'
@@ -4279,9 +7044,24 @@ function InternalApp() {
                       </td>
                       <td>
                         {standardBilletLength} in x {getBilletDiameter(billet.source)} in round
-                        <span>
-                          {billet.weight || 'No weight recorded'} oz
-                        </span>
+                        <label className="billet-weight-field">
+                          Weight (oz)
+                          <input
+                            aria-label={`Weight for billet ${billet.barcode}`}
+                            inputMode="decimal"
+                            min="0"
+                            step="0.1"
+                            type="number"
+                            value={billet.weight}
+                            placeholder="No weight"
+                            onChange={(event) =>
+                              updateBilletWeight(
+                                billet.id,
+                                event.target.value === '' ? '' : Number(event.target.value),
+                              )
+                            }
+                          />
+                        </label>
                       </td>
                       <td>{billet.location}</td>
                       <td>
@@ -4362,738 +7142,24 @@ function InternalApp() {
                   ))}
                 </datalist>
 
-                <div
-                  className={`form-row ${
-                    salesOrderDraft.billingDifferent ? 'single-field-row' : ''
-                  }`}
-                >
-                  <label>
-                    Player name
-                    <input
-                      list="player-name-options"
-                      value={salesOrderDraft.playerName}
-                      placeholder="Example: Jordan Smith"
-                      onChange={(event) => updateSalesDraftField('playerName', event.target.value)}
-                    />
-                  </label>
-                  {!salesOrderDraft.billingDifferent ? (
-                    <label>
-                      Player email
-                      <input
-                        type="email"
-                        value={salesOrderDraft.playerEmail}
-                        placeholder="player@example.com"
-                        onChange={(event) =>
-                          updateSalesDraftField('playerEmail', event.target.value)
-                        }
-                      />
-                    </label>
-                  ) : null}
-                </div>
-
-                <label className="checkbox-row billing-toggle">
-                  <input
-                    type="checkbox"
-                    checked={salesOrderDraft.billingDifferent}
-                    onChange={(event) => {
-                      const billingDifferent = event.target.checked
-                      setSalesOrderDraft((current) => ({
-                        ...current,
-                        billingDifferent,
-                        playerEmail: billingDifferent ? '' : current.playerEmail,
-                        playerPhone: billingDifferent ? '' : current.playerPhone,
-                        shippingAddress1: billingDifferent ? '' : current.shippingAddress1,
-                        shippingAddress2: billingDifferent ? '' : current.shippingAddress2,
-                        shippingCity: billingDifferent ? '' : current.shippingCity,
-                        shippingProvinceCode: billingDifferent ? '' : current.shippingProvinceCode,
-                        shippingZip: billingDifferent ? '' : current.shippingZip,
-                        shippingCountryCode: billingDifferent ? 'US' : current.shippingCountryCode,
-                        billingAddressDifferent: billingDifferent
-                          ? false
-                          : current.billingAddressDifferent,
-                        billingAddress1: billingDifferent ? '' : current.billingAddress1,
-                        billingAddress2: billingDifferent ? '' : current.billingAddress2,
-                        billingCity: billingDifferent ? '' : current.billingCity,
-                        billingProvinceCode: billingDifferent ? '' : current.billingProvinceCode,
-                        billingZip: billingDifferent ? '' : current.billingZip,
-                        billingCountryCode: billingDifferent ? 'US' : current.billingCountryCode,
-                      }))
-                    }}
-                  />
-                  <span>Bill a team, agent, or other payer</span>
-                </label>
-
-                <label className="checkbox-row billing-toggle">
-                  <input
-                    type="checkbox"
-                    checked={!salesOrderDraft.requiresShipping}
-                    onChange={(event) => {
-                      const requiresShipping = !event.target.checked
-                      setSalesOrderDraft((current) => ({
-                        ...current,
-                        requiresShipping,
-                        shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
-                        shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
-                        shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
-                        shippingCity: requiresShipping ? current.shippingCity : '',
-                        shippingProvinceCode: requiresShipping
-                          ? current.shippingProvinceCode
-                          : '',
-                        shippingZip: requiresShipping ? current.shippingZip : '',
-                        shippingCountryCode: requiresShipping ? current.shippingCountryCode : 'US',
-                        billingAddressDifferent: requiresShipping
-                          ? current.billingAddressDifferent
-                          : false,
-                        billingAddress1: requiresShipping ? current.billingAddress1 : '',
-                        billingAddress2: requiresShipping ? current.billingAddress2 : '',
-                        billingCity: requiresShipping ? current.billingCity : '',
-                        billingProvinceCode: requiresShipping
-                          ? current.billingProvinceCode
-                          : '',
-                        billingZip: requiresShipping ? current.billingZip : '',
-                        billingCountryCode: requiresShipping ? current.billingCountryCode : 'US',
-                      }))
-                    }}
-                  />
-                  <span>Local delivery / no shipping required</span>
-                </label>
-
-                <div className="form-row fulfillment-options-row">
-                  <label>
-                    Shipping speed
-                    <select
-                      value={salesOrderDraft.shippingSpeed}
-                      disabled={!salesOrderDraft.requiresShipping}
-                      onChange={(event) =>
-                        updateSalesDraftField(
-                          'shippingSpeed',
-                          event.target.value as ShippingSpeedOption,
-                        )
-                      }
-                    >
-                      {shippingSpeedOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Production timeline
-                    <select
-                      value={salesOrderDraft.productionTimeline}
-                      onChange={(event) =>
-                        updateSalesDraftField(
-                          'productionTimeline',
-                          event.target.value as ProductionTimelineOption,
-                        )
-                      }
-                    >
-                      {productionTimelineOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                {salesOrderDraft.billingDifferent ? (
-                  <div className="billing-panel">
-                    <div className="form-row">
-                      <label>
-                        Payer name
-                        <input
-                          list="billing-contact-options"
-                          value={salesOrderDraft.billingName}
-                          placeholder="Search name, team, agent, or agency"
-                          onChange={(event) => updateBillingName(event.target.value)}
-                        />
-                      </label>
-                      <label>
-                        Payer email
-                        <input
-                          type="email"
-                          value={salesOrderDraft.billingEmail}
-                          placeholder="billing@example.com"
-                          onChange={(event) =>
-                            updateSalesDraftField('billingEmail', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Payer phone
-                        <input
-                          type="tel"
-                          value={salesOrderDraft.billingPhone}
-                          placeholder="Example: (321) 652-1800"
-                          onChange={(event) =>
-                            updateSalesDraftField('billingPhone', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Team or agency
-                        <input
-                          value={salesOrderDraft.billingCompany}
-                          placeholder="Example: New York Mets"
-                          onChange={(event) =>
-                            updateSalesDraftField('billingCompany', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Billing relationship
-                        <input
-                          value={salesOrderDraft.billingRelationship}
-                          placeholder="Example: Minor league clubhouse manager"
-                          onChange={(event) =>
-                            updateSalesDraftField('billingRelationship', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="saved-contact-panel">
-                      <span>Saved payer contacts</span>
-                      <div className="saved-contact-list">
-                        {billingContacts.map((contact) => (
-                          <button
-                            type="button"
-                            className="secondary-button compact-button"
-                            key={contact.id}
-                            onClick={() => applyBillingContact(contact)}
-                          >
-                            {contact.name} · {contact.company}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="billing-panel">
-                    <div className="form-row">
-                      <label>
-                        Player phone
-                        <input
-                          type="tel"
-                          value={salesOrderDraft.playerPhone}
-                          placeholder="Example: (321) 652-1800"
-                          onChange={(event) =>
-                            updateSalesDraftField('playerPhone', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Shipping country code
-                        <input
-                          value={salesOrderDraft.shippingCountryCode}
-                          placeholder="US"
-                          onChange={(event) =>
-                            updateSalesDraftField(
-                              'shippingCountryCode',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Shipping address
-                        <input
-                          value={salesOrderDraft.shippingAddress1}
-                          placeholder="Street address"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingAddress1', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Apartment, suite, etc.
-                        <input
-                          value={salesOrderDraft.shippingAddress2}
-                          placeholder="Optional"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingAddress2', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Shipping city
-                        <input
-                          value={salesOrderDraft.shippingCity}
-                          placeholder="City"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingCity', event.target.value)
-                          }
-                        />
-                      </label>
-                      <label>
-                        Shipping state
-                        <input
-                          value={salesOrderDraft.shippingProvinceCode}
-                          placeholder="Example: CO"
-                          onChange={(event) =>
-                            updateSalesDraftField(
-                              'shippingProvinceCode',
-                              event.target.value.toUpperCase(),
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <div className="form-row">
-                      <label>
-                        Shipping ZIP
-                        <input
-                          value={salesOrderDraft.shippingZip}
-                          placeholder="ZIP code"
-                          onChange={(event) =>
-                            updateSalesDraftField('shippingZip', event.target.value)
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <label className="checkbox-row billing-toggle">
-                      <input
-                        type="checkbox"
-                        checked={salesOrderDraft.billingAddressDifferent}
-                        onChange={(event) =>
-                          updateSalesDraftField('billingAddressDifferent', event.target.checked)
-                        }
-                      />
-                      <span>Billing address is different from shipping address</span>
-                    </label>
-
-                    {salesOrderDraft.billingAddressDifferent ? (
-                      <>
-                        <div className="form-row">
-                          <label>
-                            Billing country code
-                            <input
-                              value={salesOrderDraft.billingCountryCode}
-                              placeholder="US"
-                              onChange={(event) =>
-                                updateSalesDraftField(
-                                  'billingCountryCode',
-                                  event.target.value.toUpperCase(),
-                                )
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Billing address
-                            <input
-                              value={salesOrderDraft.billingAddress1}
-                              placeholder="Street address"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingAddress1', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            Apartment, suite, etc.
-                            <input
-                              value={salesOrderDraft.billingAddress2}
-                              placeholder="Optional"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingAddress2', event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Billing city
-                            <input
-                              value={salesOrderDraft.billingCity}
-                              placeholder="City"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingCity', event.target.value)
-                              }
-                            />
-                          </label>
-                          <label>
-                            Billing state
-                            <input
-                              value={salesOrderDraft.billingProvinceCode}
-                              placeholder="Example: CO"
-                              onChange={(event) =>
-                                updateSalesDraftField(
-                                  'billingProvinceCode',
-                                  event.target.value.toUpperCase(),
-                                )
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Billing ZIP
-                            <input
-                              value={salesOrderDraft.billingZip}
-                              placeholder="ZIP code"
-                              onChange={(event) =>
-                                updateSalesDraftField('billingZip', event.target.value)
-                              }
-                            />
-                          </label>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                )}
-
-                <label>
-                  Sales rep
-                  <input
-                    value={salesOrderDraft.salesRep}
-                    placeholder="Example: Matt"
-                    onChange={(event) => updateSalesDraftField('salesRep', event.target.value)}
-                  />
-                </label>
-
-                <div className="sales-line-list">
-                  {salesOrderDraft.lines.map((line, index) => {
-                    const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
-                    const lineVariant = lineProduct?.variants.find(
-                      (variant) => variant.id === line.variantId,
-                    )
-                    const productInputValue = line.isProOrder ? line.title : (lineProduct?.name ?? line.title)
-                    const lineTitle = line.isProOrder
-                      ? line.title || 'Pro custom bat'
-                      : lineProduct?.name || line.title || 'Custom bat'
-
-                    return (
-                      <article className="sales-line-card" key={line.id}>
-                        <div className="split-heading">
-                          <div>
-                            <span className="profile-type-pill">Line {index + 1}</span>
-                            <h3>{lineTitle}</h3>
-                          </div>
-                          {salesOrderDraft.lines.length > 1 ? (
-                            <button
-                              type="button"
-                              className="secondary-button destructive-button compact-button"
-                              onClick={() => removeSalesLine(line.id)}
-                            >
-                              Remove
-                            </button>
-                          ) : null}
-                        </div>
-
-                        <label className="checkbox-row pro-order-toggle">
-                          <input
-                            type="checkbox"
-                            checked={line.isProOrder}
-                            onChange={(event) => {
-                              const isProOrder = event.target.checked
-                              if (isProOrder) {
-                                updateSalesLine(line.id, {
-                                  isProOrder,
-                                  productId: '',
-                                  variantId: '',
-                                  title: line.title || lineProduct?.name || '',
-                                })
-                                return
-                              }
-
-                              const matchedProduct = shopifyCatalog.find(
-                                (item) =>
-                                  item.name.toLowerCase() === line.title.trim().toLowerCase(),
-                              )
-                              updateSalesLine(line.id, {
-                                isProOrder,
-                                productId: matchedProduct?.id ?? '',
-                                variantId: matchedProduct?.variants[0]?.id ?? '',
-                                title: matchedProduct?.name ?? line.title,
-                                unitPrice: matchedProduct?.variants[0]?.price ?? line.unitPrice,
-                              })
-                            }}
-                          />
-                          <span>Pro order</span>
-                        </label>
-
-                        <div className={`form-row ${line.isProOrder ? 'single-field-row' : ''}`}>
-                          <label>
-                            {line.isProOrder ? 'Bat model' : 'Shopify product / bat model'}
-                            <input
-                              list={line.isProOrder ? undefined : 'shopify-bat-products'}
-                              value={productInputValue}
-                              placeholder={
-                                line.isProOrder
-                                  ? 'Example: T141 pro custom'
-                                  : 'Start typing a bat model'
-                              }
-                              onChange={(event) => {
-                                const typedProduct = event.target.value
-                                if (line.isProOrder) {
-                                  updateSalesLine(line.id, {
-                                    productId: '',
-                                    variantId: '',
-                                    title: typedProduct,
-                                  })
-                                  return
-                                }
-
-                                const product = shopifyCatalog.find(
-                                  (item) =>
-                                    item.name.toLowerCase() === typedProduct.trim().toLowerCase(),
-                                )
-                                updateSalesLine(line.id, {
-                                  productId: product?.id ?? '',
-                                  variantId: product?.variants[0]?.id ?? '',
-                                  title: product?.name ?? typedProduct,
-                                  unitPrice: product?.variants[0]?.price ?? line.unitPrice,
-                                })
-                              }}
-                            />
-                          </label>
-                          {!line.isProOrder ? (
-                            <label>
-                              Variant
-                              <select
-                                value={line.variantId}
-                                disabled={!lineProduct}
-                                onChange={(event) => {
-                                  const variant = lineProduct?.variants.find(
-                                    (item) => item.id === event.target.value,
-                                  )
-                                  updateSalesLine(line.id, {
-                                    variantId: event.target.value,
-                                    unitPrice: variant?.price ?? line.unitPrice,
-                                  })
-                                }}
-                              >
-                                <option value="">
-                                  {lineProduct ? 'Select variant' : 'Choose a product first'}
-                                </option>
-                                {lineProduct?.variants.map((variant) => (
-                                  <option key={variant.id} value={variant.id}>
-                                    {variant.title}
-                                    {variant.sku ? ` / ${variant.sku}` : ''}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-                          ) : null}
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Unit price
-                            <input
-                              inputMode="decimal"
-                              value={line.unitPrice}
-                              placeholder={lineVariant ? 'Adjust Shopify price' : 'Example: 189.00'}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { unitPrice: event.target.value })
-                              }
-                            />
-                          </label>
-                          <label>
-                            Quantity
-                            <input
-                              type="number"
-                              min="1"
-                              value={line.quantity}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { quantity: Number(event.target.value) })
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Length
-                            <input
-                              value={line.length}
-                              placeholder="Example: 34"
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { length: event.target.value })
-                              }
-                            />
-                          </label>
-                          <label>
-                            Weight
-                            <input
-                              value={line.targetWeight}
-                              placeholder="Example: 31.5"
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { targetWeight: event.target.value })
-                              }
-                            />
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Handle color
-                            <select
-                              value={line.handleColor}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { handleColor: event.target.value })
-                              }
-                            >
-                              <option value="">Select handle color</option>
-                              {customizerColorOptions.map((color) => (
-                                <option key={color}>{color}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Barrel color
-                            <select
-                              value={line.barrelColor}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { barrelColor: event.target.value })
-                              }
-                            >
-                              <option value="">Select barrel color</option>
-                              {customizerColorOptions.map((color) => (
-                                <option key={color}>{color}</option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Logo color
-                            <select
-                              value={line.logoColor}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { logoColor: event.target.value })
-                              }
-                            >
-                              <option value="">Select logo color</option>
-                              {customizerColorOptions.map((color) => (
-                                <option key={color}>{color}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Wood species
-                            <select
-                              value={line.wood}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, {
-                                  wood: event.target.value as SalesOrderLineDraft['wood'],
-                                })
-                              }
-                            >
-                              {speciesOptions.map((species) => (
-                                <option key={species}>{species}</option>
-                              ))}
-                              <option>Other</option>
-                            </select>
-                          </label>
-                        </div>
-
-                        <div className="form-row">
-                          <label>
-                            Cup
-                            <select
-                              value={line.cupped}
-                              onChange={(event) =>
-                                updateSalesLine(line.id, {
-                                  cupped: event.target.value as SalesOrderLineDraft['cupped'],
-                                })
-                              }
-                            >
-                              {manualCupOptions.map((cup) => (
-                                <option key={cup} value={cup}>
-                                  {cup === 'Yes' ? 'Cup' : 'No cup'}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Engraving
-                            <input
-                              value={line.engraving}
-                              placeholder="Player name, signature, or custom text"
-                              onChange={(event) =>
-                                updateSalesLine(line.id, { engraving: event.target.value })
-                              }
-                            />
-                          </label>
-                        </div>
-                      </article>
-                    )
-                  })}
-                </div>
-
-                <button type="button" className="secondary-button" onClick={addSalesLine}>
-                  Add another line
-                </button>
-
-                <label className="notes-field">
-                  Internal order notes
-                  <textarea
-                    value={salesOrderDraft.notes}
-                    placeholder="Payment terms, delivery promise, team contact, or packaging notes"
-                    onChange={(event) => updateSalesDraftField('notes', event.target.value)}
-                  />
-                </label>
-
-                <label className="checkbox-row invoice-toggle">
-                  <input
-                    type="checkbox"
-                    checked={salesOrderDraft.createDraftOrder}
-                    onChange={(event) => {
-                      const createDraftOrder = event.target.checked
-                      setSalesOrderDraft((current) => ({
-                        ...current,
-                        createDraftOrder,
-                        sendInvoice: createDraftOrder ? false : current.sendInvoice,
-                      }))
-                    }}
-                  />
-                  <span>Create Shopify draft invoice for manual review</span>
-                </label>
-
-                {!salesOrderDraft.createDraftOrder ? (
-                  <label className="checkbox-row invoice-toggle">
-                    <input
-                      type="checkbox"
-                      checked={salesOrderDraft.sendInvoice}
-                      onChange={(event) =>
-                        updateSalesDraftField('sendInvoice', event.target.checked)
-                      }
-                    />
-                    <span>Send Shopify invoice/documentation after order creation</span>
-                  </label>
-                ) : null}
-
-                <button type="submit" disabled={isCreatingDraftOrder}>
-                  {isCreatingDraftOrder
-                    ? salesOrderDraft.createDraftOrder
-                      ? 'Creating draft...'
-                      : 'Creating order...'
-                    : salesOrderDraft.createDraftOrder
-                      ? 'Create Shopify draft invoice'
-                      : 'Create Shopify order'}
-                </button>
+                <SalesOrderFormFields
+                  draft={salesOrderDraft}
+                  setDraft={setSalesOrderDraft}
+                  updateField={updateSalesDraftField}
+                  updateLine={updateSalesLine}
+                  addLine={addSalesLine}
+                  removeLine={removeSalesLine}
+                  shopifyCatalog={shopifyCatalog}
+                  productDatalistId="shopify-bat-products"
+                  playerNameDatalistId="player-name-options"
+                  billingContactDatalistId="billing-contact-options"
+                  updateBillingName={updateBillingName}
+                  billingContacts={billingContacts}
+                  applyBillingContact={applyBillingContact}
+                  attachmentFile={salesOrderAttachmentFile}
+                  setAttachmentFile={setSalesOrderAttachmentFile}
+                  isSubmitting={isCreatingDraftOrder}
+                />
               </form>
             </section>
 
@@ -5200,6 +7266,20 @@ function InternalApp() {
                             {job.billingRelationship ? (
                               <p>Relationship: {job.billingRelationship}</p>
                             ) : null}
+                            {job.salesRep ? <p>Sales rep: {job.salesRep}</p> : null}
+                            {job.salesRepEmail ? <p>Sales rep email: {job.salesRepEmail}</p> : null}
+                            {job.internalAttachment?.downloadUrl ? (
+                              <p>
+                                Attachment:{' '}
+                                <a
+                                  href={job.internalAttachment.downloadUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {job.internalAttachment.filename}
+                                </a>
+                              </p>
+                            ) : null}
                           </div>
 
                           <div className="compatible-list">
@@ -5210,6 +7290,7 @@ function InternalApp() {
                             <p>Wood species: {job.specs.wood || 'N/A'}</p>
                             <p>Handle color: {job.specs.handleColor || 'N/A'}</p>
                             <p>Barrel color: {job.specs.barrelColor || 'N/A'}</p>
+                            <p>Band color: {job.specs.bandColor || 'N/A'}</p>
                             <p>Logo color: {job.specs.logoColor || 'N/A'}</p>
                             <p>Engraving: {job.specs.engraving || 'N/A'}</p>
                             <p>Cup: {job.specs.cupped || 'N/A'}</p>
@@ -5283,6 +7364,17 @@ function InternalApp() {
                               />
                             </label>
 
+                            <label>
+                              Sales rep email
+                              <input
+                                type="email"
+                                value={job.salesRepEmail}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { salesRepEmail: event.target.value })
+                                }
+                              />
+                            </label>
+
                             <label className="notes-field">
                               Internal notes
                               <textarea
@@ -5337,56 +7429,1138 @@ function InternalApp() {
             </section>
           </section>
         </section>
+      ) : activeSection === 'sales' ? (
+        <section className="sales-dashboard-page">
+          <section className="panel sales-dashboard-toolbar">
+            <div className="section-heading">
+              <p className="eyebrow">Sales performance</p>
+              <h2>Team dashboard</h2>
+            </div>
+            <div className="dashboard-controls">
+              <label>
+                Period
+                <select
+                  value={salesDashboardRange}
+                  onChange={(event) =>
+                    setSalesDashboardRange(event.target.value as SalesDashboardRange)
+                  }
+                >
+                  {salesDashboardRangeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Sales rep
+                <select
+                  value={salesDashboardRepFilter}
+                  onChange={(event) => setSalesDashboardRepFilter(event.target.value)}
+                >
+                  <option value="all">Whole team</option>
+                  {salesDashboardRepOptions.map((summary) => (
+                    <option key={summary.key} value={summary.key}>
+                      {summary.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="live-sync-stamp">
+                <span>Last updated</span>
+                <strong>{formatSalesDashboardSyncTime(lastLiveRefreshAt)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section className="metrics-grid sales-dashboard-metrics" aria-label="Sales summary">
+            <article>
+              <span>Submitted sales</span>
+              <strong>{salesDashboardSales.length}</strong>
+            </article>
+            <article>
+              <span>Submitted value</span>
+              <strong>{formatSalesOrderMoney(salesDashboardSubmittedValue)}</strong>
+            </article>
+            <article>
+              <span>Paid value</span>
+              <strong>{formatSalesOrderMoney(salesDashboardPaidValue)}</strong>
+            </article>
+            <article>
+              <span>Paid rate</span>
+              <strong>
+                {formatSalesDashboardPercent(
+                  salesDashboardPaidSales.length,
+                  salesDashboardSales.length,
+                )}
+              </strong>
+            </article>
+          </section>
+
+          <section className="sales-dashboard-grid">
+            <section className="panel sales-rep-panel">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">By sales rep</p>
+                  <h2>Performance</h2>
+                </div>
+                <div className="dashboard-total-chip">
+                  <span>Awaiting</span>
+                  <strong>{formatSalesOrderMoney(salesDashboardOpenValue)}</strong>
+                </div>
+              </div>
+
+              {salesDashboardSummaries.length === 0 ? (
+                <p className="empty-state">No internal sales orders match this view yet.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="sales-rep-table">
+                    <thead>
+                      <tr>
+                        <th>Sales rep</th>
+                        <th>Submitted</th>
+                        <th>Paid</th>
+                        <th>Awaiting payment</th>
+                        <th>Avg. days to pay</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salesDashboardSummaries.map((summary) => (
+                        <tr key={summary.key}>
+                          <td>
+                            <strong>{summary.label}</strong>
+                            {summary.email ? <span>{summary.email}</span> : null}
+                          </td>
+                          <td>
+                            {formatSalesOrderMoney(summary.submittedValue)}
+                            <span>{summary.submittedCount} sale(s)</span>
+                          </td>
+                          <td>
+                            {formatSalesOrderMoney(summary.paidValue)}
+                            <span>{summary.paidCount} paid</span>
+                          </td>
+                          <td>
+                            {formatSalesOrderMoney(summary.openValue)}
+                            <span>{summary.openCount} open</span>
+                          </td>
+                          <td>
+                            {summary.averageDaysToPay === null
+                              ? 'N/A'
+                              : `${summary.averageDaysToPay.toFixed(1)} days`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            <section className="panel sales-aging-panel">
+              <div className="section-heading">
+                <p className="eyebrow">Open invoices</p>
+                <h2>Awaiting payment</h2>
+              </div>
+
+              <div className="sales-dashboard-list">
+                {salesDashboardAwaitingPayment.length === 0 ? (
+                  <p className="empty-state">No draft invoices are waiting on payment.</p>
+                ) : (
+                  salesDashboardAwaitingPayment.map((sale) => (
+                    <article className="sales-dashboard-card" key={sale.key}>
+                      <div>
+                        <span className="profile-type-pill">
+                          {sale.draftOrderName || 'Draft pending'}
+                        </span>
+                        <h3>{sale.payerName || sale.customerName || 'No payer saved'}</h3>
+                        <p>{sale.productSummary}</p>
+                      </div>
+                      <div className="sales-card-values">
+                        <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                        <span>{formatSalesDashboardDate(sale.submittedAt)}</span>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          </section>
+
+          <section className="panel sales-activity-panel">
+            <div className="section-heading">
+              <p className="eyebrow">Sales activity</p>
+              <h2>Submitted and paid orders</h2>
+            </div>
+
+            <div className="sales-dashboard-list activity-list">
+              {salesDashboardRecentSales.length === 0 ? (
+                <p className="empty-state">No sales activity matches this view yet.</p>
+              ) : (
+                salesDashboardRecentSales.map((sale) => (
+                  <article className="sales-dashboard-card activity-card" key={sale.key}>
+                    <div>
+                      <span className={`pill ${sale.isPaid ? 'yes' : ''}`}>
+                        {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
+                      </span>
+                      <h3>{sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}</h3>
+                      <p>
+                        {sale.salesRep || sale.salesRepEmail || 'Unassigned'} ·{' '}
+                        {sale.payerName || sale.customerName || 'No payer saved'}
+                      </p>
+                    </div>
+                    <div className="activity-reference-list">
+                      <span>Original draft invoice: {sale.draftOrderName || 'N/A'}</span>
+                      <span>Paid Shopify order: {sale.paidOrderName || 'N/A'}</span>
+                      <span>
+                        {sale.isPaid
+                          ? `Paid ${formatSalesDashboardDate(sale.paidAt)}`
+                          : `Submitted ${formatSalesDashboardDate(sale.submittedAt)}`}
+                      </span>
+                    </div>
+                    <div className="sales-card-values">
+                      <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                      <span>
+                        {sale.quantity} bat{sale.quantity === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </section>
+      ) : activeSection === 'crm' ? (
+        <section className="crm-page">
+          <section className="panel crm-toolbar">
+            <div className="section-heading">
+              <p className="eyebrow">Sales CRM</p>
+              <h2>{crmWorkspaceViews.find((view) => view.value === activeCrmView)?.label}</h2>
+            </div>
+            <div className="crm-toolbar-actions">
+              <label className="crm-owner-selector">
+                Team member
+                <select
+                  value={resolvedCrmOwnerFilter}
+                  onChange={(event) => setCrmOwnerFilter(event.target.value)}
+                >
+                  <option value="all">All team members</option>
+                  {crmOwnerOptions.map((owner) => (
+                    <option key={owner.key} value={owner.key}>
+                      {owner.label}
+                    </option>
+                  ))}
+                  <option value="unassigned">Unassigned</option>
+                </select>
+              </label>
+              <div className="crm-tab-strip" role="tablist" aria-label="CRM sections">
+                {crmWorkspaceViews.map((view) => (
+                  <button
+                    type="button"
+                    className={activeCrmView === view.value ? 'active' : ''}
+                    key={view.value}
+                    onClick={() => setActiveCrmView(view.value)}
+                  >
+                    {view.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          <section className="metrics-grid sales-dashboard-metrics" aria-label="CRM summary">
+            <article>
+              <span>Contacts</span>
+              <strong>{crmOwnerScopedSummaries.length}</strong>
+            </article>
+            <article>
+              <span>Priority contacts</span>
+              <strong>{crmMetricTotals.hotContacts}</strong>
+            </article>
+            <article>
+              <span>Follow-ups due</span>
+              <strong>{crmMetricTotals.dueFollowUps}</strong>
+            </article>
+            <article>
+              <span>Open value</span>
+              <strong>{formatSalesOrderMoney(crmMetricTotals.openValue)}</strong>
+            </article>
+          </section>
+
+          {crmMessage ? <p className="helper-text crm-message">{crmMessage}</p> : null}
+
+          {activeCrmView === 'new_contact' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-quick-intake" onSubmit={saveNewCrmContact}>
+                <div className="section-heading">
+                  <p className="eyebrow">New contact</p>
+                  <h2>Quick capture</h2>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Name
+                    <input
+                      value={newCrmContactDraft.name}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Team or company
+                    <input
+                      value={newCrmContactDraft.company}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          company: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Phone
+                    <input
+                      value={newCrmContactDraft.phone}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          phone: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      value={newCrmContactDraft.email}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          email: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    Follow-up
+                    <input
+                      type="date"
+                      value={getCrmDateInputValue(newCrmContactDraft.followUpAt)}
+                      onChange={(event) =>
+                        setNewCrmContactDraft((current) => ({
+                          ...current,
+                          followUpAt: getCrmDateFromInput(event.target.value),
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label className="notes-field">
+                  First note
+                  <textarea
+                    value={newCrmContactDraft.buyingContext}
+                    onChange={(event) =>
+                      setNewCrmContactDraft((current) => ({
+                        ...current,
+                        buyingContext: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
+                <button type="submit">Save contact</button>
+              </form>
+
+              <aside className="panel crm-side-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Auto-stamped</p>
+                  <h2>Entry details</h2>
+                </div>
+                <div className="crm-stat-grid">
+                  <article>
+                    <span>Entry date</span>
+                    <strong>{formatSalesDashboardDate(new Date().toISOString())}</strong>
+                  </article>
+                  <article>
+                    <span>Owner</span>
+                    <strong>{activeCrmOwnerOption?.label ?? 'Unassigned'}</strong>
+                  </article>
+                  <article>
+                    <span>Storage</span>
+                    <strong>Sandbox</strong>
+                  </article>
+                </div>
+                <button type="button" className="secondary-button" onClick={createCrmContact}>
+                  Blank profile
+                </button>
+              </aside>
+            </section>
+          ) : activeCrmView === 'engagements' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-touchpoint-form" onSubmit={addCrmTouchpoint}>
+                <div className="section-heading">
+                  <p className="eyebrow">Engagements</p>
+                  <h2>Log a call or text</h2>
+                </div>
+                <label>
+                  Contact
+                  <select
+                    value={selectedCrmSummary?.contact.id ?? ''}
+                    onChange={(event) => setSelectedCrmContactId(event.target.value)}
+                  >
+                    <option value="">Select contact</option>
+                    {crmContactSummaries.map((summary) => (
+                      <option key={summary.contact.id} value={summary.contact.id}>
+                        {summary.contact.name || summary.contact.company || summary.contact.email}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="form-row">
+                  <label>
+                    Type
+                    <select
+                      value={crmTouchpointDraft.type}
+                      onChange={(event) =>
+                        setCrmTouchpointDraft((current) => ({
+                          ...current,
+                          type: event.target.value as CrmTouchpointType,
+                        }))
+                      }
+                    >
+                      {crmTouchpointTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Date
+                    <input
+                      type="date"
+                      value={crmTouchpointDraft.contactedAt || getCrmTodayInputValue()}
+                      onChange={(event) =>
+                        setCrmTouchpointDraft((current) => ({
+                          ...current,
+                          contactedAt: event.target.value,
+                        }))
+                      }
+                    />
+                  </label>
+                </div>
+                <label className="notes-field">
+                  What happened
+                  <textarea
+                    value={crmTouchpointDraft.summary}
+                    onChange={(event) =>
+                      setCrmTouchpointDraft((current) => ({
+                        ...current,
+                        summary: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label className="notes-field">
+                  Next step
+                  <textarea
+                    value={crmTouchpointDraft.nextStep}
+                    onChange={(event) =>
+                      setCrmTouchpointDraft((current) => ({
+                        ...current,
+                        nextStep: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Follow-up
+                  <input
+                    type="date"
+                    value={crmTouchpointDraft.nextFollowUpAt}
+                    onChange={(event) =>
+                      setCrmTouchpointDraft((current) => ({
+                        ...current,
+                        nextFollowUpAt: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button type="submit">Save engagement</button>
+              </form>
+
+              <section className="panel crm-detail-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Engagement history</p>
+                  <h2>{crmEngagements.length} logged entries</h2>
+                </div>
+                <div className="crm-engagement-layout">
+                  <div className="crm-engagement-list">
+                    {crmEngagements.length === 0 ? (
+                      <p className="empty-state">No calls, texts, or notes logged yet.</p>
+                    ) : (
+                      crmEngagements.map(({ contact, touchpoint }) => (
+                        <button
+                          type="button"
+                          className={`crm-engagement-row ${
+                            selectedCrmEngagement?.touchpoint.id === touchpoint.id ? 'active' : ''
+                          }`}
+                          key={touchpoint.id}
+                          onClick={() => setSelectedCrmEngagementId(touchpoint.id)}
+                        >
+                          <span>{getCrmTouchpointTypeLabel(touchpoint.type)}</span>
+                          <strong>{contact.name || contact.company || 'Unnamed contact'}</strong>
+                          <p>{touchpoint.summary}</p>
+                          <small>{formatSalesDashboardDate(touchpoint.contactedAt)}</small>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                  {selectedCrmEngagement ? (
+                    <article className="crm-engagement-detail">
+                      <span className="profile-type-pill">
+                        {getCrmTouchpointTypeLabel(selectedCrmEngagement.touchpoint.type)}
+                      </span>
+                      <h3>
+                        {selectedCrmEngagement.contact.name ||
+                          selectedCrmEngagement.contact.company ||
+                          'Unnamed contact'}
+                      </h3>
+                      <p>{formatOrderDateTime(selectedCrmEngagement.touchpoint.contactedAt)}</p>
+                      <p>{selectedCrmEngagement.touchpoint.summary}</p>
+                      {selectedCrmEngagement.touchpoint.nextStep ? (
+                        <p>Next: {selectedCrmEngagement.touchpoint.nextStep}</p>
+                      ) : null}
+                      {selectedCrmEngagement.touchpoint.nextFollowUpAt ? (
+                        <p>
+                          Follow-up:{' '}
+                          {formatSalesDashboardDate(selectedCrmEngagement.touchpoint.nextFollowUpAt)}
+                        </p>
+                      ) : null}
+                    </article>
+                  ) : null}
+                </div>
+              </section>
+            </section>
+          ) : activeCrmView === 'assistant' ? (
+            <section className="crm-workspace-grid">
+              <form className="panel crm-assistant-panel" onSubmit={applyCrmAssistantRequest}>
+                <div className="section-heading">
+                  <p className="eyebrow">CRM assistant</p>
+                  <h2>Describe the update</h2>
+                </div>
+                <label className="notes-field">
+                  Natural-language entry
+                  <textarea
+                    value={crmAssistantInput}
+                    onChange={(event) => setCrmAssistantInput(event.target.value)}
+                  />
+                </label>
+                <button type="submit">Store CRM update</button>
+              </form>
+              <section className="panel crm-side-panel">
+                <div className="section-heading">
+                  <p className="eyebrow">Assistant result</p>
+                  <h2>Structured save</h2>
+                </div>
+                <p className="empty-state">{crmAssistantResult || 'No assistant update saved yet.'}</p>
+              </section>
+            </section>
+          ) : (
+          <section className="crm-layout">
+            <section className="panel crm-list-panel">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">Book of business</p>
+                  <h2>{filteredCrmSummaries.length} contacts</h2>
+                </div>
+                <div className="dashboard-total-chip">
+                  <span>Repeat buyers</span>
+                  <strong>{crmMetricTotals.repeatCustomers}</strong>
+                </div>
+              </div>
+
+              <div className="crm-filter-row">
+                <input
+                  aria-label="Search CRM contacts"
+                  placeholder="Search customer, team, player..."
+                  value={crmQuery}
+                  onChange={(event) => setCrmQuery(event.target.value)}
+                />
+                <select
+                  aria-label="Filter CRM stage"
+                  value={crmStageFilter}
+                  onChange={(event) => setCrmStageFilter(event.target.value as 'all' | CrmStage)}
+                >
+                  <option value="all">All stages</option>
+                  {crmStageOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="crm-contact-list">
+                {filteredCrmSummaries.length === 0 ? (
+                  <p className="empty-state">No CRM contacts match this view yet.</p>
+                ) : (
+                  groupedFilteredCrmSummaries.map((group) => (
+                    <section className="crm-owner-group" key={group.key}>
+                      <div className="crm-owner-group-heading">
+                        <div>
+                          <strong>{group.label}</strong>
+                          {group.email ? <span>{group.email}</span> : null}
+                        </div>
+                        <span>
+                          {group.summaries.length} contact{group.summaries.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      {group.summaries.map((summary) => (
+                        <button
+                          type="button"
+                          className={`crm-contact-card ${
+                            selectedCrmSummary?.contact.id === summary.contact.id ? 'active' : ''
+                          }`}
+                          key={summary.contact.id}
+                          onClick={() => {
+                            setSelectedCrmContactId(summary.contact.id)
+                            setCrmTouchpointDraft({
+                              ...emptyCrmTouchpointDraft(),
+                              salesRep: summary.contact.salesOwner,
+                            })
+                          }}
+                        >
+                          <span className={`pill crm-priority-${summary.contact.priority}`}>
+                            {getCrmPriorityLabel(summary.contact.priority)}
+                          </span>
+                          <strong>
+                            {summary.contact.name || summary.contact.company || 'Unnamed contact'}
+                          </strong>
+                          <span>{summary.contact.company || summary.contact.email || 'No company saved'}</span>
+                          <span>
+                            {getCrmStageLabel(summary.contact.stage)} ·{' '}
+                            {summary.orderCount} order{summary.orderCount === 1 ? '' : 's'}
+                          </span>
+                          <span>
+                            {summary.followUpDue
+                              ? 'Follow-up due'
+                              : summary.contact.followUpAt
+                                ? `Next ${formatSalesDashboardDate(summary.contact.followUpAt)}`
+                                : 'No follow-up set'}
+                          </span>
+                        </button>
+                      ))}
+                    </section>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="panel crm-detail-panel">
+              {selectedCrmSummary ? (
+                <>
+                  <div className="crm-detail-header">
+                    <div>
+                      <p className="eyebrow">
+                        Manual CRM profile
+                      </p>
+                      <h2>
+                        {selectedCrmSummary.contact.name ||
+                          selectedCrmSummary.contact.company ||
+                          'Unnamed contact'}
+                      </h2>
+                      <p>
+                        {selectedCrmSummary.contact.company || 'No company saved'} ·{' '}
+                        {selectedCrmSummary.contact.salesOwner || 'No owner assigned'}
+                      </p>
+                    </div>
+                    <div className="crm-header-actions">
+                      <span className="profile-type-pill">Manual entry</span>
+                      <span className={`pill crm-priority-${selectedCrmSummary.contact.priority}`}>
+                        {getCrmPriorityLabel(selectedCrmSummary.contact.priority)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {crmMessage ? <p className="helper-text">{crmMessage}</p> : null}
+
+                  <div className="crm-detail-grid">
+                    <section className="crm-profile-editor">
+                      <div className="form-row">
+                        <label>
+                          Customer name
+                          <input
+                            value={selectedCrmSummary.contact.name}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ name: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Team, agency, or company
+                          <input
+                            value={selectedCrmSummary.contact.company}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ company: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Role or relationship
+                          <input
+                            value={selectedCrmSummary.contact.role}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ role: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Preferred contact
+                          <select
+                            value={selectedCrmSummary.contact.preferredContactMethod}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({
+                                preferredContactMethod: event.target.value,
+                              })
+                            }
+                          >
+                            {crmContactMethodOptions.map((method) => (
+                              <option key={method}>{method}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Email
+                          <input
+                            type="email"
+                            value={selectedCrmSummary.contact.email}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ email: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Phone
+                          <input
+                            value={selectedCrmSummary.contact.phone}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ phone: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <label>
+                        Alternate contacts
+                        <input
+                          value={selectedCrmSummary.contact.alternateContacts}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ alternateContacts: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <div className="form-row">
+                        <label>
+                          Sales owner
+                          <input
+                            value={selectedCrmSummary.contact.salesOwner}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ salesOwner: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Owner email
+                          <input
+                            type="email"
+                            value={selectedCrmSummary.contact.ownerEmail}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ ownerEmail: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Stage
+                          <select
+                            value={selectedCrmSummary.contact.stage}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ stage: event.target.value as CrmStage })
+                            }
+                          >
+                            {crmStageOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          Priority
+                          <select
+                            value={selectedCrmSummary.contact.priority}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({
+                                priority: event.target.value as CrmPriority,
+                              })
+                            }
+                          >
+                            {crmPriorityOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="form-row">
+                        <label>
+                          Source
+                          <input
+                            value={selectedCrmSummary.contact.source}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ source: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Next follow-up
+                          <input
+                            type="date"
+                            value={getCrmDateInputValue(selectedCrmSummary.contact.followUpAt)}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({
+                                followUpAt: getCrmDateFromInput(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+
+                      <label>
+                        Players tied to this buyer
+                        <input
+                          value={selectedCrmSummary.contact.playerNames.join(', ')}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({
+                              playerNames: normalizeCrmList(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        Tags
+                        <input
+                          value={selectedCrmSummary.contact.tags.join(', ')}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ tags: normalizeCrmList(event.target.value) })
+                          }
+                        />
+                      </label>
+
+                      <label className="notes-field">
+                        Buying context
+                        <textarea
+                          value={selectedCrmSummary.contact.buyingContext}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ buyingContext: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="notes-field">
+                        Bat preferences
+                        <textarea
+                          value={selectedCrmSummary.contact.batPreferences}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ batPreferences: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <label className="notes-field">
+                        Relationship notes
+                        <textarea
+                          value={selectedCrmSummary.contact.relationshipNotes}
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ relationshipNotes: event.target.value })
+                          }
+                        />
+                      </label>
+
+                      <div className="form-row">
+                        <label className="notes-field">
+                          Objections or concerns
+                          <textarea
+                            value={selectedCrmSummary.contact.objections}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ objections: event.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="notes-field">
+                          Opportunities
+                          <textarea
+                            value={selectedCrmSummary.contact.opportunities}
+                            onChange={(event) =>
+                              updateSelectedCrmContact({ opportunities: event.target.value })
+                            }
+                          />
+                        </label>
+                      </div>
+                    </section>
+
+                    <aside className="crm-intelligence-panel">
+                      <div className="crm-stat-grid">
+                        <article>
+                          <span>Orders</span>
+                          <strong>{selectedCrmSummary.orderCount}</strong>
+                        </article>
+                        <article>
+                          <span>Paid value</span>
+                          <strong>{formatSalesOrderMoney(selectedCrmSummary.paidValue)}</strong>
+                        </article>
+                        <article>
+                          <span>Open value</span>
+                          <strong>{formatSalesOrderMoney(selectedCrmSummary.openValue)}</strong>
+                        </article>
+                        <article>
+                          <span>Open invoices</span>
+                          <strong>{selectedCrmSummary.openInvoiceCount}</strong>
+                        </article>
+                      </div>
+
+                      <form className="crm-touchpoint-form" onSubmit={addCrmTouchpoint}>
+                        <div className="section-heading">
+                          <p className="eyebrow">Log touchpoint</p>
+                          <h2>Conversation note</h2>
+                        </div>
+                        <div className="form-row">
+                          <label>
+                            Type
+                            <select
+                              value={crmTouchpointDraft.type}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  type: event.target.value as CrmTouchpointType,
+                                }))
+                              }
+                            >
+                              {crmTouchpointTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Date
+                            <input
+                              type="date"
+                              value={crmTouchpointDraft.contactedAt}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  contactedAt: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                        <label className="notes-field">
+                          Summary
+                          <textarea
+                            value={crmTouchpointDraft.summary}
+                            onChange={(event) =>
+                              setCrmTouchpointDraft((current) => ({
+                                ...current,
+                                summary: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="notes-field">
+                          Next step
+                          <textarea
+                            value={crmTouchpointDraft.nextStep}
+                            onChange={(event) =>
+                              setCrmTouchpointDraft((current) => ({
+                                ...current,
+                                nextStep: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <div className="form-row">
+                          <label>
+                            Follow-up date
+                            <input
+                              type="date"
+                              value={crmTouchpointDraft.nextFollowUpAt}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  nextFollowUpAt: event.target.value,
+                                }))
+                              }
+                            />
+                          </label>
+                          <label>
+                            Related order
+                            <select
+                              value={crmTouchpointDraft.relatedOrderId}
+                              onChange={(event) =>
+                                setCrmTouchpointDraft((current) => ({
+                                  ...current,
+                                  relatedOrderId: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">No related order</option>
+                              {selectedCrmSummary.orders.map((job) => (
+                                <option key={job.id} value={job.id}>
+                                  {job.shopifyOrderName ||
+                                    job.shopifyDraftOrderName ||
+                                    job.productTitle ||
+                                    job.id}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        <button type="submit">Save touchpoint</button>
+                      </form>
+                    </aside>
+                  </div>
+
+                  <section className="crm-history-grid">
+                    <div className="crm-history-column">
+                      <div className="section-heading">
+                        <p className="eyebrow">Timeline</p>
+                        <h2>{selectedCrmSummary.contact.touchpoints.length} engagements</h2>
+                      </div>
+                      <ContactEngagementReview
+                        touchpoints={selectedCrmSummary.contact.touchpoints}
+                        emptyMessage="No logged touchpoints for this profile yet."
+                      />
+                    </div>
+
+                    <div className="crm-history-column">
+                      <div className="section-heading">
+                        <p className="eyebrow">Order history</p>
+                        <h2>Past orders and invoices</h2>
+                      </div>
+                      <div className="crm-order-history">
+                        {selectedCrmSummary.orders.length === 0 ? (
+                          <p className="empty-state">No linked Trinity orders yet.</p>
+                        ) : (
+                          selectedCrmSummary.orders.map((job) => (
+                            <article className="sales-dashboard-card" key={job.id}>
+                              <div>
+                                <span className={`pill ${isSalesDashboardPaid(job) ? 'yes' : ''}`}>
+                                  {isSalesDashboardPaid(job)
+                                    ? 'Paid'
+                                    : invoiceStatusLabels[job.invoiceStatus]}
+                                </span>
+                                <h3>
+                                  {job.shopifyOrderName ||
+                                    job.shopifyDraftOrderName ||
+                                    'Unnumbered order'}
+                                </h3>
+                                <p>
+                                  {job.productTitle || 'Custom bat'} · {job.specs.model || 'No model'} ·{' '}
+                                  {job.specs.wood || 'No wood saved'}
+                                </p>
+                              </div>
+                              <div className="sales-card-values">
+                                <strong>{formatSalesOrderMoney(getSalesDashboardLineValue(job))}</strong>
+                                <span>{formatSalesDashboardDate(job.orderSubmittedAt || job.createdAt)}</span>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </section>
+                </>
+              ) : (
+                <p className="empty-state">Create a customer or import order history to start the CRM.</p>
+              )}
+            </section>
+          </section>
+          )}
+        </section>
       ) : activeSection === 'players' ? (
         <section className="profiles-page">
           <section className="panel profile-entry-panel">
             <div className="section-heading">
-              <p className="eyebrow">Add Player/Trainer</p>
-              <h2>Store a bat profile</h2>
+              <p className="eyebrow">{editingVariantTarget ? 'Edit pro player' : 'Add pro player'}</p>
+              <h2>{editingVariantTarget ? 'Edit saved variant' : 'Store a bat profile'}</h2>
             </div>
 
             <form className="bat-form profile-entry-form" onSubmit={addProfileBat}>
               <div className="form-instructions">
                 <strong>
-                  {variantTargetProfileId
-                    ? `Add a new variant to ${playerNameDraft || 'this profile'}`
-                    : 'Enter a new Player or Trainer bat record'}
+                  {editingVariantTarget
+                    ? `Edit variant for ${playerNameDraft || 'this profile'}`
+                    : variantTargetProfileId
+                      ? `Add a new variant to ${playerNameDraft || 'this profile'}`
+                      : 'Enter a pro player bat record'}
                 </strong>
                 <p>
-                  Choose whether this is a Player or Trainer first, then add the model,
-                  finished bat specs, wood tier, color notes, and any billets that can make it.
-                  If the name already exists, this saves as another bat variation under that profile.
+                  Add the model, finished bat specs, wood species, wood tier, color notes, and
+                  ideal billet weight. Source sets the weight scale for diameter correction across
+                  all MLB-caliber storage billets. If the name already exists, this saves as
+                  another bat variation under that profile.
                 </p>
-                {variantTargetProfileId ? (
+                {editingVariantTarget ? (
                   <p>
-                    This will be saved inside the existing {profileKindDraft.toLowerCase()} profile
-                    for {playerNameDraft}.
+                    Changes will update the saved variant and keep its matched billet lookup
+                    connected to this profile.
+                  </p>
+                ) : variantTargetProfileId ? (
+                  <p>
+                    This will be saved inside the existing pro player profile for {playerNameDraft}.
                   </p>
                 ) : null}
               </div>
 
-              <div className="form-row">
-                <label>
-                  Player or Trainer
-                  <select
-                    value={profileKindDraft}
-                    onChange={(event) => {
-                      setProfileKindDraft(event.target.value as ProfileKind)
-                      setVariantTargetProfileId(null)
-                    }}
-                  >
-                    <option>Player</option>
-                    <option>Trainer</option>
-                  </select>
-                </label>
+              <div className="form-row single-field-row">
                 <label>
                   Name
                   <input
                     value={playerNameDraft}
-                    placeholder={profileKindDraft === 'Player' ? 'Example: Corey Seager' : 'Example: Team Trainer'}
+                    placeholder="Example: Corey Seager"
                     onChange={(event) => {
                       setPlayerNameDraft(event.target.value)
-                      setVariantTargetProfileId(null)
+                      if (!editingVariantTarget) {
+                        setVariantTargetProfileId(null)
+                      }
                     }}
                   />
                 </label>
@@ -5422,13 +8596,58 @@ function InternalApp() {
 
               <div className="form-row">
                 <label>
-                  Weight
+                  Finished weight
                   <input
                     value={batDraft.weight}
-                    placeholder={profileKindDraft === 'Trainer' ? 'Example: 95+ or 30-33' : 'Example: 32'}
+                    placeholder="Example: 32"
                     onChange={(event) => setBatDraft({ ...batDraft, weight: event.target.value })}
                   />
                 </label>
+                <label>
+                  Ideal billet weight
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={batDraft.idealBilletWeight}
+                    placeholder="Example: 91"
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, idealBilletWeight: event.target.value })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Source
+                  <select
+                    value={batDraft.source}
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, source: event.target.value as Source | '' })
+                    }
+                  >
+                    <option value="">Select source</option>
+                    {sourceOptions.map((source) => (
+                      <option key={source}>{source}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Wood species
+                  <select
+                    value={batDraft.species}
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, species: event.target.value as Species })
+                    }
+                  >
+                    {speciesOptions.map((species) => (
+                      <option key={species}>{species}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="form-row">
                 <label>
                   Wood tier
                   <select
@@ -5442,59 +8661,42 @@ function InternalApp() {
                     ))}
                   </select>
                 </label>
+                <label>
+                  Color preferences
+                  <input
+                    value={batDraft.colorPreferences}
+                    placeholder="Example: all black"
+                    onChange={(event) =>
+                      setBatDraft({ ...batDraft, colorPreferences: event.target.value })
+                    }
+                  />
+                </label>
               </div>
-
-              <label>
-                Color preferences
-                <input
-                  value={batDraft.colorPreferences}
-                  placeholder="Example: all black"
-                  onChange={(event) =>
-                    setBatDraft({ ...batDraft, colorPreferences: event.target.value })
-                  }
-                />
-              </label>
-
-              <fieldset className="billet-picker">
-                <legend>Billets that can make this model</legend>
-                <div>
-                  {billets.map((billet) => (
-                    <label className="checkbox-row" key={billet.id}>
-                      <input
-                        type="checkbox"
-                        checked={batDraft.compatibleBilletIds.includes(billet.id)}
-                        onChange={() => toggleCompatibleBillet(billet.id)}
-                      />
-                      <span>{getBilletLabel(billet)}</span>
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
 
               <label className="notes-field">
                 Notes
                 <textarea
                   value={batDraft.notes}
-                  placeholder="Feel, balance, knob, cup, trainer use case, or production notes"
+                  placeholder="Feel, balance, knob, cup, pro-player preference, or production notes"
                   onChange={(event) => setBatDraft({ ...batDraft, notes: event.target.value })}
                 />
               </label>
 
               <div className="input-action-row">
                 <button type="submit">
-                  {variantTargetProfileId ? 'Save variant' : 'Save Player/Trainer bat'}
+                  {editingVariantTarget
+                    ? 'Save changes'
+                    : variantTargetProfileId
+                      ? 'Save variant'
+                      : 'Save pro bat profile'}
                 </button>
-                {variantTargetProfileId ? (
+                {variantTargetProfileId || editingVariantTarget ? (
                   <button
                     type="button"
                     className="secondary-button"
-                    onClick={() => {
-                      setVariantTargetProfileId(null)
-                      setPlayerNameDraft('')
-                      setBatDraft(emptyBat)
-                    }}
+                    onClick={resetProfileDraft}
                   >
-                    Cancel variant
+                    {editingVariantTarget ? 'Cancel edit' : 'Cancel variant'}
                   </button>
                 ) : null}
               </div>
@@ -5508,8 +8710,8 @@ function InternalApp() {
                 <h2>Stored profiles</h2>
               </div>
               <input
-                aria-label="Search players and trainers"
-                placeholder="Search name, type, model, wood tier, color, billet..."
+                aria-label="Search pro player profiles"
+                placeholder="Search pro player, model, source, species, weight, wood tier..."
                 value={playerQuery}
                 onChange={(event) => setPlayerQuery(event.target.value)}
               />
@@ -5517,13 +8719,13 @@ function InternalApp() {
 
             <div className="profile-results">
               {filteredPlayers.length === 0 ? (
-                <p className="empty-state">No Player/Trainer profiles match that search yet.</p>
+                <p className="empty-state">No pro player profiles match that search yet.</p>
               ) : (
                 filteredPlayers.map((profile) => (
                   <article className="profile-result-card" key={profile.id}>
                     <div className="split-heading">
                       <div>
-                        <span className="profile-type-pill">{profile.profileKind}</span>
+                        <span className="profile-type-pill">Pro player</span>
                         <h3>{profile.playerName}</h3>
                       </div>
                       <div className="profile-actions">
@@ -5539,30 +8741,54 @@ function InternalApp() {
                     </div>
 
                     <div className="bat-list">
-                      {profile.bats.map((bat) => (
-                        <article className="bat-card" key={bat.id}>
-                          <div>
-                            <span>Model {bat.modelNumber}</span>
-                            <strong>
-                              {bat.length} in / {bat.weight} oz
-                            </strong>
-                            <p>Wood tier: {bat.woodTier}</p>
-                            <p>{bat.colorPreferences || 'No color preferences saved.'}</p>
-                            {bat.notes ? <p>{bat.notes}</p> : null}
-                          </div>
-                          <div className="compatible-list">
-                            <span>Compatible billets</span>
-                            {bat.compatibleBilletIds.length === 0 ? (
-                              <p>No billets selected.</p>
-                            ) : (
-                              bat.compatibleBilletIds.map((id) => {
-                                const billet = billets.find((item) => item.id === id)
-                                return <p key={id}>{billet ? getBilletLabel(billet) : id}</p>
-                              })
-                            )}
-                          </div>
-                        </article>
-                      ))}
+                      {profile.bats.map((bat) => {
+                        const profileBilletMatches = getProfileBilletMatches(bat, billets)
+
+                        return (
+                          <article className="bat-card" key={bat.id}>
+                            <div>
+                              <div className="bat-card-heading">
+                                <div>
+                                  <span>Model {bat.modelNumber}</span>
+                                  <strong>
+                                    {bat.length} in / {bat.weight} oz
+                                  </strong>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="secondary-button compact-button"
+                                  onClick={() => startEditVariant(profile, bat)}
+                                >
+                                  Edit
+                                </button>
+                              </div>
+                              <p>
+                                {bat.source || 'No source selected'} / {bat.species} / {bat.woodTier}
+                              </p>
+                              <p>Ideal billet: {bat.idealBilletWeight || 'N/A'} oz</p>
+                              <p>{bat.colorPreferences || 'No color preferences saved.'}</p>
+                              {bat.notes ? <p>{bat.notes}</p> : null}
+                            </div>
+                            <div className="compatible-list">
+                              <span>Storage billets that match</span>
+                              <strong>
+                                {profileBilletMatches.length} billet
+                                {profileBilletMatches.length === 1 ? '' : 's'}
+                              </strong>
+                              {profileBilletMatches.length === 0 ? (
+                                <p>
+                                  No MLB storage billets match the source-adjusted species and
+                                  ideal weight.
+                                </p>
+                              ) : (
+                                profileBilletMatches.map((billet) => (
+                                  <p key={billet.id}>{getBilletLabel(billet)}</p>
+                                ))
+                              )}
+                            </div>
+                          </article>
+                        )
+                      })}
                     </div>
                   </article>
                 ))
@@ -6039,10 +9265,1382 @@ function InternalApp() {
   )
 }
 
+function SalesPortalApp() {
+  const demoEmail = getSalesPortalDemoEmail()
+  const isDemoSession = Boolean(demoEmail)
+  const [session, setSession] = useState<SalesPortalSession | null>(() => {
+    if (demoEmail) return createDemoSalesPortalSession(demoEmail)
+    const stored = window.localStorage.getItem(salesPortalSessionStorageKey)
+    return stored ? (JSON.parse(stored) as SalesPortalSession) : null
+  })
+  const [loginEmail, setLoginEmail] = useState(session?.email ?? '')
+  const [loginMessage, setLoginMessage] = useState('')
+  const [loginCode, setLoginCode] = useState('')
+  const [canIssueLoginCode, setCanIssueLoginCode] = useState(false)
+  const [codeIssuerEmail, setCodeIssuerEmail] = useState(
+    seedCrmOwnerOptions.find((owner) => owner.email)?.email ?? '',
+  )
+  const [issuedLoginCode, setIssuedLoginCode] = useState<{
+    email: string
+    code: string
+    expiresAt: string
+  } | null>(null)
+  const [isIssuingLoginCode, setIsIssuingLoginCode] = useState(false)
+  const [activeView, setActiveView] = useState<SalesPortalView>('crm')
+  const [adminOwnerFilter, setAdminOwnerFilter] = useState('all')
+  const [crmSearchQuery, setCrmSearchQuery] = useState('')
+  const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
+    if (!isDemoSession) return []
+    const stored = window.localStorage.getItem(crmContactStorageKey)
+    if (stored) {
+      const savedContacts = getManualCrmContacts(JSON.parse(stored) as CrmContact[])
+      return isDemoSession && savedContacts.length === 0 ? createSalesPortalDemoContacts() : savedContacts
+    }
+    return isDemoSession ? createSalesPortalDemoContacts() : []
+  })
+  const [portalOrders, setPortalOrders] = useState<SalesPortalOrder[]>(() => {
+    if (!isDemoSession) return []
+    const stored = window.localStorage.getItem(salesPortalOrderStorageKey)
+    return stored ? (JSON.parse(stored) as SalesPortalOrder[]) : []
+  })
+  const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
+    return []
+  })
+  const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
+  const [orderDraft, setOrderDraft] = useState<SalesOrderDraft>(() => emptySalesOrderDraft())
+  const [orderAttachmentFile, setOrderAttachmentFile] = useState<File | null>(null)
+  const [portalMessage, setPortalMessage] = useState('')
+  const [isLoadingPortalData, setIsLoadingPortalData] = useState(!isDemoSession)
+  const [isSubmittingPortalOrder, setIsSubmittingPortalOrder] = useState(false)
+  const [selectedContactId, setSelectedContactId] = useState('')
+  const [touchpointDraft, setTouchpointDraft] = useState<CrmTouchpointDraft>(() =>
+    emptyCrmTouchpointDraft(),
+  )
+  const [newContactDraft, setNewContactDraft] = useState<CrmContact>(() => emptyCrmContact())
+  const [reportStartDate, setReportStartDate] = useState(() => {
+    const date = new Date()
+    date.setDate(date.getDate() - 6)
+    return date.toISOString().slice(0, 10)
+  })
+  const [reportEndDate, setReportEndDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [reportTypeFilter, setReportTypeFilter] = useState<'all' | CrmTouchpointType>('all')
+
+  const portalOwner = session ? getSalesPortalOwnerForEmail(session.email) : null
+  const isAdmin = Boolean(
+    session?.isAdmin ?? (session && salesPortalAdminEmails.has(normalizeTrinityEmail(session.email))),
+  )
+  const portalOwnerOptions = useMemo(
+    () => [...seedCrmOwnerOptions].sort((a, b) => compareText(a.label, b.label)),
+    [],
+  )
+  const resolvedAdminOwnerFilter =
+    adminOwnerFilter === 'all' ||
+    adminOwnerFilter === 'unassigned' ||
+    portalOwnerOptions.some((owner) => owner.key === adminOwnerFilter)
+      ? adminOwnerFilter
+      : 'all'
+  const activeScopeOwner =
+    isAdmin && resolvedAdminOwnerFilter !== 'all'
+      ? portalOwnerOptions.find((owner) => owner.key === resolvedAdminOwnerFilter) ?? null
+      : portalOwner
+  const crmDirectory = useMemo(
+    () => buildCrmContactDirectory(crmContacts),
+    [crmContacts],
+  )
+  const crmContactSummaries = useMemo(
+    () => buildCrmContactSummaries(crmDirectory, orderJobs),
+    [crmDirectory, orderJobs],
+  )
+  const visibleContactSummaries = useMemo(
+    () =>
+      crmContactSummaries.filter((summary) => {
+        if (isAdmin && resolvedAdminOwnerFilter === 'all') return true
+        if (isAdmin && resolvedAdminOwnerFilter === 'unassigned') {
+          return getCrmSummaryOwnerKey(summary) === 'unassigned'
+        }
+        if (!activeScopeOwner) return false
+        return isCrmSummaryOwnedBy(summary, activeScopeOwner)
+      }),
+    [activeScopeOwner, crmContactSummaries, isAdmin, resolvedAdminOwnerFilter],
+  )
+  const portalSales = useMemo(
+    () =>
+      isDemoSession
+        ? portalOrders.map((order) => createSalesDashboardSaleFromPortalOrder(order))
+        : buildSalesDashboardSales(orderJobs),
+    [isDemoSession, orderJobs, portalOrders],
+  )
+  const visibleSales = useMemo(
+    () =>
+      portalSales.filter((sale) => {
+        if (isAdmin && resolvedAdminOwnerFilter === 'all') return true
+        if (isAdmin && resolvedAdminOwnerFilter === 'unassigned') {
+          return getSalesRepSummaryKey(sale) === 'unassigned'
+        }
+        if (!activeScopeOwner) return false
+        return isSalesDashboardSaleOwnedBy(sale, activeScopeOwner)
+      }),
+    [activeScopeOwner, isAdmin, portalSales, resolvedAdminOwnerFilter],
+  )
+  const searchedContactSummaries = useMemo(() => {
+    const normalizedQuery = normalizeCrmSearchText(crmSearchQuery)
+    return visibleContactSummaries.filter((summary) =>
+      salesPortalContactMatchesSearch(summary, visibleSales, normalizedQuery),
+    )
+  }, [crmSearchQuery, visibleContactSummaries, visibleSales])
+  const groupedSearchedContactSummaries = useMemo(
+    () => groupCrmSummariesByOwner(searchedContactSummaries),
+    [searchedContactSummaries],
+  )
+  const selectedSummary =
+    searchedContactSummaries.find((summary) => summary.contact.id === selectedContactId) ??
+    searchedContactSummaries[0] ??
+    null
+  const visibleEngagements = useMemo(
+    () =>
+      visibleContactSummaries
+        .flatMap((summary) =>
+          summary.contact.touchpoints.map((touchpoint) => ({
+            contact: summary.contact,
+            touchpoint,
+          })),
+        )
+        .sort(
+          (first, second) =>
+            getDateTimestamp(second.touchpoint.contactedAt) -
+            getDateTimestamp(first.touchpoint.contactedAt),
+        ),
+    [visibleContactSummaries],
+  )
+  const reportDateWindow = useMemo(() => {
+    const start = getDateTimestamp(getCrmDateFromInput(reportStartDate))
+    const end = getDateTimestamp(getCrmDateFromInput(reportEndDate)) + 24 * 60 * 60 * 1000 - 1
+    return { start, end }
+  }, [reportEndDate, reportStartDate])
+
+  const reportEngagements = useMemo(() => {
+    return visibleEngagements.filter(({ touchpoint }) => {
+      const timestamp = getDateTimestamp(touchpoint.contactedAt)
+      const matchesType = reportTypeFilter === 'all' || touchpoint.type === reportTypeFilter
+      return matchesType && timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+    })
+  }, [reportDateWindow, reportTypeFilter, visibleEngagements])
+  const reportSales = useMemo(
+    () =>
+      visibleSales.filter((sale) => {
+        const timestamp = getDateTimestamp(sale.submittedAt)
+        return timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+      }),
+    [reportDateWindow, visibleSales],
+  )
+  const reportNewContacts = useMemo(
+    () =>
+      visibleContactSummaries.filter((summary) => {
+        const timestamp = getDateTimestamp(summary.contact.createdAt)
+        return timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+      }),
+    [reportDateWindow, visibleContactSummaries],
+  )
+  const pipelineContactCount = useMemo(
+    () =>
+      visibleContactSummaries.filter((summary) =>
+        ['lead', 'qualified', 'quoted', 'invoice_sent', 'nurture'].includes(summary.contact.stage),
+      ).length,
+    [visibleContactSummaries],
+  )
+  const reportRevenue = useMemo(
+    () => reportSales.reduce((total, sale) => total + sale.total, 0),
+    [reportSales],
+  )
+  const conversionRate =
+    reportNewContacts.length > 0 ? Math.round((reportSales.length / reportNewContacts.length) * 100) : 0
+  const reportCountsByType = useMemo(() => {
+    const counts = new Map<CrmTouchpointType, number>()
+    for (const { touchpoint } of reportEngagements) {
+      counts.set(touchpoint.type, (counts.get(touchpoint.type) ?? 0) + 1)
+    }
+    return crmTouchpointTypeOptions.map((option) => ({
+      ...option,
+      count: counts.get(option.value) ?? 0,
+    }))
+  }, [reportEngagements])
+  const reportRowsByRep = useMemo(() => {
+    const rows = new Map<
+      string,
+      {
+        key: string
+        label: string
+        email: string
+        engagements: number
+        calls: number
+        texts: number
+        emails: number
+        instagramDms: number
+        submittedSales: number
+        submittedValue: number
+        paidSales: number
+        paidValue: number
+        openValue: number
+      }
+    >()
+
+    function getRow(key: string, label: string, email = '') {
+      const existing = rows.get(key)
+      if (existing) return existing
+
+      const row = {
+        key,
+        label,
+        email,
+        engagements: 0,
+        calls: 0,
+        texts: 0,
+        emails: 0,
+        instagramDms: 0,
+        submittedSales: 0,
+        submittedValue: 0,
+        paidSales: 0,
+        paidValue: 0,
+        openValue: 0,
+      }
+      rows.set(key, row)
+      return row
+    }
+
+    for (const { contact, touchpoint } of reportEngagements) {
+      const salesRep = touchpoint.salesRep || contact.salesOwner || 'Unassigned'
+      const ownerEmail = contact.ownerEmail
+      const owner = createCrmOwnerOption(salesRep, ownerEmail)
+      const row = getRow(
+        owner?.key ?? getCrmOwnerKey(salesRep, ownerEmail),
+        owner?.label ?? salesRep,
+        owner?.email ?? ownerEmail,
+      )
+      row.engagements += 1
+      if (touchpoint.type === 'call') row.calls += 1
+      if (touchpoint.type === 'text') row.texts += 1
+      if (touchpoint.type === 'email') row.emails += 1
+      if (touchpoint.type === 'instagram_dm') row.instagramDms += 1
+    }
+
+    for (const sale of reportSales) {
+      const key = getSalesRepSummaryKey(sale)
+      const row = getRow(key, getSalesRepSummaryLabel(sale), sale.salesRepEmail)
+      row.submittedSales += 1
+      row.submittedValue += sale.total
+      if (sale.isPaid) {
+        row.paidSales += 1
+        row.paidValue += sale.total
+      } else {
+        row.openValue += sale.total
+      }
+    }
+
+    return Array.from(rows.values()).sort(
+      (a, b) =>
+        b.paidValue - a.paidValue ||
+        b.submittedValue - a.submittedValue ||
+        b.engagements - a.engagements ||
+        compareText(a.label, b.label),
+    )
+  }, [reportEngagements, reportSales])
+
+  useEffect(() => {
+    if (isDemoSession && session) {
+      window.localStorage.setItem(salesPortalSessionStorageKey, JSON.stringify(session))
+    } else {
+      window.localStorage.removeItem(salesPortalSessionStorageKey)
+    }
+  }, [isDemoSession, session])
+
+  useEffect(() => {
+    if (isDemoSession) {
+      window.localStorage.setItem(crmContactStorageKey, JSON.stringify(getManualCrmContacts(crmContacts)))
+    }
+  }, [crmContacts, isDemoSession])
+
+  useEffect(() => {
+    if (isDemoSession) {
+      window.localStorage.setItem(salesPortalOrderStorageKey, JSON.stringify(portalOrders))
+    }
+  }, [isDemoSession, portalOrders])
+
+  useEffect(() => {
+    if (isDemoSession) return
+
+    let cancelled = false
+
+    async function loadPortalSession() {
+      try {
+        const response = await fetch(getApiPath('/api/sales-portal/session'), { cache: 'no-store' })
+        const payload = (await response.json()) as SalesPortalApiResponse
+        if (cancelled) return
+        if (response.ok && payload.ok && payload.session) {
+          setSession(payload.session)
+          setLoginEmail(payload.session.email)
+          setLoginMessage('')
+        } else {
+          setSession(null)
+        }
+      } catch {
+        if (!cancelled) setSession(null)
+      } finally {
+        if (!cancelled) setIsLoadingPortalData(false)
+      }
+    }
+
+    void loadPortalSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDemoSession])
+
+  useEffect(() => {
+    if (isDemoSession || session) return
+
+    let cancelled = false
+
+    async function checkCodeIssuerAccess() {
+      try {
+        const response = await fetch(getApiPath('/api/internal-session'), { cache: 'no-store' })
+        if (!cancelled) setCanIssueLoginCode(response.ok)
+      } catch {
+        if (!cancelled) setCanIssueLoginCode(false)
+      }
+    }
+
+    void checkCodeIssuerAccess()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDemoSession, session])
+
+  useEffect(() => {
+    if (isDemoSession || !session) return
+
+    let cancelled = false
+
+    async function loadPortalData() {
+      try {
+        setIsLoadingPortalData(true)
+        const [stateResponse, catalogResponse] = await Promise.all([
+          fetch(getApiPath('/api/sales-portal/state'), { cache: 'no-store' }),
+          fetch(getApiPath('/api/catalog'), { cache: 'no-store' }),
+        ])
+        const statePayload = (await stateResponse.json()) as SalesPortalApiResponse
+        const catalogPayload = (await catalogResponse.json()) as { products?: ShopifyCatalogProduct[] }
+        if (cancelled) return
+
+        if (stateResponse.status === 401) {
+          setSession(null)
+          setLoginMessage('Sign in again to continue.')
+          return
+        }
+
+        if (!stateResponse.ok || !statePayload.ok) {
+          throw new Error(statePayload.message ?? 'Could not load sales portal data.')
+        }
+
+        setCrmContacts(
+          Array.isArray(statePayload.crmContacts)
+            ? getManualCrmContacts(statePayload.crmContacts.map((contact) => normalizeCrmContact(contact)))
+            : [],
+        )
+        setOrderJobs(
+          Array.isArray(statePayload.orderJobs)
+            ? statePayload.orderJobs.map((job) => normalizeOrderJob(job))
+            : [],
+        )
+        setShopifyCatalog(Array.isArray(catalogPayload.products) ? catalogPayload.products : [])
+      } catch (error) {
+        if (!cancelled) {
+          setPortalMessage(error instanceof Error ? error.message : 'Could not load sales portal data.')
+        }
+      } finally {
+        if (!cancelled) setIsLoadingPortalData(false)
+      }
+    }
+
+    void loadPortalData()
+
+    return () => {
+      cancelled = true
+    }
+  }, [isDemoSession, session])
+
+  async function issueSalesPortalLoginCode() {
+    const email = normalizeTrinityEmail(codeIssuerEmail)
+    const owner = getCrmOwnerByEmail(email)
+    if (!owner) {
+      setIssuedLoginCode(null)
+      setLoginMessage('Choose an approved Trinity sales team member.')
+      return
+    }
+
+    try {
+      setIsIssuingLoginCode(true)
+      const response = await fetch(getApiPath('/api/sales-portal/admin-login-code'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      })
+      const payload = (await response.json()) as SalesPortalApiResponse
+      const issuedCode = payload.loginCode ?? payload.accessCode
+      if (!response.ok || !payload.ok || !issuedCode) {
+        throw new Error(payload.message ?? 'Could not create a sign-in code.')
+      }
+
+      setIssuedLoginCode({
+        email,
+        code: issuedCode,
+        expiresAt: payload.expiresAt ?? '',
+      })
+      if (!session) {
+        setLoginEmail(email)
+        setLoginCode(issuedCode)
+      }
+      setLoginMessage(payload.message ?? `Access code created for ${owner.label}.`)
+    } catch (error) {
+      setIssuedLoginCode(null)
+      setLoginMessage(error instanceof Error ? error.message : 'Could not create a sign-in code.')
+    } finally {
+      setIsIssuingLoginCode(false)
+    }
+  }
+
+  async function loginToPortal(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const email = normalizeTrinityEmail(loginEmail)
+    if (!isTrinityEmail(email)) {
+      setLoginMessage('Use a Trinity email address ending in @trinitybats.com.')
+      return
+    }
+
+    if (isDemoSession) {
+      setSession(createDemoSalesPortalSession(email))
+      setLoginMessage('')
+      return
+    }
+
+    try {
+      const isVerifyingCode = Boolean(loginCode.trim())
+      const response = await fetch(
+        getApiPath(isVerifyingCode ? '/api/sales-portal/verify-code' : '/api/sales-portal/login-code'),
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(isVerifyingCode ? { email, code: loginCode } : { email }),
+        },
+      )
+      const payload = (await response.json()) as SalesPortalApiResponse
+      if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Sales portal sign-in failed.')
+
+      if (isVerifyingCode) {
+        if (!payload.session) throw new Error('Sales portal session was not returned.')
+        setSession(payload.session)
+        setLoginCode('')
+        setLoginMessage('')
+      } else {
+        setLoginCode('')
+        setLoginMessage(
+          payload.devCode
+            ? `Use local preview code ${payload.devCode}.`
+            : payload.message ??
+                `A sign-in code was sent to ${email}. You can also enter an admin-issued access code.`,
+        )
+      }
+    } catch (error) {
+      setLoginMessage(error instanceof Error ? error.message : 'Could not sign in.')
+    }
+  }
+
+  async function handlePortalSignOut() {
+    if (demoEmail) {
+      setSession(createDemoSalesPortalSession(demoEmail))
+      setPortalMessage(`${getSalesPortalOwnerForEmail(demoEmail).label} demo refreshed.`)
+      return
+    }
+
+    try {
+      await fetch(getApiPath('/api/sales-portal/logout'), { method: 'POST' })
+    } catch {
+      // Clearing the local shell is still the right user outcome if logout cannot reach the server.
+    }
+    setSession(null)
+    setCrmContacts([])
+    setOrderJobs([])
+    setPortalOrders([])
+    setShopifyCatalog([])
+    setLoginCode('')
+  }
+
+  function mergePortalCrmContactIntoList(current: CrmContact[], contact: CrmContact) {
+    const normalized = normalizeCrmContact({
+      ...contact,
+      updatedAt: new Date().toISOString(),
+      sandboxOnly: isDemoSession,
+    })
+    const manualContacts = getManualCrmContacts(current)
+    const existingIndex = manualContacts.findIndex(
+      (savedContact) =>
+        savedContact.id === normalized.id || hasSharedCrmIdentity(savedContact, normalized),
+    )
+    if (existingIndex === -1) return { contacts: [...manualContacts, normalized], contact: normalized }
+
+    const savedContact = mergeCrmContacts(normalized, manualContacts[existingIndex])
+    return {
+      contacts: manualContacts.map((contactItem, index) =>
+        index === existingIndex ? savedContact : contactItem,
+      ),
+      contact: savedContact,
+    }
+  }
+
+  async function savePortalCrmContact(contact: CrmContact) {
+    const merged = mergePortalCrmContactIntoList(crmContacts, contact)
+
+    if (!isDemoSession) {
+      const response = await fetch(getApiPath('/api/sales-portal/state'), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ crmContacts: [merged.contact] }),
+      })
+      const payload = (await response.json()) as SalesPortalApiResponse
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message ?? 'Could not save the CRM contact.')
+      }
+    }
+
+    setCrmContacts(merged.contacts)
+    setSelectedContactId(merged.contact.id)
+    return merged.contact
+  }
+
+  async function savePortalNewContact(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!portalOwner) return
+    if (!newContactDraft.name.trim() && !newContactDraft.company.trim()) {
+      setPortalMessage('Add a name or company before saving.')
+      return
+    }
+    const now = new Date().toISOString()
+    try {
+      const contact = await savePortalCrmContact({
+        ...newContactDraft,
+        salesOwner: portalOwner.name,
+        ownerEmail: portalOwner.email,
+        source: 'Manual CRM entry',
+        tags: normalizeCrmList([...newContactDraft.tags, 'Manual entry', 'Sales portal']),
+        createdAt: newContactDraft.createdAt || now,
+        updatedAt: now,
+      })
+      setNewContactDraft({
+        ...emptyCrmContact(),
+        salesOwner: portalOwner.name,
+        ownerEmail: portalOwner.email,
+      })
+      setSelectedContactId(contact.id)
+      setPortalMessage('Contact saved.')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not save the contact.')
+    }
+  }
+
+  function startPortalOrderForContact(contact: CrmContact) {
+    if (!portalOwner) return
+    setOrderDraft({
+      ...emptySalesOrderDraft(),
+      playerName: contact.playerNames[0] || contact.name,
+      playerEmail: contact.email,
+      playerPhone: contact.phone,
+      billingDifferent: Boolean(contact.company),
+      billingName: contact.name,
+      billingEmail: contact.email,
+      billingPhone: contact.phone,
+      billingCompany: contact.company,
+      billingRelationship: contact.role,
+      salesRep: portalOwner.name,
+      salesRepEmail: portalOwner.email,
+      notes: contact.buyingContext,
+    })
+    setSelectedContactId(contact.id)
+    setActiveView('order_form')
+  }
+
+  function updatePortalSalesDraftField<K extends keyof SalesOrderDraft>(
+    key: K,
+    value: SalesOrderDraft[K],
+  ) {
+    setOrderDraft((current) => ({ ...current, [key]: value }))
+  }
+
+  function updatePortalSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
+    setOrderDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+    }))
+  }
+
+  async function submitPortalOrder(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!portalOwner) return
+    const draft = {
+      ...cloneSalesOrderDraft(orderDraft),
+      salesRep: portalOwner.name,
+      salesRepEmail: portalOwner.email,
+    }
+    if (hasInvalidSalesOrderDraft(draft)) {
+      setPortalMessage('Add player, payer email, payer phone, shipping info, bat model, and price.')
+      return
+    }
+    const selectedManualContact = selectedContactId
+      ? searchedContactSummaries.find((summary) => summary.contact.id === selectedContactId)?.contact ?? null
+      : null
+    try {
+      setIsSubmittingPortalOrder(true)
+      if (isDemoSession) {
+        const order = createSalesPortalOrder(draft, portalOwner, selectedManualContact?.id ?? '')
+        setPortalOrders((current) => [order, ...current])
+        setPortalMessage('Order saved to this sales portal demo.')
+      } else {
+        setPortalMessage(
+          orderAttachmentFile
+            ? 'Uploading attachment and creating Shopify order...'
+            : 'Creating Shopify order...',
+        )
+        const attachment = orderAttachmentFile
+          ? await uploadSalesOrderAttachment(orderAttachmentFile)
+          : null
+        const submittedDraft = {
+          ...draft,
+          attachment,
+        }
+        const response = await fetch(getApiPath('/api/sales-orders'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(submittedDraft),
+        })
+        const payload = (await response.json()) as SalesOrderApiResponse
+        if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Shopify order failed')
+
+        setOrderJobs((current) =>
+          mergeOrderJobs(
+            (payload.orderJobs ?? []).map((job) => normalizeOrderJob(job)),
+            current,
+          ),
+        )
+        setPortalMessage(getSalesOrderSuccessMessage(submittedDraft, payload))
+      }
+
+      setOrderDraft({
+        ...emptySalesOrderDraft(),
+        salesRep: portalOwner.name,
+        salesRepEmail: portalOwner.email,
+      })
+      setOrderAttachmentFile(null)
+      setActiveView('orders')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not create the order.')
+    } finally {
+      setIsSubmittingPortalOrder(false)
+    }
+  }
+
+  async function savePortalEngagement(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedSummary || !portalOwner) return
+    if (!touchpointDraft.summary.trim()) {
+      setPortalMessage('Add a summary before saving the engagement.')
+      return
+    }
+    const touchpoint = normalizeCrmTouchpoint({
+      id: createId('portal-touchpoint'),
+      type: touchpointDraft.type,
+      contactedAt: getCrmContactedAtFromInput(touchpointDraft.contactedAt),
+      salesRep: portalOwner.name,
+      summary: touchpointDraft.summary,
+      sentiment: '',
+      nextStep: touchpointDraft.nextStep,
+      nextFollowUpAt: getCrmDateFromInput(touchpointDraft.nextFollowUpAt),
+      relatedOrderId: touchpointDraft.relatedOrderId,
+    })
+    try {
+      await savePortalCrmContact({
+        ...selectedSummary.contact,
+        salesOwner: selectedSummary.contact.salesOwner || portalOwner.name,
+        ownerEmail: selectedSummary.contact.ownerEmail || portalOwner.email,
+        lastContactedAt: touchpoint.contactedAt,
+        followUpAt: touchpoint.nextFollowUpAt || selectedSummary.contact.followUpAt,
+        touchpoints: [touchpoint, ...selectedSummary.contact.touchpoints],
+      })
+      setTouchpointDraft({ ...emptyCrmTouchpointDraft(), salesRep: portalOwner.name })
+      setPortalMessage('Engagement saved.')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not save the engagement.')
+    }
+  }
+
+  if (!session || !portalOwner) {
+    return (
+      <main className="sales-portal-shell">
+        <section className="panel sales-portal-login">
+          <div className="sales-portal-login-brand">
+            <img src="/trinity-logo-cropped.png" alt="Trinity Bat Company" className="sales-portal-logo" />
+            <div className="section-heading">
+              <p className="eyebrow">Trinity Bat Co.</p>
+              <h1>Sales portal</h1>
+            </div>
+          </div>
+          <form className="bat-form" onSubmit={loginToPortal}>
+            <label>
+              Trinity email
+              <input
+                type="email"
+                value={loginEmail}
+                placeholder="name@trinitybats.com"
+                onChange={(event) => {
+                  setLoginEmail(event.target.value)
+                  setLoginCode('')
+                }}
+              />
+            </label>
+            <label>
+              Access code
+              <input
+                value={loginCode}
+                placeholder="TRI-XXXXX-XXXXX or 6-digit email code"
+                onChange={(event) => setLoginCode(event.target.value)}
+              />
+            </label>
+            <button type="submit">{loginCode.trim() ? 'Sign in' : 'Send email code'}</button>
+          </form>
+          {canIssueLoginCode ? (
+            <div className="sales-portal-code-issuer">
+              <div className="form-row">
+                <label>
+                  Issue access
+                  <select
+                    value={codeIssuerEmail}
+                    onChange={(event) => {
+                      setCodeIssuerEmail(event.target.value)
+                      setIssuedLoginCode(null)
+                    }}
+                  >
+                    {seedCrmOwnerOptions
+                      .filter((owner) => owner.email)
+                      .map((owner) => (
+                        <option key={owner.email} value={owner.email}>
+                          {owner.label}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isIssuingLoginCode}
+                  onClick={issueSalesPortalLoginCode}
+                >
+                  {isIssuingLoginCode ? 'Creating...' : 'Create access code'}
+                </button>
+              </div>
+              {issuedLoginCode ? (
+                <div className="helper-text sales-portal-issued-code">
+                  Code <strong>{issuedLoginCode.code}</strong>
+                  {issuedLoginCode.expiresAt
+                    ? ` expires at ${new Date(issuedLoginCode.expiresAt).toLocaleTimeString([], {
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}.`
+                    : ' stays active until an admin reissues it.'}
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void navigator.clipboard?.writeText(issuedLoginCode.code)}
+                  >
+                    Copy
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {isLoadingPortalData && !loginMessage ? <p className="helper-text">Checking session...</p> : null}
+          {loginMessage ? <p className="helper-text">{loginMessage}</p> : null}
+        </section>
+      </main>
+    )
+  }
+
+  return (
+    <main className="sales-portal-shell">
+      <section className="panel sales-portal-header">
+        <div className="sales-portal-brand-lockup">
+          <img src="/trinity-logo-cropped.png" alt="Trinity Bat Company" className="sales-portal-logo" />
+          <div className="section-heading sales-portal-brand-copy">
+            <p className="eyebrow">Trinity Bat Co.</p>
+            <h1>{portalOwner.label}</h1>
+            <p className="sales-portal-brand-line">Sales CRM and order entry</p>
+          </div>
+        </div>
+        <div className="sales-portal-session">
+          {isAdmin ? (
+            <label>
+              View
+              <select value={resolvedAdminOwnerFilter} onChange={(event) => setAdminOwnerFilter(event.target.value)}>
+                <option value="all">Full team</option>
+                {portalOwnerOptions.map((owner) => (
+                  <option key={owner.key} value={owner.key}>
+                    {owner.label}
+                  </option>
+                ))}
+                <option value="unassigned">Unassigned</option>
+              </select>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button sales-portal-signout"
+            onClick={handlePortalSignOut}
+          >
+            {isDemoSession ? 'Reset demo' : 'Sign out'}
+          </button>
+        </div>
+        <nav className="crm-tab-strip sales-portal-nav" aria-label="Sales portal sections">
+          {salesPortalViews
+            .filter((view) => !view.adminOnly || isAdmin)
+            .map((view) => (
+              <button
+                type="button"
+                className={activeView === view.value ? 'active' : ''}
+                key={view.value}
+                onClick={() => setActiveView(view.value)}
+              >
+                {view.label}
+              </button>
+            ))}
+        </nav>
+      </section>
+
+      {isLoadingPortalData ? <p className="helper-text crm-message">Syncing live portal data...</p> : null}
+      {portalMessage ? <p className="helper-text crm-message">{portalMessage}</p> : null}
+
+      {activeView === 'crm' ? (
+        <section className="sales-portal-crm-layout">
+          <aside className="sales-portal-crm-sidebar" aria-label="CRM intake and contacts">
+            <form className="panel crm-quick-intake" onSubmit={savePortalNewContact}>
+              <div className="section-heading">
+                <p className="eyebrow">CRM</p>
+                <h2>New contact</h2>
+              </div>
+              <div className="form-row">
+                <label>
+                  Name
+                  <input
+                    value={newContactDraft.name}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, name: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Company
+                  <input
+                    value={newContactDraft.company}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, company: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Phone
+                  <input
+                    value={newContactDraft.phone}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, phone: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={newContactDraft.email}
+                    onChange={(event) =>
+                      setNewContactDraft((current) => ({ ...current, email: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+              <label className="notes-field">
+                Summary
+                <textarea
+                  value={newContactDraft.buyingContext}
+                  onChange={(event) =>
+                    setNewContactDraft((current) => ({ ...current, buyingContext: event.target.value }))
+                  }
+                />
+              </label>
+              <button type="submit">Save contact</button>
+            </form>
+
+            <section className="panel crm-list-panel">
+              <div className="section-heading">
+                <p className="eyebrow">Contacts</p>
+                <h2>{searchedContactSummaries.length} visible</h2>
+              </div>
+              <label className="sales-portal-search">
+                Search CRM
+                <input
+                  type="search"
+                  value={crmSearchQuery}
+                  placeholder="Search names, teams, players, notes, bat specs..."
+                  onChange={(event) => setCrmSearchQuery(event.target.value)}
+                />
+              </label>
+              <div className="crm-contact-list">
+                {searchedContactSummaries.length === 0 ? (
+                  <p className="empty-state">
+                    {crmSearchQuery.trim() ? 'No contacts match that search.' : 'No contacts yet.'}
+                  </p>
+                ) : (
+                  groupedSearchedContactSummaries.map((group) => (
+                    <section className="crm-owner-group" key={group.key}>
+                      <div className="crm-owner-group-heading">
+                        <div>
+                          <strong>{group.label}</strong>
+                          {group.email ? <span>{group.email}</span> : null}
+                        </div>
+                        <span>
+                          {group.summaries.length} contact{group.summaries.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      {group.summaries.map((summary) => (
+                        <button
+                          type="button"
+                          className={`crm-contact-card ${
+                            selectedSummary?.contact.id === summary.contact.id ? 'active' : ''
+                          }`}
+                          key={summary.contact.id}
+                          onClick={() => setSelectedContactId(summary.contact.id)}
+                        >
+                          <span className={`pill crm-priority-${summary.contact.priority}`}>
+                            {getCrmPriorityLabel(summary.contact.priority)}
+                          </span>
+                          <strong>
+                            {summary.contact.name || summary.contact.company || 'Unnamed contact'}
+                          </strong>
+                          <span>{summary.contact.company || summary.contact.email || summary.contact.phone}</span>
+                          <span>{getCrmStageLabel(summary.contact.stage)}</span>
+                        </button>
+                      ))}
+                    </section>
+                  ))
+                )}
+              </div>
+            </section>
+          </aside>
+
+          <section className="panel crm-detail-panel sales-portal-crm-main">
+            {selectedSummary ? (
+              <>
+                <div className="crm-detail-header">
+                  <div>
+                    <p className="eyebrow">Selected contact</p>
+                    <h2>{selectedSummary.contact.name || selectedSummary.contact.company}</h2>
+                    <p>{selectedSummary.contact.email || selectedSummary.contact.phone || 'No contact method saved'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => startPortalOrderForContact(selectedSummary.contact)}
+                  >
+                    Start order
+                  </button>
+                </div>
+                <form className="crm-touchpoint-form" onSubmit={savePortalEngagement}>
+                  <div className="section-heading">
+                    <p className="eyebrow">Engagement</p>
+                    <h2>Log activity</h2>
+                  </div>
+                  <div className="form-row">
+                    <label>
+                      Type
+                      <select
+                        value={touchpointDraft.type}
+                        onChange={(event) =>
+                          setTouchpointDraft((current) => ({
+                            ...current,
+                            type: event.target.value as CrmTouchpointType,
+                          }))
+                        }
+                      >
+                        {crmTouchpointTypeOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Date
+                      <input
+                        type="date"
+                        value={touchpointDraft.contactedAt || getCrmTodayInputValue()}
+                        onChange={(event) =>
+                          setTouchpointDraft((current) => ({
+                            ...current,
+                            contactedAt: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+                  </div>
+                  <label className="notes-field">
+                    Summary
+                    <textarea
+                      value={touchpointDraft.summary}
+                      onChange={(event) =>
+                        setTouchpointDraft((current) => ({ ...current, summary: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="notes-field">
+                    Next step
+                    <textarea
+                      value={touchpointDraft.nextStep}
+                      onChange={(event) =>
+                        setTouchpointDraft((current) => ({ ...current, nextStep: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <button type="submit">Save engagement</button>
+                </form>
+                <section className="crm-contact-engagement-section">
+                  <div className="section-heading">
+                    <p className="eyebrow">Saved engagements</p>
+                    <h2>{selectedSummary.contact.touchpoints.length} stored</h2>
+                  </div>
+                  <ContactEngagementReview touchpoints={selectedSummary.contact.touchpoints} />
+                </section>
+              </>
+            ) : (
+              <p className="empty-state">Select a contact to log activity or start an order.</p>
+            )}
+          </section>
+        </section>
+      ) : null}
+
+      {activeView === 'order_form' ? (
+        <section className="panel crm-detail-panel">
+          <form className="bat-form order-intake-form" onSubmit={submitPortalOrder}>
+            <div className="section-heading">
+              <p className="eyebrow">Order form</p>
+              <h2>Sales order</h2>
+            </div>
+            <datalist id="portal-shopify-bat-products">
+              {shopifyCatalog.map((product) => (
+                <option key={product.id} value={product.name} />
+              ))}
+            </datalist>
+            <SalesOrderFormFields
+              draft={orderDraft}
+              setDraft={setOrderDraft}
+              updateField={updatePortalSalesDraftField}
+              updateLine={updatePortalSalesLine}
+              addLine={() =>
+                setOrderDraft((current) => ({
+                  ...current,
+                  lines: [...current.lines, emptySalesLine()],
+                }))
+              }
+              removeLine={(id) =>
+                setOrderDraft((current) => ({
+                  ...current,
+                  lines: current.lines.filter((line) => line.id !== id),
+                }))
+              }
+              shopifyCatalog={shopifyCatalog}
+              productDatalistId="portal-shopify-bat-products"
+              attachmentFile={orderAttachmentFile}
+              setAttachmentFile={setOrderAttachmentFile}
+              isSubmitting={isSubmittingPortalOrder}
+              hideSalesRepFields
+            />
+          </form>
+        </section>
+      ) : null}
+
+      {activeView === 'orders' ? (
+        <section className="panel crm-list-panel">
+          <div className="section-heading">
+            <p className="eyebrow">Orders</p>
+            <h2>{visibleSales.length} visible</h2>
+          </div>
+          <div className="sales-dashboard-list">
+            {visibleSales.length === 0 ? (
+              <p className="empty-state">No sales orders found yet.</p>
+            ) : (
+              visibleSales.map((sale) => (
+                <article className="sales-dashboard-card" key={sale.key}>
+                  <div>
+                    <span className="profile-type-pill">
+                      {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
+                    </span>
+                    <h3>{sale.payerName || sale.customerName || 'Unnamed order'}</h3>
+                    <p>{sale.productSummary}</p>
+                    <p>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</p>
+                  </div>
+                  <div className="sales-card-values">
+                    <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                    <span>{formatSalesDashboardDate(sale.submittedAt)}</span>
+                    <span>{sale.paidAt ? `Paid ${formatSalesDashboardDate(sale.paidAt)}` : 'Open'}</span>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {activeView === 'reports' ? (
+        <section className="sales-portal-report-layout">
+          <section className="panel crm-side-panel">
+            <div className="section-heading">
+              <p className="eyebrow">{isAdmin ? 'Admin report' : 'My report'}</p>
+              <h2>Activity counts</h2>
+            </div>
+            <div className="form-row">
+              <label>
+                Start
+                <input
+                  type="date"
+                  value={reportStartDate}
+                  onChange={(event) => setReportStartDate(event.target.value)}
+                />
+              </label>
+              <label>
+                End
+                <input
+                  type="date"
+                  value={reportEndDate}
+                  onChange={(event) => setReportEndDate(event.target.value)}
+                />
+              </label>
+            </div>
+            <label>
+              Activity type
+              <select
+                value={reportTypeFilter}
+                onChange={(event) => setReportTypeFilter(event.target.value as 'all' | CrmTouchpointType)}
+              >
+                <option value="all">All activity</option>
+                {crmTouchpointTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {isAdmin ? (
+              <div className="sales-portal-code-issuer sales-portal-admin-access">
+                <div className="section-heading">
+                  <p className="eyebrow">Team access</p>
+                  <h2>Issue access codes</h2>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Team member
+                    <select
+                      value={codeIssuerEmail}
+                      onChange={(event) => {
+                        setCodeIssuerEmail(event.target.value)
+                        setIssuedLoginCode(null)
+                      }}
+                    >
+                      {seedCrmOwnerOptions
+                        .filter((owner) => owner.email)
+                        .map((owner) => (
+                          <option key={owner.email} value={owner.email}>
+                            {owner.label}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isIssuingLoginCode}
+                    onClick={issueSalesPortalLoginCode}
+                  >
+                    {isIssuingLoginCode ? 'Creating...' : 'Create access code'}
+                  </button>
+                </div>
+                {issuedLoginCode ? (
+                  <div className="helper-text sales-portal-issued-code">
+                    Code <strong>{issuedLoginCode.code}</strong> for {issuedLoginCode.email}. It stays active
+                    until an admin reissues it.
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void navigator.clipboard?.writeText(issuedLoginCode.code)}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="crm-stat-grid sales-portal-report-stats">
+              <article>
+                <span>Contacts created</span>
+                <strong>{reportNewContacts.length}</strong>
+              </article>
+              <article>
+                <span>Pipeline contacts</span>
+                <strong>{pipelineContactCount}</strong>
+              </article>
+              <article>
+                <span>Conversions</span>
+                <strong>{reportSales.length}</strong>
+              </article>
+              <article>
+                <span>Portal sales</span>
+                <strong>{formatSalesOrderMoney(reportRevenue)}</strong>
+              </article>
+              <article>
+                <span>Engagements</span>
+                <strong>{reportEngagements.length}</strong>
+              </article>
+              <article>
+                <span>Conversion rate</span>
+                <strong>{conversionRate}%</strong>
+              </article>
+            </div>
+            <div className="crm-stat-grid">
+              {reportCountsByType.map((item) => (
+                <article key={item.value}>
+                  <span>{item.label}</span>
+                  <strong>{item.count}</strong>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel crm-detail-panel">
+            <div className="section-heading">
+              <p className="eyebrow">{isAdmin ? 'By team member' : 'My activity'}</p>
+              <h2>{reportRowsByRep.length} rows</h2>
+            </div>
+            <div className="crm-engagement-list">
+              {reportRowsByRep.length === 0 ? (
+                <p className="empty-state">No activity or sales in this date range.</p>
+              ) : (
+                reportRowsByRep.map((row) => (
+                  <article className="crm-engagement-detail sales-portal-report-row" key={row.key}>
+                    <div>
+                      <h3>{row.label}</h3>
+                      <p>{row.email || 'No email stored'}</p>
+                    </div>
+                    <div className="sales-portal-report-row-grid">
+                      <span>{row.engagements} engagements</span>
+                      <span>{row.calls} calls</span>
+                      <span>{row.texts} texts</span>
+                      <span>{row.emails} emails</span>
+                      <span>{row.instagramDms} IG DMs</span>
+                      <span>{row.submittedSales} sales</span>
+                      <span>{formatSalesOrderMoney(row.submittedValue)} submitted</span>
+                      <span>{formatSalesOrderMoney(row.paidValue)} paid</span>
+                      <span>{formatSalesOrderMoney(row.openValue)} open</span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <div className="sales-portal-report-section">
+              <div className="section-heading">
+                <p className="eyebrow">Sales records</p>
+                <h2>{reportSales.length} sales</h2>
+              </div>
+              <div className="sales-dashboard-list">
+                {reportSales.length === 0 ? (
+                  <p className="empty-state">No sales in this range.</p>
+                ) : (
+                  reportSales.map((sale) => (
+                    <article className="sales-dashboard-card" key={sale.key}>
+                      <div>
+                        <span className="profile-type-pill">
+                          {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
+                        </span>
+                        <h3>{sale.payerName || sale.customerName || 'Unnamed sale'}</h3>
+                        <p>{sale.productSummary}</p>
+                        <p>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</p>
+                      </div>
+                      <div className="sales-card-values">
+                        <strong>{formatSalesOrderMoney(sale.total)}</strong>
+                        <span>{formatSalesDashboardDate(sale.submittedAt)}</span>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="sales-portal-report-section">
+              <div className="section-heading">
+                <p className="eyebrow">Engagement log</p>
+                <h2>{reportEngagements.length} entries</h2>
+              </div>
+              <div className="crm-engagement-list">
+                {reportEngagements.length === 0 ? (
+                  <p className="empty-state">No engagements in this range.</p>
+                ) : (
+                  reportEngagements.map(({ contact, touchpoint }, index) => (
+                    <article className="crm-engagement-detail" key={touchpoint.id || `${contact.id}-${index}`}>
+                      <h3>
+                        {index + 1}. {getCrmTouchpointTypeLabel(touchpoint.type)}
+                      </h3>
+                      <p>{contact.name || contact.company || 'Unnamed contact'}</p>
+                      <p>{touchpoint.salesRep || contact.salesOwner || 'Unassigned'}</p>
+                      <p>{formatSalesDashboardDate(touchpoint.contactedAt)}</p>
+                      <p>{touchpoint.summary || 'No summary saved.'}</p>
+                      {touchpoint.nextStep ? <p>Next: {touchpoint.nextStep}</p> : null}
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+          </section>
+        </section>
+      ) : null}
+    </main>
+  )
+}
+
 function App() {
+  if (salesPortalDemoOnly) {
+    return <SalesPortalApp />
+  }
+
   // Keep the public order form on explicit public paths only. Every other
   // route should open the internal inventory tool so the two experiences
   // never silently fall back into each other.
+  if (isSalesPortalRoute()) {
+    return <SalesPortalApp />
+  }
+
   if (isPublicOrderFormRoute()) {
     return <PublicSalesOrderForm />
   }

@@ -68,6 +68,14 @@ const draftOrderShippingOptions = {
       process.env.TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT ?? '75.00',
     ),
   },
+  comped: {
+    key: 'comped',
+    label: 'Comped',
+    title: cleanString(process.env.TRINITY_DRAFT_SHIPPING_COMPED_TITLE) || 'Comped Shipping',
+    amount: normalizeNonNegativeMoneyAmount(
+      process.env.TRINITY_DRAFT_SHIPPING_COMPED_AMOUNT ?? '0.00',
+    ),
+  },
 }
 const rushProductionSurchargeTitle =
   cleanString(process.env.TRINITY_RUSH_PRODUCTION_TITLE) || 'Rush Production Surcharge'
@@ -77,22 +85,51 @@ const rushProductionSurchargeAmount = normalizePositiveMoneyAmount(
 const ga4MeasurementId = process.env.GA4_MEASUREMENT_ID ?? ''
 const ga4ApiSecret = process.env.GA4_API_SECRET ?? ''
 const internalSessionCookieName = 'trinity_internal_session'
-const internalSessionMaxAgeMs = 12 * 60 * 60 * 1000
+const internalSessionMaxAgeDays = 90
+const internalSessionMaxAgeMs = internalSessionMaxAgeDays * 24 * 60 * 60 * 1000
+const salesPortalSessionCookieName = 'trinity_sales_portal_session'
+const salesPortalSessionMaxAgeDays = 30
+const salesPortalSessionMaxAgeMs = salesPortalSessionMaxAgeDays * 24 * 60 * 60 * 1000
+const salesPortalLoginCodeMaxAgeMs = 10 * 60 * 1000
 const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
 const internalSessionSecret =
   process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
 const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
-const metaobjectsPageSize = 25
+const metaobjectsPageSize = readPositiveIntegerEnv('TRINITY_METAOBJECTS_PAGE_SIZE', 50)
 const stateCacheTtlMs = 60 * 60 * 1000
+const stateCacheStaleMaxAgeMs = 24 * 60 * 60 * 1000
+const stateCacheFilePath =
+  process.env.TRINITY_STATE_CACHE_PATH ?? path.join('/tmp', 'trinity-inventory-state-cache.json')
+const catalogCacheTtlMs = 10 * 60 * 1000
+const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
+const maxOrderAttachmentBytes = 20 * 1024 * 1024
+const billetDiameterWeightCorrectionOz = 1.75
+const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
+const billetSourceOptions = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
+const billetSpeciesOptions = new Set(['Maple', 'Birch', 'Ash'])
+const publicSalesOrderFormPaths = [
+  '/order-submission',
+  '/sales-order',
+  '/trinity-order-form',
+  '/trinity-order-from',
+]
+const salesPortalPaths = ['/sales-portal', '/sales-crm']
+const publicStaticAssetPaths = [
+  '/favicon.svg',
+  '/icons.svg',
+  '/site.webmanifest',
+  '/sw.js',
+  '/trinity-logo-cropped.png',
+]
 const defaultInternalOrderNotificationEmails = [
   'matt@trinitybats.com',
   'jeremy@trinitybats.com',
   'stefan@trinitybats.com',
   'keith@trinitybats.com',
 ]
-const requiredInternalOrderNotificationEmails = ['matt@trinitybats.com']
+const requiredInternalOrderNotificationEmails = defaultInternalOrderNotificationEmails
 const internalOrderNotificationEmails = parseEmailList(
   process.env.TRINITY_ORDER_NOTIFICATION_EMAILS ??
     process.env.SHOPIFY_STAFF_NOTIFICATION_BCC ??
@@ -100,6 +137,45 @@ const internalOrderNotificationEmails = parseEmailList(
   defaultInternalOrderNotificationEmails,
   requiredInternalOrderNotificationEmails,
 )
+const salesPortalTeamMembers = [
+  { name: 'Keith Frye', email: 'keith@trinitybats.com', aliases: ['Keith'] },
+  { name: 'Daniel Cope', email: 'daniel@trinitybats.com', aliases: ['Daniel'] },
+  { name: 'Shane Telfer', email: 'shane@trinitybats.com', aliases: ['Shane'] },
+  {
+    name: 'Steve Panayiotou',
+    email: 'steve@trinitybats.com',
+    aliases: ['Steve', 'Steve P.', 'Steve P'],
+  },
+  { name: 'Jeremy Maddox', email: '', key: 'jeremy-maddox', aliases: [] },
+  { name: 'Jeremy McKee', email: 'jeremy@trinitybats.com', aliases: [] },
+  { name: 'Matt Winaker', email: 'matt@trinitybats.com', aliases: ['Matt'] },
+  { name: 'Stefan', email: 'stefan@trinitybats.com', aliases: [] },
+  { name: 'Henry', email: 'henry@trinitybats.com', aliases: [] },
+  { name: 'Nick', email: 'nick@trinitybats.com', aliases: [] },
+  { name: 'Scott Tubbs', email: 'scott@trinitybats.com', aliases: ['Scott'] },
+  { name: 'Brandon McIlwain', email: 'brandon@trinitybats.com', aliases: ['Brandon'] },
+].map((member) => ({
+  ...member,
+  label: member.name,
+  key: member.key ?? member.email,
+}))
+const salesPortalTeamByEmail = new Map(
+  salesPortalTeamMembers.filter((member) => member.email).map((member) => [member.email, member]),
+)
+const salesPortalAdminEmails = new Set([
+  'matt@trinitybats.com',
+  'stefan@trinitybats.com',
+  'jeremy@trinitybats.com',
+  'keith@trinitybats.com',
+])
+const salesPortalLoginCodes = new Map()
+const internalEmailProviderApiKey =
+  cleanString(process.env.TRINITY_RESEND_API_KEY) || cleanString(process.env.RESEND_API_KEY)
+const internalEmailProviderUrl =
+  cleanString(process.env.TRINITY_RESEND_API_URL) || 'https://api.resend.com/emails'
+const internalEmailFrom =
+  cleanString(process.env.TRINITY_INTERNAL_EMAIL_FROM) || cleanString(process.env.RESEND_FROM_EMAIL)
+const internalEmailReplyTo = normalizeEmail(process.env.TRINITY_INTERNAL_EMAIL_REPLY_TO)
 
 const resourceConfigs = {
   billets: {
@@ -114,6 +190,7 @@ const resourceConfigs = {
         fieldValue('barcode', item.barcode),
         fieldValue('species', item.species),
         fieldValue('grade', item.grade),
+        fieldValue('trophy_eligible', toBooleanValue(item.trophyEligible)),
         fieldValue('mlb_eligible', toBooleanValue(item.mlbEligible)),
         fieldValue('has_barrel_knot', toLegacyBarrelKnotValue(item.hasBarrelKnot)),
         fieldValue('barrel_knot_status', item.hasBarrelKnot),
@@ -131,6 +208,7 @@ const resourceConfigs = {
       definitionField('barcode', 'Barcode', 'single_line_text_field'),
       definitionField('species', 'Species', 'single_line_text_field'),
       definitionField('grade', 'Grade', 'single_line_text_field'),
+      definitionField('trophy_eligible', 'Trophy Eligible', 'boolean'),
       definitionField('mlb_eligible', 'MLB Eligible', 'boolean'),
       definitionField('has_barrel_knot', 'Barrel Knot', 'boolean'),
       definitionField('barrel_knot_status', 'Barrel Knot Status', 'single_line_text_field'),
@@ -147,6 +225,7 @@ const resourceConfigs = {
   players: {
     type: '$app:trinity_player_profile',
     name: 'Trinity Player Profile',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.profileKind || 'Profile'} ${item.playerName || item.id}`.trim()
     },
@@ -159,13 +238,14 @@ const resourceConfigs = {
     },
     fieldDefinitions: [
       definitionField('profile_kind', 'Profile Kind', 'single_line_text_field'),
-      definitionField('player_name', 'Player or Trainer Name', 'single_line_text_field'),
+      definitionField('player_name', 'Pro Player Name', 'single_line_text_field'),
       definitionField('bats_json', 'Bats JSON', 'json'),
     ],
   },
   producedBats: {
     type: '$app:trinity_produced_bat',
     name: 'Trinity Produced Bat',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.modelId || item.id} ${item.length || ''} ${item.weight || ''}`.trim()
     },
@@ -244,9 +324,16 @@ const resourceConfigs = {
         fieldValue('production_status', item.productionStatus),
         fieldValue('assigned_billet_id', item.assignedBilletId),
         fieldValue('sales_rep', item.salesRep),
+        fieldValue('sales_rep_email', item.salesRepEmail),
+        fieldValue(
+          'sales_rep_submission_notification_sent_at',
+          item.salesRepSubmissionNotificationSentAt,
+        ),
+        fieldValue('sales_rep_paid_notification_sent_at', item.salesRepPaidNotificationSentAt),
         fieldValue('total_price', item.totalPrice),
         fieldValue('specs_json', JSON.stringify(item.specs ?? {})),
         fieldValue('line_items_json', JSON.stringify(item.lineItems ?? [])),
+        fieldValue('internal_attachment_json', JSON.stringify(item.internalAttachment ?? null)),
         fieldValue('internal_notes', item.internalNotes),
         fieldValue('created_at', item.createdAt),
         fieldValue('updated_at', item.updatedAt),
@@ -284,9 +371,21 @@ const resourceConfigs = {
       definitionField('production_status', 'Production Status', 'single_line_text_field'),
       definitionField('assigned_billet_id', 'Assigned Billet ID', 'single_line_text_field'),
       definitionField('sales_rep', 'Sales Rep', 'single_line_text_field'),
+      definitionField('sales_rep_email', 'Sales Rep Email', 'single_line_text_field'),
+      definitionField(
+        'sales_rep_submission_notification_sent_at',
+        'Sales Rep Submission Notification Sent At',
+        'single_line_text_field',
+      ),
+      definitionField(
+        'sales_rep_paid_notification_sent_at',
+        'Sales Rep Paid Notification Sent At',
+        'single_line_text_field',
+      ),
       definitionField('total_price', 'Total Price', 'single_line_text_field'),
       definitionField('specs_json', 'Specs JSON', 'json'),
       definitionField('line_items_json', 'Line Items JSON', 'json'),
+      definitionField('internal_attachment_json', 'Internal Attachment JSON', 'json'),
       definitionField('internal_notes', 'Internal Notes', 'multi_line_text_field'),
       definitionField('created_at', 'Created At', 'single_line_text_field'),
       definitionField('updated_at', 'Updated At', 'single_line_text_field'),
@@ -295,6 +394,7 @@ const resourceConfigs = {
   customBatModels: {
     type: '$app:trinity_bat_model',
     name: 'Trinity Bat Model',
+    deleteMissing: false,
     labelFor(item) {
       return `${item.name || item.id}`.trim()
     },
@@ -335,6 +435,84 @@ const resourceConfigs = {
       definitionField('company', 'Company', 'single_line_text_field'),
       definitionField('relationship', 'Relationship', 'single_line_text_field'),
       definitionField('notes', 'Notes', 'multi_line_text_field'),
+    ],
+  },
+  crmContacts: {
+    type: '$app:trinity_crm_contact',
+    name: 'Trinity CRM Contact',
+    deleteMissing: false,
+    labelFor(item) {
+      return `${item.name || item.company || item.email || item.phone || item.id}`.trim()
+    },
+    fieldsFor(item) {
+      return [
+        fieldValue('name', item.name),
+        fieldValue('company', item.company),
+        fieldValue('role', item.role),
+        fieldValue('email', item.email),
+        fieldValue('phone', item.phone),
+        fieldValue('sales_owner', item.salesOwner),
+        fieldValue('owner_email', item.ownerEmail),
+        fieldValue('stage', item.stage),
+        fieldValue('priority', item.priority),
+        fieldValue('source', item.source),
+        fieldValue('preferred_contact_method', item.preferredContactMethod),
+        fieldValue('follow_up_at', item.followUpAt),
+        fieldValue('last_contacted_at', item.lastContactedAt),
+        fieldValue('created_at', item.createdAt),
+        fieldValue('updated_at', item.updatedAt),
+        fieldValue('touchpoints_json', JSON.stringify(item.touchpoints ?? [])),
+      ].filter(Boolean)
+    },
+    fieldDefinitions: [
+      definitionField('name', 'Name', 'single_line_text_field'),
+      definitionField('company', 'Company', 'single_line_text_field'),
+      definitionField('role', 'Role', 'single_line_text_field'),
+      definitionField('email', 'Email', 'single_line_text_field'),
+      definitionField('phone', 'Phone', 'single_line_text_field'),
+      definitionField('sales_owner', 'Sales Owner', 'single_line_text_field'),
+      definitionField('owner_email', 'Owner Email', 'single_line_text_field'),
+      definitionField('stage', 'Stage', 'single_line_text_field'),
+      definitionField('priority', 'Priority', 'single_line_text_field'),
+      definitionField('source', 'Source', 'single_line_text_field'),
+      definitionField('preferred_contact_method', 'Preferred Contact Method', 'single_line_text_field'),
+      definitionField('follow_up_at', 'Follow Up At', 'single_line_text_field'),
+      definitionField('last_contacted_at', 'Last Contacted At', 'single_line_text_field'),
+      definitionField('created_at', 'Created At', 'single_line_text_field'),
+      definitionField('updated_at', 'Updated At', 'single_line_text_field'),
+      definitionField('touchpoints_json', 'Touchpoints JSON', 'json'),
+    ],
+  },
+  salesPortalUsers: {
+    type: '$app:trinity_sales_portal_user',
+    name: 'Trinity Sales Portal User',
+    deleteMissing: false,
+    labelFor(item) {
+      return `${item.name || item.email || item.id}`.trim()
+    },
+    fieldsFor(item) {
+      return [
+        fieldValue('email', item.email),
+        fieldValue('name', item.name),
+        fieldValue('role', item.role),
+        fieldValue('status', item.status),
+        fieldValue('access_code_hash', item.accessCodeHash),
+        fieldValue('access_code_rotated_at', item.accessCodeRotatedAt),
+        fieldValue('last_login_at', item.lastLoginAt),
+        fieldValue('created_at', item.createdAt),
+        fieldValue('updated_at', item.updatedAt),
+      ].filter(Boolean)
+    },
+    fieldDefinitions: [
+      definitionField('email', 'Email', 'single_line_text_field'),
+      definitionField('name', 'Name', 'single_line_text_field'),
+      definitionField('role', 'Role', 'single_line_text_field'),
+      definitionField('status', 'Status', 'single_line_text_field'),
+      definitionField('access_code_hash', 'Access Code Hash', 'single_line_text_field'),
+      definitionField('access_code_rotated_at', 'Access Code Rotated At', 'single_line_text_field'),
+      definitionField('last_login_at', 'Last Login At', 'single_line_text_field'),
+      definitionField('created_at', 'Created At', 'single_line_text_field'),
+      definitionField('updated_at', 'Updated At', 'single_line_text_field'),
     ],
   },
   customerSessions: {
@@ -407,6 +585,10 @@ let definitionPromise = null
 let stateCacheValue = null
 let stateCacheExpiresAt = 0
 let stateCachePromise = null
+let catalogCacheValue = null
+let catalogCacheExpiresAt = 0
+let catalogCachePromise = null
+let stateWriteQueue = Promise.resolve()
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
   try {
@@ -427,17 +609,11 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     if (incomingJobs.length > 0) {
       await ensureDefinitions()
       const existingJobs = await listRecords(resourceConfigs.orderJobs)
-      await Promise.all(
-        incomingJobs.map((job) =>
-          upsertRecord(
-            resourceConfigs.orderJobs,
-            mergeOrderJob(
-              findMatchingOrderJob(existingJobs, job),
-              job,
-            ),
-          ),
-        ),
-      )
+      const mergedJobs = mergeIncomingOrderJobs(existingJobs, incomingJobs)
+      await Promise.all([
+        Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+        rememberOrderJobContacts(mergedJobs),
+      ])
     }
 
     response.status(200).json({ ok: true, jobs: incomingJobs.length })
@@ -449,7 +625,50 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
   }
 })
 
-app.use(express.json({ limit: '2mb' }))
+app.post(
+  '/api/order-attachments',
+  express.raw({ type: '*/*', limit: maxOrderAttachmentBytes }),
+  async (request, response) => {
+    try {
+      if (!shopDomain || !adminToken) {
+        response.status(503).json({
+          ok: false,
+          message: 'Shopify credentials are not configured on this server.',
+        })
+        return
+      }
+
+      const fileBuffer = Buffer.isBuffer(request.body) ? request.body : Buffer.from([])
+      if (fileBuffer.length === 0) {
+        response.status(400).json({ ok: false, message: 'Attachment file is required.' })
+        return
+      }
+      if (fileBuffer.length > maxOrderAttachmentBytes) {
+        response.status(413).json({ ok: false, message: 'Attachment must be 20 MB or smaller.' })
+        return
+      }
+
+      const filename =
+        decodeAttachmentHeader(request.get('x-trinity-attachment-name')) || 'attachment'
+      const contentType =
+        cleanString(request.get('x-trinity-attachment-type')) || 'application/octet-stream'
+      const attachment = await uploadOrderAttachmentToShopifyFiles({
+        filename,
+        contentType,
+        buffer: fileBuffer,
+      })
+
+      response.json({ ok: true, attachment })
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Unknown attachment upload error.',
+      })
+    }
+  },
+)
+
+app.use(express.json({ limit: '5mb' }))
 app.use(establishInternalSession)
 
 app.options('/api/analytics/events', (request, response) => {
@@ -468,6 +687,199 @@ app.get('/api/health', async (_request, response) => {
       ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
     },
   })
+})
+
+app.get('/api/sales-portal/session', (request, response) => {
+  const session = getSalesPortalSession(request)
+  response.set('Cache-Control', 'no-store')
+
+  if (!session) {
+    response.status(401).json({ ok: false, message: 'Sales portal sign-in required.' })
+    return
+  }
+
+  response.json({ ok: true, session })
+})
+
+app.post('/api/sales-portal/login-code', async (request, response) => {
+  try {
+    const email = normalizeSalesPortalEmail(request.body?.email)
+    const owner = getSalesPortalOwnerForEmail(email)
+    if (!email || !owner) {
+      response.status(400).json({
+        ok: false,
+        message: 'Use a Trinity sales team email address.',
+      })
+      return
+    }
+
+    const { code } = createSalesPortalLoginCodeEntry(email)
+
+    let devCode = ''
+    if (internalEmailProviderApiKey && internalEmailFrom) {
+      await sendSalesPortalLoginCodeEmail(email, code)
+    } else if (isLocalRequest(request)) {
+      devCode = code
+    } else {
+      response.status(503).json({
+        ok: false,
+        message:
+          'Sales portal email delivery is not configured yet. Enter your access code or ask an admin to create one.',
+      })
+      return
+    }
+
+    response.json({
+      ok: true,
+      email,
+      message: `A sign-in code was sent to ${email}.`,
+      ...(devCode ? { devCode } : {}),
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not send the sales portal code.',
+    })
+  }
+})
+
+app.post('/api/sales-portal/admin-login-code', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
+  try {
+    const email = normalizeSalesPortalEmail(request.body?.email)
+    const owner = getSalesPortalOwnerForEmail(email)
+    if (!email || !owner) {
+      response.status(400).json({
+        ok: false,
+        message: 'Choose an approved Trinity sales team member.',
+      })
+      return
+    }
+
+    const { accessCode, user } = await issueSalesPortalAccessCode(email)
+    response.json({
+      ok: true,
+      email,
+      loginCode: accessCode,
+      accessCode,
+      user: publicSalesPortalUser(user),
+      message: `Access code created for ${owner.label}.`,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not create an access code.',
+    })
+  }
+})
+
+app.post('/api/sales-portal/verify-code', async (request, response) => {
+  const email = normalizeSalesPortalEmail(request.body?.email)
+  const rawCode = cleanString(request.body?.code)
+  const code = rawCode.replace(/\D/g, '')
+  const owner = getSalesPortalOwnerForEmail(email)
+  const savedCode = salesPortalLoginCodes.get(email)
+
+  if (!email || !owner || !rawCode) {
+    response.status(400).json({ ok: false, message: 'Enter your Trinity email and access code.' })
+    return
+  }
+
+  let verified = false
+  if (savedCode) {
+    if (savedCode.expiresAt < Date.now()) {
+      salesPortalLoginCodes.delete(email)
+    } else if (savedCode.attempts >= 5) {
+      salesPortalLoginCodes.delete(email)
+      response.status(400).json({ ok: false, message: 'Too many attempts. Request a fresh code.' })
+      return
+    } else {
+      savedCode.attempts += 1
+      verified = safeEqual(savedCode.codeHash, hashSalesPortalLoginCode(email, code), 'utf8')
+      if (verified) salesPortalLoginCodes.delete(email)
+    }
+  }
+
+  if (!verified) {
+    try {
+      verified = await verifySalesPortalAccessCode(email, rawCode)
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Could not verify the access code.',
+      })
+      return
+    }
+  }
+
+  if (!verified) {
+    response.status(400).json({ ok: false, message: 'That access code did not match.' })
+    return
+  }
+
+  const token = createSalesPortalSessionToken(email)
+  const session = buildSalesPortalSession(email)
+  if (!token || !session) {
+    response.status(500).json({ ok: false, message: 'Could not create a sales portal session.' })
+    return
+  }
+
+  void recordSalesPortalLogin(email)
+  response.cookie(salesPortalSessionCookieName, token, getSalesPortalCookieOptions(request))
+  response.json({ ok: true, session })
+})
+
+app.post('/api/sales-portal/logout', (_request, response) => {
+  response.clearCookie(salesPortalSessionCookieName, { path: '/' })
+  response.json({ ok: true })
+})
+
+app.get('/api/sales-portal/state', requireSalesPortalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    response.set('Cache-Control', 'no-store')
+    const state = await getSharedState()
+    response.json(filterSalesPortalStateForSession(state, request.salesPortalSession))
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown sales portal state error.',
+    })
+  }
+})
+
+app.patch('/api/sales-portal/state', requireSalesPortalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const crmContacts = arrayFromPayload(request.body?.crmContacts)
+      .map((contact) => prepareSalesPortalCrmContactForSession(contact, request.salesPortalSession))
+      .filter(Boolean)
+    const result = await enqueueStateWrite(() => applyStatePatch({ crmContacts }))
+
+    response.json({
+      ok: true,
+      syncedAt: new Date().toISOString(),
+      applied: result.applied,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown sales portal save error.',
+    })
+  }
 })
 
 app.post('/api/analytics/events', async (request, response) => {
@@ -565,15 +977,57 @@ app.get('/api/state', requireInternalAccess, async (_request, response) => {
 
     response.json(await getSharedState())
   } catch (error) {
-    if (stateCacheValue) {
+    const fallback = getStateCacheFallback()
+    if (fallback) {
       response.set('X-Trinity-State-Cache', 'stale-fallback')
-      response.json(stateCacheValue)
+      response.json(fallback)
       return
     }
 
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify sync error.',
+    })
+  }
+})
+
+app.get('/api/billets/game-model-matches', requireInternalAccess, async (request, response) => {
+  try {
+    response.set('Cache-Control', 'no-store')
+
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const source = cleanString(request.query?.source)
+    const species = cleanString(request.query?.species)
+    const idealBilletWeight = cleanString(request.query?.idealBilletWeight)
+    const state = await getSharedState()
+    const billets = getGameModelBilletMatches(state.billets, {
+      source,
+      species,
+      idealBilletWeight,
+    })
+
+    response.json({
+      ok: true,
+      source,
+      species,
+      idealBilletWeight,
+      toleranceOz: 0.5,
+      diameterCorrectionOz: billetDiameterWeightCorrectionOz,
+      count: billets.length,
+      billets,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message:
+        error instanceof Error ? error.message : 'Unknown game model billet match error.',
     })
   }
 })
@@ -588,12 +1042,67 @@ app.get('/api/catalog', async (_request, response) => {
       return
     }
 
-    const products = await listCatalogProducts()
+    const { products, cacheStatus } = await getCatalogProducts()
+    response.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
+    response.set('X-Trinity-Catalog-Cache', cacheStatus)
     response.json({ ok: true, products })
   } catch (error) {
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify catalog error.',
+    })
+  }
+})
+
+app.get(['/ai/shoply-bat-knowledge.md', '/api/shoply-bat-knowledge.md'], (_request, response) => {
+  response.set('Cache-Control', 'no-store')
+  response.set('X-Robots-Tag', 'noindex, nofollow')
+  response.status(404).type('text/plain').send('Not found.')
+})
+
+app.get('/api/shoply-bat-knowledge.json', (_request, response) => {
+  response.set('Cache-Control', 'no-store')
+  response.set('X-Robots-Tag', 'noindex, nofollow')
+  response.status(404).json({ ok: false, message: 'Not found.' })
+})
+
+app.get('/api/internal/shoply-bat-knowledge.md', requireInternalAccess, async (_request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).type('text/plain').send('Shopify credentials are not configured.')
+      return
+    }
+
+    const knowledge = await getShoplyBatKnowledge()
+    response.set('Cache-Control', 'no-store')
+    response.set('Content-Type', 'text/markdown; charset=utf-8')
+    response.set('X-Robots-Tag', 'noindex, nofollow')
+    response.send(renderShoplyBatKnowledgeMarkdown(knowledge))
+  } catch (error) {
+    response.status(500).type('text/plain').send(
+      error instanceof Error ? error.message : 'Unknown Shoply knowledge feed error.',
+    )
+  }
+})
+
+app.get('/api/internal/shoply-bat-knowledge.json', requireInternalAccess, async (_request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const knowledge = await getShoplyBatKnowledge()
+    response.set('Cache-Control', 'no-store')
+    response.set('X-Robots-Tag', 'noindex, nofollow')
+    response.json({ ok: true, ...knowledge })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown Shoply knowledge feed error.',
     })
   }
 })
@@ -609,40 +1118,100 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
     }
 
     const payload = request.body ?? {}
-    await ensureDefinitions()
+    const result = await enqueueStateWrite(async () => {
+      await ensureDefinitions()
 
-    await Promise.all([
-      upsertRecords(resourceConfigs.billets, payload.billets ?? []),
-      upsertRecords(resourceConfigs.players, payload.players ?? []),
-      upsertRecords(resourceConfigs.producedBats, payload.producedBats ?? []),
-      upsertRecords(resourceConfigs.customBatModels, payload.customBatModels ?? []),
-      upsertRecords(resourceConfigs.orderJobs, payload.orderJobs ?? [], {
-        deleteMissing: false,
-      }),
-      upsertRecords(resourceConfigs.billingContacts, payload.billingContacts ?? [], {
-        deleteMissing: false,
-      }),
-    ])
+      const currentState = await getSharedState()
+      const nextPlayers = mergeRecordsByKey(
+        currentState.players,
+        arrayFromPayload(payload.players),
+        (item) => item.id || `${item.profileKind}:${item.playerName}`,
+      )
+      const nextProducedBats = mergeRecordsByKey(
+        currentState.producedBats,
+        arrayFromPayload(payload.producedBats),
+        (item) => item.id || item.createdAt,
+      )
+      const nextCustomBatModels = mergeRecordsByKey(
+        currentState.customBatModels,
+        arrayFromPayload(payload.customBatModels),
+        (item) => item.id,
+      )
+      const nextOrderJobs = mergeRecordsByKey(
+        currentState.orderJobs,
+        arrayFromPayload(payload.orderJobs),
+        (item) => item.id,
+      )
+      const nextBillingContacts = mergeRecordsByKey(
+        currentState.billingContacts,
+        arrayFromPayload(payload.billingContacts),
+        (item) => item.id,
+      )
+      const nextCrmContacts = mergeRecordsByKey(
+        currentState.crmContacts,
+        getManualCrmContactRecords(payload.crmContacts),
+        (item) => item.id,
+      )
+      const nextBillets = reconcileBilletProductionStatuses(
+        mergeRecordsByKey(
+          currentState.billets,
+          arrayFromPayload(payload.billets),
+          (item) => item.barcode || item.id,
+        ),
+        nextProducedBats,
+      )
+      const nextState = {
+        ok: true,
+        billets: nextBillets,
+        players: nextPlayers,
+        producedBats: nextProducedBats,
+        customBatModels: nextCustomBatModels,
+        orderJobs: nextOrderJobs,
+        billingContacts: nextBillingContacts,
+        crmContacts: nextCrmContacts,
+      }
+      const patch = buildStatePatchFromStates(currentState, nextState)
+      const applied = await applyStatePatch(patch, { ensureDefinitions: false })
 
-    await syncOrderJobMetafields(payload.orderJobs ?? [])
-    primeStateCache({
-      ok: true,
-      billets: payload.billets ?? [],
-      players: payload.players ?? [],
-      producedBats: payload.producedBats ?? [],
-      customBatModels: payload.customBatModels ?? [],
-      orderJobs: payload.orderJobs ?? [],
-      billingContacts: payload.billingContacts ?? [],
+      primeStateCache(nextState)
+      return applied
     })
 
     response.json({
       ok: true,
       syncedAt: new Date().toISOString(),
+      mode: 'full-compat-diff',
+      applied: result.applied,
     })
   } catch (error) {
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify sync error.',
+    })
+  }
+})
+
+app.patch('/api/state', requireInternalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const result = await enqueueStateWrite(() => applyStatePatch(request.body ?? {}))
+    response.json({
+      ok: true,
+      syncedAt: new Date().toISOString(),
+      mode: 'delta',
+      applied: result.applied,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown Shopify delta sync error.',
     })
   }
 })
@@ -676,21 +1245,56 @@ app.post('/api/sales-orders', async (request, response) => {
     if (shouldCreateDraftOrder) {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
-      const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt)
-      await Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+      const payerInvoiceNotification = await trySendDraftOrderPayerInvoice(draftOrder, payload)
+      const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt).map(
+        (job) =>
+          payerInvoiceNotification.sentAt
+            ? {
+                ...job,
+                invoiceStatus: 'sent',
+              }
+            : job,
+      )
+      const [rememberedContacts] = await Promise.all([
+        rememberOrderJobContacts(jobs),
+        Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+      ])
       await syncOrderJobMetafields(jobs)
+      const internalOrderNotification = await trySendInternalOrderCopyNotification({
+        payload,
+        draftOrder,
+        orderSubmittedAt,
+        invoiceSent: Boolean(payerInvoiceNotification.sentAt),
+        invoiceRecipient: payerInvoiceNotification.recipient,
+        invoiceError: payerInvoiceNotification.error,
+      })
+      const salesRepEmail = normalizeEmail(payload.salesRepEmail)
 
       response.json({
         ok: true,
         draftOrder,
         invoiceSendToken: createDraftInvoiceSendToken(draftOrder, intakeId),
         invoiceSendTokenExpiresAt: new Date(Date.now() + invoiceSendTokenMaxAgeMs).toISOString(),
-        invoiceSent: false,
-        emailNotificationMethod: 'none',
-        draftInvoiceReadyForReview: Boolean(draftOrder?.invoiceUrl),
-        internalNotificationRecipients: [],
+        invoiceSent: Boolean(payerInvoiceNotification.sentAt),
+        emailNotificationMethod: payerInvoiceNotification.sentAt ? 'order_invoice' : 'none',
+        draftInvoiceReadyForReview: Boolean(draftOrder?.invoiceUrl) && !payerInvoiceNotification.sentAt,
+        internalNotificationRecipients: internalOrderNotification.recipients,
+        internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
+        internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
+        internalOrderNotificationError: internalOrderNotification.error,
+        payerNotificationSent: Boolean(payerInvoiceNotification.sentAt),
+        payerNotificationRecipient: payerInvoiceNotification.recipient,
+        payerNotificationError: payerInvoiceNotification.error,
+        salesRepSubmissionNotificationSent: Boolean(
+          salesRepEmail && internalOrderNotification.sentAt,
+        ),
+        salesRepSubmissionNotificationError: salesRepEmail
+          ? internalOrderNotification.error
+          : '',
         staffNotificationFlow: 'shopify_draft_order_review',
         orderJobs: jobs,
+        players: rememberedContacts.players,
+        billingContacts: rememberedContacts.billingContacts,
       })
       return
     }
@@ -708,8 +1312,21 @@ app.post('/api/sales-orders', async (request, response) => {
     }
 
     const jobs = mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt)
-    await Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+    const [rememberedContacts] = await Promise.all([
+      rememberOrderJobContacts(jobs),
+      Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+    ])
     await syncOrderJobMetafields(jobs)
+    const payerEmail = resolvePayer(payload).email
+    const internalOrderNotification = await trySendInternalOrderCopyNotification({
+      payload,
+      order,
+      orderSubmittedAt,
+      invoiceSent,
+      invoiceRecipient: payerEmail,
+      invoiceError: '',
+    })
+    const salesRepEmail = normalizeEmail(payload.salesRepEmail)
 
     response.json({
       ok: true,
@@ -721,9 +1338,21 @@ app.post('/api/sales-orders', async (request, response) => {
           ? 'order_receipt'
           : 'order_invoice'
         : 'none',
-      internalNotificationRecipients: internalOrderNotificationEmails,
+      internalNotificationRecipients: internalOrderNotification.recipients,
+      internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
+      internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
+      internalOrderNotificationError: internalOrderNotification.error,
+      payerNotificationRecipient: payerEmail,
+      salesRepSubmissionNotificationSent: Boolean(
+        salesRepEmail && internalOrderNotification.sentAt,
+      ),
+      salesRepSubmissionNotificationError: salesRepEmail
+        ? internalOrderNotification.error
+        : '',
       staffNotificationFlow: 'shopify_new_order',
       orderJobs: jobs,
+      players: rememberedContacts.players,
+      billingContacts: rememberedContacts.billingContacts,
     })
   } catch (error) {
     response.status(500).json({
@@ -814,14 +1443,19 @@ app.post('/api/orders/import', requireInternalAccess, async (request, response) 
     const orders = await listRecentOrders(first)
     const existingJobs = await listRecords(resourceConfigs.orderJobs)
     const jobs = orders.flatMap((order) => mapGraphQLOrderToJobs(order))
-    const mergedJobs = jobs.map((job) => mergeOrderJob(findMatchingOrderJob(existingJobs, job), job))
+    const mergedJobs = mergeIncomingOrderJobs(existingJobs, jobs)
 
-    await Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+    const [rememberedContacts] = await Promise.all([
+      rememberOrderJobContacts(mergedJobs),
+      Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+    ])
 
     response.json({
       ok: true,
       importedOrders: orders.length,
       orderJobs: mergedJobs,
+      players: rememberedContacts.players,
+      billingContacts: rememberedContacts.billingContacts,
     })
   } catch (error) {
     response.status(500).json({
@@ -867,6 +1501,15 @@ app.post('/api/webhooks/register', requireInternalAccess, async (request, respon
   }
 })
 
+app.get(publicSalesOrderFormPaths, serveAppShell)
+app.get(salesPortalPaths, serveAppShell)
+app.use('/assets', express.static(path.join(rootDir, 'dist', 'assets')))
+app.get(publicStaticAssetPaths, (request, response) => {
+  response.sendFile(path.join(rootDir, 'dist', path.basename(request.path)))
+})
+
+app.use(requireInternalAccess)
+
 app.use(
   express.static(path.join(rootDir, 'dist'), {
     setHeaders(response, filePath) {
@@ -878,13 +1521,17 @@ app.use(
 )
 
 app.get('/{*path}', (_request, response) => {
-  response.set('Cache-Control', 'no-store')
-  response.sendFile(path.join(rootDir, 'dist', 'index.html'))
+  serveAppShell(_request, response)
 })
 
 app.listen(port, () => {
   console.log(`Trinity billet server listening on http://127.0.0.1:${port}`)
 })
+
+function serveAppShell(_request, response) {
+  response.set('Cache-Control', 'no-store')
+  response.sendFile(path.join(rootDir, 'dist', 'index.html'))
+}
 
 function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
@@ -1179,6 +1826,410 @@ function isLocalRequest(request) {
   return ['localhost', '127.0.0.1', '::1'].includes(request.hostname)
 }
 
+function normalizeSalesPortalEmail(value) {
+  const email = normalizeEmail(value)
+  return email.endsWith('@trinitybats.com') ? email : ''
+}
+
+function getSalesPortalOwnerForEmail(email) {
+  const normalizedEmail = normalizeSalesPortalEmail(email)
+  if (!normalizedEmail) return null
+
+  return salesPortalTeamByEmail.get(normalizedEmail) ?? null
+}
+
+function normalizeSalesPortalOwnerName(value) {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function getSalesPortalOwnerAliases(owner) {
+  return [owner.name, owner.label, ...(owner.aliases ?? [])]
+    .map((value) => normalizeSalesPortalOwnerName(value))
+    .filter(Boolean)
+}
+
+function getSalesPortalOwnerForName(name) {
+  const normalizedName = normalizeSalesPortalOwnerName(name)
+  if (!normalizedName) return null
+
+  return (
+    salesPortalTeamMembers.find((owner) =>
+      getSalesPortalOwnerAliases(owner).includes(normalizedName),
+    ) ?? null
+  )
+}
+
+function getSalesPortalOwnerKey(name, email) {
+  const normalizedEmail = normalizeSalesPortalEmail(email)
+  const emailOwner = normalizedEmail ? getSalesPortalOwnerForEmail(normalizedEmail) : null
+  if (emailOwner) return emailOwner.key
+
+  const nameOwner = getSalesPortalOwnerForName(name)
+  if (nameOwner) return nameOwner.key
+
+  if (normalizedEmail) return normalizedEmail
+
+  const normalizedName = normalizeSalesPortalOwnerName(name)
+
+  return normalizedName || 'unassigned'
+}
+
+function buildSalesPortalSession(email, loggedInAt = new Date().toISOString()) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return null
+
+  return {
+    email: owner.email,
+    name: owner.name,
+    label: owner.label,
+    isAdmin: salesPortalAdminEmails.has(owner.email),
+    loggedInAt,
+  }
+}
+
+function createSalesPortalSessionToken(email) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return ''
+
+  const issuedAt = Date.now()
+  return createSalesPortalSignedPayload({
+    purpose: 'sales_portal_session',
+    email: owner.email,
+    iat: issuedAt,
+    exp: issuedAt + salesPortalSessionMaxAgeMs,
+  })
+}
+
+function getSalesPortalSession(request) {
+  const payload = verifySalesPortalSignedPayload(getCookie(request, salesPortalSessionCookieName))
+  if (payload?.purpose !== 'sales_portal_session') return null
+  if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
+  const loggedInAt =
+    typeof payload.iat === 'number' && payload.iat > 0
+      ? new Date(payload.iat).toISOString()
+      : new Date().toISOString()
+  return buildSalesPortalSession(payload.email, loggedInAt)
+}
+
+function getSalesPortalCookieOptions(request) {
+  return {
+    httpOnly: true,
+    secure: isSecureRequest(request),
+    sameSite: isSecureRequest(request) ? 'none' : 'lax',
+    maxAge: salesPortalSessionMaxAgeMs,
+    path: '/',
+  }
+}
+
+function requireSalesPortalAccess(request, response, next) {
+  const session = getSalesPortalSession(request)
+  if (session) {
+    request.salesPortalSession = session
+    next()
+    return
+  }
+
+  response.status(401).json({
+    ok: false,
+    message: 'Sales portal sign-in required.',
+  })
+}
+
+function requireSalesPortalAdminOrInternalAccess(request, response, next) {
+  const session = getSalesPortalSession(request)
+  if (session?.isAdmin) {
+    request.salesPortalSession = session
+    next()
+    return
+  }
+
+  requireInternalAccess(request, response, next)
+}
+
+function createSalesPortalLoginCode() {
+  return String(crypto.randomInt(100000, 1000000))
+}
+
+function createSalesPortalLoginCodeEntry(email) {
+  const code = createSalesPortalLoginCode()
+  const expiresAt = Date.now() + salesPortalLoginCodeMaxAgeMs
+  salesPortalLoginCodes.set(email, {
+    codeHash: hashSalesPortalLoginCode(email, code),
+    expiresAt,
+    attempts: 0,
+  })
+
+  return { code, expiresAt }
+}
+
+function createSalesPortalAccessCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let code = ''
+  for (let index = 0; index < 10; index += 1) {
+    code += alphabet[crypto.randomInt(0, alphabet.length)]
+  }
+
+  return `TRI-${code.slice(0, 5)}-${code.slice(5)}`
+}
+
+function normalizeSalesPortalAccessCode(value) {
+  return cleanString(value).toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function hashSalesPortalAccessCode(email, code) {
+  return crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(`${normalizeSalesPortalEmail(email)}:${normalizeSalesPortalAccessCode(code)}`)
+    .digest('base64url')
+}
+
+async function issueSalesPortalAccessCode(email) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) throw new Error('Choose an approved Trinity sales team member.')
+
+  await ensureDefinitions()
+  const now = new Date().toISOString()
+  const accessCode = createSalesPortalAccessCode()
+  const existing = (await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)) ?? {}
+  const user = {
+    ...existing,
+    id: owner.email,
+    email: owner.email,
+    name: owner.name,
+    role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+    status: 'active',
+    accessCodeHash: hashSalesPortalAccessCode(owner.email, accessCode),
+    accessCodeRotatedAt: now,
+    createdAt: cleanString(existing.createdAt) || now,
+    updatedAt: now,
+  }
+
+  await upsertRecord(resourceConfigs.salesPortalUsers, user)
+  return { accessCode, user }
+}
+
+async function verifySalesPortalAccessCode(email, code) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return false
+
+  await ensureDefinitions()
+  const user = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
+  const status = cleanString(user?.status).toLowerCase()
+  const codeHash = cleanString(user?.accessCodeHash)
+  if (status !== 'active' || !codeHash) return false
+
+  return safeEqual(codeHash, hashSalesPortalAccessCode(owner.email, code), 'utf8')
+}
+
+async function recordSalesPortalLogin(email) {
+  try {
+    if (!shopDomain || !adminToken) return
+    const owner = getSalesPortalOwnerForEmail(email)
+    if (!owner) return
+
+    await ensureDefinitions()
+    const existing = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
+    if (!existing?.accessCodeHash) return
+
+    const now = new Date().toISOString()
+    await upsertRecord(resourceConfigs.salesPortalUsers, {
+      ...existing,
+      id: owner.email,
+      email: owner.email,
+      name: owner.name,
+      role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+      status: cleanString(existing.status) || 'active',
+      lastLoginAt: now,
+      updatedAt: now,
+    })
+  } catch (error) {
+    console.warn(
+      `Unable to record sales portal login: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`,
+    )
+  }
+}
+
+function publicSalesPortalUser(user) {
+  if (!user) return null
+  return {
+    email: normalizeSalesPortalEmail(user.email),
+    name: cleanString(user.name),
+    role: cleanString(user.role),
+    status: cleanString(user.status),
+    accessCodeRotatedAt: cleanString(user.accessCodeRotatedAt),
+    lastLoginAt: cleanString(user.lastLoginAt),
+  }
+}
+
+function hashSalesPortalLoginCode(email, code) {
+  return crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(`${normalizeSalesPortalEmail(email)}:${cleanString(code)}`)
+    .digest('base64url')
+}
+
+function getSalesPortalSigningSecret() {
+  return internalSessionSecret || 'trinity-sales-portal-local-preview'
+}
+
+function createSalesPortalSignedPayload(payload) {
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64url')
+  const signature = crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(encodedPayload)
+    .digest('base64url')
+
+  return `${encodedPayload}.${signature}`
+}
+
+function verifySalesPortalSignedPayload(token) {
+  if (!token) return null
+
+  const [encodedPayload, signature] = token.split('.')
+  if (!encodedPayload || !signature) return null
+
+  const expectedSignature = crypto
+    .createHmac('sha256', getSalesPortalSigningSecret())
+    .update(encodedPayload)
+    .digest('base64url')
+  if (!safeEqual(expectedSignature, signature, 'utf8')) return null
+
+  try {
+    return JSON.parse(decodeBase64Url(encodedPayload))
+  } catch {
+    return null
+  }
+}
+
+async function sendSalesPortalLoginCodeEmail(email, code) {
+  await sendInternalEmail({
+    to: [email],
+    subject: 'Your Trinity sales portal sign-in code',
+    text: [
+      `Your Trinity sales portal sign-in code is ${code}.`,
+      '',
+      'This code expires in 10 minutes.',
+      'If you did not request it, you can ignore this email.',
+    ].join('\n'),
+  })
+}
+
+function isSalesPortalContactOwnedBy(contact, owner) {
+  if (!owner) return false
+  return getSalesPortalOwnerKey(contact?.salesOwner, contact?.ownerEmail) === owner.key
+}
+
+function isSalesPortalOrderJobOwnedBy(job, owner) {
+  if (!owner) return false
+  return getSalesPortalOwnerKey(job?.salesRep, job?.salesRepEmail) === owner.key
+}
+
+const manualCrmContactSourceLabels = new Set([
+  'manual crm entry',
+  'sales portal',
+  'sales portal demo',
+  'crm assistant',
+])
+const manualCrmContactTagLabels = new Set(['manual entry', 'ai captured'])
+
+function normalizeCrmContactLabel(value) {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+function getCrmContactTags(contact) {
+  return arrayFromPayload(contact?.tags).map((tag) => cleanString(tag)).filter(Boolean)
+}
+
+function isManualCrmContactRecord(contact) {
+  const source = normalizeCrmContactLabel(contact?.source)
+  if (manualCrmContactSourceLabels.has(source)) return true
+
+  return getCrmContactTags(contact).some((tag) =>
+    manualCrmContactTagLabels.has(normalizeCrmContactLabel(tag)),
+  )
+}
+
+function getManualCrmContactRecords(contacts) {
+  return arrayFromPayload(contacts).filter(isManualCrmContactRecord)
+}
+
+function getNonManualCrmContactDeleteIds(contacts) {
+  return arrayFromPayload(contacts)
+    .filter((contact) => !isManualCrmContactRecord(contact))
+    .map((contact) => cleanString(contact?.id))
+    .filter(Boolean)
+}
+
+function filterSalesPortalStateForSession(state, session) {
+  const internalOrderJobs = arrayFromPayload(state?.orderJobs).filter(
+    (job) => job?.origin === 'internal_sales',
+  )
+  const crmContacts = getManualCrmContactRecords(state?.crmContacts)
+
+  if (session?.isAdmin) {
+    return {
+      ok: true,
+      session,
+      crmContacts,
+      orderJobs: internalOrderJobs,
+      teamMembers: salesPortalTeamMembers,
+    }
+  }
+
+  const owner = getSalesPortalOwnerForEmail(session?.email)
+  return {
+    ok: true,
+    session,
+    crmContacts: crmContacts.filter((contact) => isSalesPortalContactOwnedBy(contact, owner)),
+    orderJobs: internalOrderJobs.filter((job) => isSalesPortalOrderJobOwnedBy(job, owner)),
+    teamMembers: salesPortalTeamMembers,
+  }
+}
+
+function prepareSalesPortalCrmContactForSession(contact, session) {
+  if (!contact || typeof contact !== 'object') return null
+  const sessionOwner = getSalesPortalOwnerForEmail(session?.email)
+  if (!sessionOwner) return null
+  const requestedOwner =
+    session?.isAdmin
+      ? getSalesPortalOwnerForEmail(contact.ownerEmail) ?? getSalesPortalOwnerForName(contact.salesOwner)
+      : sessionOwner
+  const owner = requestedOwner || sessionOwner
+  const now = new Date().toISOString()
+  const touchpoints = arrayFromPayload(contact.touchpoints).map((touchpoint) => {
+    const touchpointOwner = getSalesPortalOwnerForName(touchpoint?.salesRep)
+    return {
+      ...touchpoint,
+      salesRep: touchpointOwner?.name || cleanString(touchpoint?.salesRep) || owner.name,
+    }
+  })
+  const tags = Array.from(new Set([...getCrmContactTags(contact), 'Manual entry']))
+
+  return {
+    ...contact,
+    id: cleanString(contact.id) || createPlainId('crm-contact'),
+    salesOwner:
+      session?.isAdmin && !requestedOwner ? cleanString(contact.salesOwner) || owner.name : owner.name,
+    ownerEmail: session?.isAdmin
+      ? normalizeSalesPortalEmail(contact.ownerEmail) || owner.email
+      : owner.email,
+    source: 'Manual CRM entry',
+    tags,
+    touchpoints,
+    sandboxOnly: false,
+    updatedAt: cleanString(contact.updatedAt) || now,
+    createdAt: cleanString(contact.createdAt) || now,
+  }
+}
+
 function createDraftInvoiceSendToken(draftOrder, intakeId) {
   if (!internalSessionSecret || !draftOrder?.id || !intakeId) return ''
 
@@ -1269,6 +2320,454 @@ async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice =
   return updatedJobs
 }
 
+async function trySendDraftOrderPayerInvoice(draftOrder, payload) {
+  const emailInput = buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder)
+  if (!emailInput.to) return { sentAt: '', recipients: [], recipient: '', error: '' }
+
+  try {
+    await sendDraftOrderInvoice(draftOrder.id, emailInput)
+    return {
+      sentAt: new Date().toISOString(),
+      recipients: [emailInput.to],
+      recipient: emailInput.to,
+      error: '',
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown payer invoice error.'
+    console.error(`Draft payer invoice error: ${message}`)
+    return {
+      sentAt: '',
+      recipients: [],
+      recipient: emailInput.to,
+      error: message,
+    }
+  }
+}
+
+async function trySendInternalOrderCopyNotification({
+  payload,
+  draftOrder = null,
+  order = null,
+  orderSubmittedAt = new Date().toISOString(),
+  invoiceSent = false,
+  invoiceRecipient = '',
+  invoiceError = '',
+}) {
+  const recipients = buildInternalOrderCopyRecipients(payload)
+  if (recipients.length === 0) return { sentAt: '', recipients: [], error: '' }
+
+  try {
+    const subject = buildInternalOrderCopySubject({ draftOrder, order })
+    const text = buildInternalOrderCopyMessage({
+      payload,
+      draftOrder,
+      order,
+      orderSubmittedAt,
+      invoiceSent,
+      invoiceRecipient,
+      invoiceError,
+    })
+    const deliveryMethod = await sendInternalOrderCopyEmail({
+      draftOrder,
+      order,
+      recipients,
+      subject,
+      text,
+    })
+
+    return {
+      sentAt: new Date().toISOString(),
+      recipients,
+      deliveryMethod,
+      error: '',
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown internal email error.'
+    console.error(`Internal order copy email error: ${message}`)
+    return {
+      sentAt: '',
+      recipients,
+      deliveryMethod: '',
+      error: message,
+    }
+  }
+}
+
+function buildInternalOrderCopyRecipients(payload) {
+  return uniqueEmails(internalOrderNotificationEmails.concat(normalizeEmail(payload?.salesRepEmail)))
+}
+
+function buildInternalOrderCopySubject({ draftOrder = null, order = null }) {
+  const orderName = cleanString(draftOrder?.name || order?.name) || 'Trinity manual order'
+  return `${orderName} submitted from Trinity order form`
+}
+
+function buildInternalOrderCopyMessage({
+  payload,
+  draftOrder = null,
+  order = null,
+  orderSubmittedAt = '',
+  invoiceSent = false,
+  invoiceRecipient = '',
+  invoiceError = '',
+}) {
+  const payer = resolvePayer(payload)
+  const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const salesRep = cleanString(payload.salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
+  const shippingOption = resolveShippingOption(payload, requiresShippingForOrder(payload))
+  const orderName = cleanString(draftOrder?.name || order?.name)
+  const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
+  const orderLines = lines.map(formatInternalOrderLine).filter(Boolean)
+  const salesRepLine =
+    salesRep && salesRepEmail
+      ? `Sales rep: ${salesRep} <${salesRepEmail}>`
+      : salesRep || salesRepEmail
+        ? `Sales rep: ${salesRep || salesRepEmail}`
+        : ''
+
+  return [
+    'A Trinity manual order was submitted.',
+    orderName ? `Order: ${orderName}` : '',
+    orderSubmittedAt ? `Submitted: ${orderSubmittedAt}` : '',
+    invoiceSent ? `Customer invoice sent to: ${invoiceRecipient || payer.email}` : '',
+    !invoiceSent && invoiceError ? `Customer invoice error: ${invoiceError}` : '',
+    !invoiceSent && !invoiceError ? 'Customer invoice was not sent automatically.' : '',
+    invoiceUrl ? `Draft invoice link: ${invoiceUrl}` : '',
+    salesRepLine,
+    playerName ? `Player: ${playerName}` : '',
+    cleanString(payload.playerEmail) ? `Player email: ${cleanString(payload.playerEmail)}` : '',
+    cleanString(payload.playerPhone || payload.customerPhone)
+      ? `Player phone: ${cleanString(payload.playerPhone || payload.customerPhone)}`
+      : '',
+    payer.name ? `Payer: ${payer.name}` : '',
+    payer.email ? `Payer email: ${payer.email}` : '',
+    payer.phone ? `Payer phone: ${payer.phone}` : '',
+    payer.company ? `Team/agency: ${payer.company}` : '',
+    payer.relationship ? `Relationship: ${payer.relationship}` : '',
+    internalAttachment ? `Attachment: ${formatAttachmentLine(internalAttachment)}` : '',
+    shippingOption
+      ? `Shipping: ${shippingOption.label} (${shippingOption.title})`
+      : 'Shipping: Local delivery / no shipping required',
+    normalizeProductionTimeline(payload.productionTimeline) === 'rush'
+      ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
+      : 'Production timeline: Normal',
+    cleanString(payload.notes) ? `Internal notes: ${cleanString(payload.notes)}` : '',
+    orderLines.length > 0 ? `Order lines:\n${orderLines.join('\n')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function formatInternalOrderLine(line, index) {
+  const quantity = Number(line?.quantity || 1)
+  const details = [
+    cleanString(line?.length) ? `${cleanString(line.length)} in` : '',
+    cleanString(line?.targetWeight) ? `${cleanString(line.targetWeight)} oz` : '',
+    cleanString(line?.wood),
+    cleanString(line?.handleColor) ? `handle ${cleanString(line.handleColor)}` : '',
+    cleanString(line?.barrelColor) ? `barrel ${cleanString(line.barrelColor)}` : '',
+    cleanString(line?.logoColor) ? `logo ${cleanString(line.logoColor)}` : '',
+    cleanString(line?.engraving) ? `engraving ${cleanString(line.engraving)}` : '',
+    cleanString(line?.cupped),
+    cleanString(line?.notes) ? `notes: ${cleanString(line.notes)}` : '',
+  ].filter(Boolean)
+  const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+  const price = cleanString(line?.unitPrice) ? ` @ ${cleanString(line.unitPrice)}` : ''
+  const suffix = details.length > 0 ? ` (${details.join(', ')})` : ''
+  return `${Number.isFinite(index) ? `${index + 1}. ` : '- '}${quantity} x ${title}${price}${suffix}`
+}
+
+async function sendInternalEmail({ to, subject, text }) {
+  const recipients = uniqueEmails(to)
+  if (recipients.length === 0) return
+  if (!internalEmailProviderApiKey) {
+    throw new Error('Internal email provider is not configured. Set RESEND_API_KEY.')
+  }
+  if (!internalEmailFrom) {
+    throw new Error('Internal email sender is not configured. Set TRINITY_INTERNAL_EMAIL_FROM.')
+  }
+
+  const body = {
+    from: internalEmailFrom,
+    to: recipients,
+    subject,
+    text,
+    ...(internalEmailReplyTo ? { reply_to: internalEmailReplyTo } : {}),
+  }
+
+  const response = await fetch(internalEmailProviderUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${internalEmailProviderApiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    const errorBody = await response.text()
+    throw new Error(
+      `Internal email send failed (${response.status}): ${errorBody.slice(0, 500)}`,
+    )
+  }
+}
+
+async function sendInternalOrderCopyEmail({
+  draftOrder = null,
+  order = null,
+  recipients,
+  subject,
+  text,
+}) {
+  if (internalEmailProviderApiKey && internalEmailFrom) {
+    await sendInternalEmail({ to: recipients, subject, text })
+    return 'internal_email_provider'
+  }
+
+  if (draftOrder?.id) {
+    await sendShopifyInternalOrderCopies({
+      sendInvoice: (emailInput) => sendDraftOrderInvoice(draftOrder.id, emailInput),
+      recipients,
+      subject,
+      text,
+    })
+    return 'shopify_draft_order_email'
+  }
+
+  if (order?.id) {
+    await sendShopifyInternalOrderCopies({
+      sendInvoice: (emailInput) => sendOrderInvoice(order.id, emailInput),
+      recipients,
+      subject,
+      text,
+    })
+    return 'shopify_order_email'
+  }
+
+  throw new Error('No order was available for internal order-copy email.')
+}
+
+async function sendShopifyInternalOrderCopies({ sendInvoice, recipients, subject, text }) {
+  const uniqueRecipients = uniqueEmails(recipients)
+  const failures = []
+
+  for (const recipient of uniqueRecipients) {
+    try {
+      await sendInvoice({
+        to: recipient,
+        subject,
+        customMessage: text,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown Shopify email error.'
+      failures.push(`${recipient}: ${message}`)
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Internal Shopify copy email failures: ${failures.join('; ')}`)
+  }
+}
+
+async function uploadOrderAttachmentToShopifyFiles({ filename, contentType, buffer }) {
+  const cleanFilename = sanitizeAttachmentFilename(filename)
+  const cleanContentType = cleanString(contentType) || 'application/octet-stream'
+  const stagedTarget = await createShopifyStagedUploadTarget({
+    filename: cleanFilename,
+    contentType: cleanContentType,
+    bytes: buffer.length,
+  })
+  await uploadBufferToShopifyStagedTarget({
+    target: stagedTarget,
+    filename: cleanFilename,
+    contentType: cleanContentType,
+    buffer,
+  })
+  const shopifyFile = await createShopifyGenericFile({
+    filename: cleanFilename,
+    originalSource: stagedTarget.resourceUrl,
+  })
+
+  return normalizeOrderAttachment({
+    id: createPlainId('attachment'),
+    shopifyFileId: shopifyFile.id,
+    filename: cleanFilename,
+    downloadUrl: shopifyFile.url,
+    contentType: cleanContentType,
+    bytes: buffer.length,
+    uploadedAt: shopifyFile.createdAt || new Date().toISOString(),
+    fileStatus: shopifyFile.fileStatus,
+  })
+}
+
+async function createShopifyStagedUploadTarget({ filename, contentType, bytes }) {
+  const result = await shopifyGraphQL(
+    `
+      mutation CreateAttachmentUploadTarget($input: [StagedUploadInput!]!) {
+        stagedUploadsCreate(input: $input) {
+          stagedTargets {
+            url
+            resourceUrl
+            parameters {
+              name
+              value
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      input: [
+        {
+          filename,
+          mimeType: contentType,
+          httpMethod: 'POST',
+          resource: 'FILE',
+          fileSize: String(bytes),
+        },
+      ],
+    },
+  )
+
+  const errors = result?.data?.stagedUploadsCreate?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Attachment upload target error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+
+  const target = result?.data?.stagedUploadsCreate?.stagedTargets?.[0]
+  if (!target?.url || !target?.resourceUrl) {
+    throw new Error('Shopify did not return an attachment upload target.')
+  }
+
+  return target
+}
+
+async function uploadBufferToShopifyStagedTarget({ target, filename, contentType, buffer }) {
+  const formData = new FormData()
+  for (const parameter of target.parameters ?? []) {
+    formData.append(parameter.name, parameter.value)
+  }
+  formData.append('file', new Blob([buffer], { type: contentType }), filename)
+
+  const response = await fetch(target.url, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`Attachment upload failed (${response.status}): ${body.slice(0, 500)}`)
+  }
+}
+
+async function createShopifyGenericFile({ filename, originalSource }) {
+  const result = await shopifyGraphQL(
+    `
+      mutation CreateAttachmentFile($files: [FileCreateInput!]!) {
+        fileCreate(files: $files) {
+          files {
+            id
+            fileStatus
+            alt
+            createdAt
+            ... on GenericFile {
+              url
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      files: [
+        {
+          alt: `Trinity manual order attachment: ${filename}`,
+          contentType: 'FILE',
+          originalSource,
+          filename,
+        },
+      ],
+    },
+  )
+
+  const errors = result?.data?.fileCreate?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(`Attachment file create error: ${errors.map((item) => item.message).join(', ')}`)
+  }
+
+  const file = result?.data?.fileCreate?.files?.[0]
+  if (!file?.id || !file?.url) {
+    throw new Error('Shopify did not return an attachment file URL.')
+  }
+
+  return file
+}
+
+function normalizeOrderAttachment(attachment) {
+  if (!attachment || typeof attachment !== 'object') return null
+
+  const filename = sanitizeAttachmentFilename(attachment.filename)
+  const downloadUrl = cleanString(attachment.downloadUrl || attachment.url)
+  const shopifyFileId = cleanString(attachment.shopifyFileId || attachment.fileId)
+  if (!filename || !downloadUrl) return null
+
+  return {
+    id: cleanString(attachment.id) || createPlainId('attachment'),
+    shopifyFileId,
+    filename,
+    downloadUrl,
+    contentType: cleanString(attachment.contentType),
+    bytes: Number(attachment.bytes) || 0,
+    uploadedAt: cleanString(attachment.uploadedAt),
+    fileStatus: cleanString(attachment.fileStatus),
+  }
+}
+
+function normalizeOrderAttachmentFromAttributes(attributes) {
+  return normalizeOrderAttachment({
+    id: attributes.trinity_internal_attachment_id,
+    shopifyFileId: attributes.trinity_internal_attachment_file_id,
+    filename: attributes.trinity_internal_attachment_name,
+    downloadUrl: attributes.trinity_internal_attachment_url,
+    contentType: attributes.trinity_internal_attachment_type,
+    bytes: attributes.trinity_internal_attachment_bytes,
+  })
+}
+
+function formatAttachmentLine(attachment) {
+  const normalized = normalizeOrderAttachment(attachment)
+  if (!normalized) return ''
+  return `${normalized.filename}: ${normalized.downloadUrl}`
+}
+
+function sanitizeAttachmentFilename(filename) {
+  const parsed = path.parse(cleanString(filename) || 'attachment')
+  const basename = parsed.name.replace(/[^a-z0-9._ -]+/gi, ' ').replace(/\s+/g, ' ').trim()
+  const extension = parsed.ext.replace(/[^a-z0-9.]+/gi, '').slice(0, 16)
+  return `${basename || 'attachment'}${extension}`.slice(0, 140)
+}
+
+function decodeAttachmentHeader(value) {
+  const rawValue = cleanString(value)
+  if (!rawValue) return ''
+
+  try {
+    return decodeURIComponent(rawValue)
+  } catch {
+    return rawValue
+  }
+}
+
 function isMissingDraftInvoiceError(error) {
   return (
     error instanceof Error &&
@@ -1297,6 +2796,7 @@ function primeStateCache(value) {
   stateCacheValue = value
   stateCacheExpiresAt = Date.now() + stateCacheTtlMs
   stateCachePromise = null
+  writeStateCacheFile(value)
 }
 
 async function getSharedState() {
@@ -1316,7 +2816,391 @@ async function getSharedState() {
       })
   }
 
-  return stateCachePromise
+  try {
+    return await stateCachePromise
+  } catch (error) {
+    const fallback = getStateCacheFallback()
+    if (fallback) return fallback
+    throw error
+  }
+}
+
+function arrayFromPayload(value) {
+  return Array.isArray(value) ? value : []
+}
+
+function normalizeStateSnapshot(value) {
+  if (!value || typeof value !== 'object') return null
+
+  return {
+    ok: true,
+    billets: arrayFromPayload(value.billets),
+    players: arrayFromPayload(value.players),
+    producedBats: arrayFromPayload(value.producedBats),
+    customBatModels: arrayFromPayload(value.customBatModels),
+    orderJobs: arrayFromPayload(value.orderJobs),
+    billingContacts: arrayFromPayload(value.billingContacts),
+    crmContacts: getManualCrmContactRecords(value.crmContacts),
+  }
+}
+
+function writeStateCacheFile(value) {
+  try {
+    fs.mkdirSync(path.dirname(stateCacheFilePath), { recursive: true })
+    fs.writeFileSync(
+      stateCacheFilePath,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        value: normalizeStateSnapshot(value),
+      }),
+      'utf8',
+    )
+  } catch (error) {
+    console.warn(
+      `Unable to write Trinity state cache file: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    )
+  }
+}
+
+function readStateCacheFile() {
+  try {
+    if (!fs.existsSync(stateCacheFilePath)) return null
+    const payload = JSON.parse(fs.readFileSync(stateCacheFilePath, 'utf8'))
+    const savedAtMs = Date.parse(payload?.savedAt)
+    if (!Number.isFinite(savedAtMs) || Date.now() - savedAtMs > stateCacheStaleMaxAgeMs) {
+      return null
+    }
+
+    return normalizeStateSnapshot(payload?.value)
+  } catch (error) {
+    console.warn(
+      `Unable to read Trinity state cache file: ${
+        error instanceof Error ? error.message : 'unknown error'
+      }`,
+    )
+    return null
+  }
+}
+
+function getStateCacheFallback() {
+  if (
+    stateCacheValue &&
+    stateCacheExpiresAt > 0 &&
+    Date.now() - stateCacheExpiresAt <= stateCacheStaleMaxAgeMs
+  ) {
+    return normalizeStateSnapshot(stateCacheValue)
+  }
+
+  return readStateCacheFile()
+}
+
+function enqueueStateWrite(operation) {
+  const queued = stateWriteQueue.catch(() => undefined).then(operation)
+  stateWriteQueue = queued.catch(() => undefined)
+  return queued
+}
+
+function getStateResourcePatchConfigs() {
+  return [
+    {
+      key: 'billets',
+      config: resourceConfigs.billets,
+      getKey: (item) => item.barcode || item.id,
+    },
+    {
+      key: 'players',
+      config: resourceConfigs.players,
+      getKey: (item) => item.id || `${item.profileKind}:${item.playerName}`,
+    },
+    {
+      key: 'producedBats',
+      config: resourceConfigs.producedBats,
+      getKey: (item) => item.id || item.createdAt,
+    },
+    {
+      key: 'customBatModels',
+      config: resourceConfigs.customBatModels,
+      getKey: (item) => item.id,
+    },
+    {
+      key: 'orderJobs',
+      config: resourceConfigs.orderJobs,
+      getKey: (item) => item.id,
+    },
+    {
+      key: 'billingContacts',
+      config: resourceConfigs.billingContacts,
+      getKey: (item) => item.id,
+    },
+    {
+      key: 'crmContacts',
+      config: resourceConfigs.crmContacts,
+      getKey: (item) => item.id,
+    },
+  ]
+}
+
+function normalizeStatePatch(payload) {
+  const patch = Object.fromEntries(
+    getStateResourcePatchConfigs().map((entry) => [
+      entry.key,
+      arrayFromPayload(payload?.[entry.key]).filter(Boolean),
+    ]),
+  )
+  patch.crmContacts = getManualCrmContactRecords(patch.crmContacts)
+  patch.deletes = Object.fromEntries(
+    getStateResourcePatchConfigs().map((entry) => [
+      entry.key,
+      arrayFromPayload(payload?.deletes?.[entry.key])
+        .map((id) => cleanString(id))
+        .filter(Boolean),
+    ]),
+  )
+  patch.deletes.crmContacts = Array.from(
+    new Set([
+      ...arrayFromPayload(patch.deletes.crmContacts).map((id) => cleanString(id)).filter(Boolean),
+      ...getNonManualCrmContactDeleteIds(payload?.crmContacts),
+    ]),
+  )
+
+  return patch
+}
+
+function getChangedRecords(base, next, getKey) {
+  const baseRecords = new Map()
+  for (const item of arrayFromPayload(base)) {
+    const key = cleanString(getKey(item))
+    if (key) baseRecords.set(key, JSON.stringify(item))
+  }
+
+  return arrayFromPayload(next).filter((item) => {
+    const key = cleanString(getKey(item))
+    if (!key) return false
+    return baseRecords.get(key) !== JSON.stringify(item)
+  })
+}
+
+function buildStatePatchFromStates(baseState, nextState) {
+  const patch = {}
+  for (const entry of getStateResourcePatchConfigs()) {
+    const changedRecords = getChangedRecords(
+      baseState?.[entry.key],
+      nextState?.[entry.key],
+      entry.getKey,
+    )
+    if (changedRecords.length > 0) {
+      patch[entry.key] = changedRecords
+    }
+  }
+  const deletedCrmContactIds = getNonManualCrmContactDeleteIds(baseState?.crmContacts)
+  if (deletedCrmContactIds.length > 0) {
+    patch.deletes = {
+      ...(patch.deletes ?? {}),
+      crmContacts: deletedCrmContactIds,
+    }
+  }
+
+  return patch
+}
+
+function applyStatePatchToCachedState(state, patch) {
+  if (!state) return null
+
+  const nextState = {
+    ok: true,
+    billets: arrayFromPayload(state.billets),
+    players: arrayFromPayload(state.players),
+    producedBats: arrayFromPayload(state.producedBats),
+    customBatModels: arrayFromPayload(state.customBatModels),
+    orderJobs: arrayFromPayload(state.orderJobs),
+    billingContacts: arrayFromPayload(state.billingContacts),
+    crmContacts: arrayFromPayload(state.crmContacts),
+  }
+
+  for (const entry of getStateResourcePatchConfigs()) {
+    const items = arrayFromPayload(patch?.[entry.key])
+    const deletedIds = new Set(arrayFromPayload(patch?.deletes?.[entry.key]).map((id) => cleanString(id)))
+    if (deletedIds.size > 0) {
+      nextState[entry.key] = nextState[entry.key].filter((item) => {
+        const id = cleanString(item?.id)
+        const key = cleanString(entry.getKey(item))
+        return !deletedIds.has(id) && !deletedIds.has(key)
+      })
+    }
+    if (items.length === 0) continue
+    nextState[entry.key] = mergeRecordsByKey(nextState[entry.key], items, entry.getKey)
+  }
+  nextState.crmContacts = getManualCrmContactRecords(nextState.crmContacts)
+
+  return nextState
+}
+
+async function applyStatePatch(payload, options = {}) {
+  if (options.ensureDefinitions !== false) {
+    await ensureDefinitions()
+  }
+
+  const patch = normalizeStatePatch(payload)
+  if (patch.crmContacts.length > 0 || patch.deletes.crmContacts.length > 0) {
+    const staleCrmContactIds = getNonManualCrmContactDeleteIds(
+      await listRecords(resourceConfigs.crmContacts),
+    )
+    patch.deletes.crmContacts = Array.from(
+      new Set([...patch.deletes.crmContacts, ...staleCrmContactIds]),
+    )
+  }
+  const cachedStateBeforeWrite = stateCacheValue
+  const applied = {}
+
+  for (const entry of getStateResourcePatchConfigs()) {
+    const items = patch[entry.key]
+    const deletedIds = patch.deletes[entry.key]
+    applied[entry.key] = items.length
+    applied[`${entry.key}Deleted`] = deletedIds.length
+
+    for (const id of deletedIds) {
+      await deleteRecord(entry.config, id)
+    }
+
+    for (const item of items) {
+      await upsertRecord(entry.config, item)
+    }
+  }
+
+  if (patch.orderJobs.length > 0) {
+    await syncOrderJobMetafields(patch.orderJobs)
+  }
+
+  const patchedCache = applyStatePatchToCachedState(cachedStateBeforeWrite, patch)
+  const payloadSnapshot = normalizeStateSnapshot(payload?.stateSnapshot)
+  if (patchedCache) {
+    primeStateCache(patchedCache)
+  } else if (payloadSnapshot) {
+    primeStateCache(payloadSnapshot)
+  } else {
+    invalidateStateCache()
+  }
+
+  return { applied }
+}
+
+function mergeRecordsByKey(base, overrides, getKey) {
+  const merged = new Map()
+
+  for (const item of base) {
+    const key = cleanString(getKey(item))
+    if (key) merged.set(key, item)
+  }
+
+  for (const item of overrides) {
+    const key = cleanString(getKey(item))
+    if (key) merged.set(key, item)
+  }
+
+  return Array.from(merged.values())
+}
+
+function reconcileBilletProductionStatuses(billets, producedBats) {
+  const productionBilletIds = new Set(
+    producedBats.flatMap((record) => (Array.isArray(record.billetIds) ? record.billetIds : [])),
+  )
+
+  if (productionBilletIds.size === 0) return billets
+
+  return billets.map((billet) =>
+    productionBilletIds.has(billet.id)
+      ? {
+          ...billet,
+          status: 'production',
+        }
+      : billet,
+  )
+}
+
+function getGameModelBilletMatches(billets, { source, species, idealBilletWeight }) {
+  const normalizedSource = cleanString(source)
+  const normalizedSpecies = cleanString(species)
+  const targetWeight = Number(idealBilletWeight)
+  if (
+    !billetSourceOptions.has(normalizedSource) ||
+    !billetSpeciesOptions.has(normalizedSpecies) ||
+    !Number.isFinite(targetWeight)
+  ) {
+    return []
+  }
+
+  return arrayFromPayload(billets)
+    .map((billet) => {
+      const billetWeight = Number(billet?.weight)
+      const adjustedTargetWeight = getAdjustedTargetBilletWeight(
+        normalizedSource,
+        targetWeight,
+        cleanString(billet?.source),
+      )
+
+      return { billet, billetWeight, adjustedTargetWeight }
+    })
+    .filter(({ billet, billetWeight, adjustedTargetWeight }) => (
+      cleanString(billet?.status) === 'storage' &&
+      isTruthy(billet?.mlbEligible) &&
+      cleanString(billet?.hasBarrelKnot) !== 'Yes' &&
+      cleanString(billet?.species) === normalizedSpecies &&
+      Number.isFinite(billetWeight) &&
+      Math.abs(billetWeight - adjustedTargetWeight) <= 0.5
+    ))
+    .sort((a, b) => {
+      const aDifference = Math.abs(a.billetWeight - a.adjustedTargetWeight)
+      const bDifference = Math.abs(b.billetWeight - b.adjustedTargetWeight)
+      if (aDifference !== bDifference) return aDifference - bDifference
+      return cleanString(a.billet?.source).localeCompare(cleanString(b.billet?.source))
+    })
+    .map(({ billet }) => billet)
+}
+
+function getAdjustedTargetBilletWeight(referenceSource, idealWeight, candidateSource) {
+  const referenceIsOversized = oversizedBilletDiameterSources.has(referenceSource)
+  const candidateIsOversized = oversizedBilletDiameterSources.has(candidateSource)
+
+  if (referenceIsOversized === candidateIsOversized) return idealWeight
+  return referenceIsOversized
+    ? idealWeight - billetDiameterWeightCorrectionOz
+    : idealWeight + billetDiameterWeightCorrectionOz
+}
+
+function primeCatalogCache(products) {
+  catalogCacheValue = products
+  catalogCacheExpiresAt = Date.now() + catalogCacheTtlMs
+  catalogCachePromise = null
+}
+
+async function getCatalogProducts() {
+  const now = Date.now()
+  if (catalogCacheValue && catalogCacheExpiresAt > now) {
+    return { products: catalogCacheValue, cacheStatus: 'hit' }
+  }
+
+  if (!catalogCachePromise) {
+    catalogCachePromise = listCatalogProducts()
+      .then((products) => {
+        primeCatalogCache(products)
+        return { products, cacheStatus: 'refreshed' }
+      })
+      .finally(() => {
+        catalogCachePromise = null
+      })
+  }
+
+  try {
+    return await catalogCachePromise
+  } catch (error) {
+    if (catalogCacheValue) {
+      return { products: catalogCacheValue, cacheStatus: 'stale-fallback' }
+    }
+
+    throw error
+  }
 }
 
 async function loadSharedState() {
@@ -1327,6 +3211,7 @@ async function loadSharedState() {
   const customBatModels = await listRecords(resourceConfigs.customBatModels)
   const orderJobs = await listRecords(resourceConfigs.orderJobs)
   const billingContacts = await listRecords(resourceConfigs.billingContacts)
+  const crmContacts = getManualCrmContactRecords(await listRecords(resourceConfigs.crmContacts))
 
   return {
     ok: true,
@@ -1336,7 +3221,396 @@ async function loadSharedState() {
     customBatModels,
     orderJobs,
     billingContacts,
+    crmContacts,
   }
+}
+
+async function getShoplyBatKnowledge() {
+  const [state, catalog] = await Promise.all([loadShoplyKnowledgeState(), getCatalogProducts()])
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: {
+      shop: shopDomain,
+      access: 'private-internal-export',
+      purpose: 'Sanitized Trinity bat-selection knowledge export for an approved AI agent.',
+    },
+    usageRules: [
+      'Use this private export as fit and product-selection guidance, not as a public inventory promise.',
+      'Recommend only Trinity products, models, collections, or pages present in this export or the crawled Trinity storefront.',
+      'Ask concise qualifying questions before recommending a bat when player size, level, current bat, or intended use is missing.',
+      'Give one primary recommendation and one alternate when enough information is available.',
+      'Do not quote internal counts as guaranteed live stock, and route final custom-build decisions to a Trinity team member.',
+      'Do not mention customer names, orders, billet barcodes, billet locations, billing contacts, or internal sales details.',
+      'Do not publish this export to a public page or any unauthenticated crawler URL.',
+    ],
+    products: sanitizeShoplyProducts(catalog.products),
+    customModelGuidance: buildCustomModelGuidance(state.customBatModels),
+    producedBatGuidance: buildProducedBatGuidance(
+      state.producedBats,
+      state.customBatModels,
+      catalog.products,
+    ),
+    savedFitPatterns: buildSavedFitPatterns(state.players),
+    materialCapacity: buildMaterialCapacitySummary(state.billets),
+  }
+}
+
+async function loadShoplyKnowledgeState() {
+  await ensureDefinitions()
+  const [billets, players, producedBats, customBatModels] = await Promise.all([
+    listRecords(resourceConfigs.billets),
+    listRecords(resourceConfigs.players),
+    listRecords(resourceConfigs.producedBats),
+    listRecords(resourceConfigs.customBatModels),
+  ])
+
+  return {
+    billets,
+    players,
+    producedBats,
+    customBatModels,
+  }
+}
+
+function sanitizeShoplyProducts(products) {
+  return arrayFromPayload(products)
+    .filter((product) => cleanString(product.status).toUpperCase() !== 'DRAFT')
+    .map((product) => ({
+      name: cleanString(product.name),
+      category: cleanString(product.category) || 'Uncategorized',
+      url: cleanString(product.url),
+      tags: arrayFromPayload(product.tags).map(cleanString).filter(Boolean).slice(0, 12),
+      variants: arrayFromPayload(product.variants)
+        .map((variant) => ({
+          title: cleanString(variant.title),
+          price: cleanString(variant.price),
+          sku: cleanString(variant.sku),
+        }))
+        .filter((variant) => variant.title || variant.price || variant.sku)
+        .slice(0, 12),
+    }))
+    .filter((product) => product.name)
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function buildCustomModelGuidance(customBatModels) {
+  return arrayFromPayload(customBatModels)
+    .map((model) => ({
+      name: cleanString(model.name),
+      category: cleanString(model.category),
+      url: cleanString(model.url),
+      compatibility: formatModelCompatibilityForKnowledge(model.compatibility),
+    }))
+    .filter((model) => model.name)
+    .sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function buildProducedBatGuidance(producedBats, customBatModels, products) {
+  const productsById = new Map(arrayFromPayload(products).map((product) => [product.id, product]))
+  const modelsById = new Map(arrayFromPayload(customBatModels).map((model) => [model.id, model]))
+  const guidanceByKey = new Map()
+
+  for (const record of arrayFromPayload(producedBats)) {
+    const batType = cleanString(record.batType)
+    if (!batType || batType === 'Trophy') continue
+
+    const modelName = resolveKnowledgeModelName(record, modelsById, productsById)
+    const length = cleanString(record.length)
+    const finishedWeight = cleanString(record.weight)
+    const billetWeight = cleanString(record.billetWeight)
+    const billetGrade = cleanString(record.billetGrade)
+    const cupped = cleanString(record.cupped)
+
+    if (!modelName || (!length && !finishedWeight && !billetWeight && !billetGrade)) continue
+
+    const key = [modelName, batType, length, finishedWeight, billetWeight, billetGrade, cupped].join(
+      '|',
+    )
+    const existing = guidanceByKey.get(key)
+    guidanceByKey.set(key, {
+      model: modelName,
+      batType,
+      length,
+      finishedWeight,
+      billetWeight,
+      billetGrade,
+      cupped,
+      examples: (existing?.examples ?? 0) + 1,
+    })
+  }
+
+  return Array.from(guidanceByKey.values()).sort((left, right) =>
+    `${left.model} ${left.length}`.localeCompare(`${right.model} ${right.length}`),
+  )
+}
+
+function resolveKnowledgeModelName(record, modelsById, productsById) {
+  const shopifyProduct = productsById.get(cleanString(record.shopifyProductId))
+  if (shopifyProduct?.name) return cleanString(shopifyProduct.name)
+
+  const model =
+    modelsById.get(cleanString(record.modelId)) || modelsById.get(cleanString(record.sourceModelId))
+  if (model?.name) return cleanString(model.name)
+
+  if (cleanString(record.modelId)) return cleanString(record.modelId)
+  if (cleanString(record.sourceModelId)) return cleanString(record.sourceModelId)
+  if (cleanString(record.customModelName)) return 'Internal custom model'
+  return ''
+}
+
+function buildSavedFitPatterns(players) {
+  const patternsByKey = new Map()
+
+  for (const profile of arrayFromPayload(players)) {
+    for (const bat of arrayFromPayload(profile.bats)) {
+      const model = cleanString(bat.modelNumber)
+      const length = cleanString(bat.length)
+      const finishedWeight = cleanString(bat.weight)
+      const woodTier = cleanString(bat.woodTier)
+      const idealBilletWeight = cleanString(
+        bat.idealBilletWeight ?? bat.optimalBilletWeight ?? bat.billetWeight,
+      )
+
+      if (!model && !length && !finishedWeight && !woodTier && !idealBilletWeight) continue
+
+      const key = [model, length, finishedWeight, woodTier, idealBilletWeight].join('|')
+      const existing = patternsByKey.get(key)
+      patternsByKey.set(key, {
+        model,
+        length,
+        finishedWeight,
+        woodTier,
+        idealBilletWeight,
+        examples: (existing?.examples ?? 0) + 1,
+      })
+    }
+  }
+
+  return Array.from(patternsByKey.values()).sort((left, right) =>
+    `${left.model} ${left.length}`.localeCompare(`${right.model} ${right.length}`),
+  )
+}
+
+function buildMaterialCapacitySummary(billets) {
+  const groups = new Map()
+
+  for (const billet of arrayFromPayload(billets)) {
+    const status = cleanString(billet.status)
+    if (status && status !== 'storage') continue
+
+    const species = cleanString(billet.species) || 'Unknown species'
+    const grade = cleanString(billet.grade) || 'Unknown grade'
+    const mlbCapable = billet.mlbEligible ? 'MLB-capable' : 'non-MLB'
+    const weight = Number(billet.weight)
+    const weightBucket = getBilletWeightBucket(weight)
+    const key = [species, grade, mlbCapable, weightBucket].join('|')
+    const existing = groups.get(key) ?? {
+      species,
+      grade,
+      mlbCapable,
+      weightBucket,
+      count: 0,
+      minWeight: null,
+      maxWeight: null,
+    }
+
+    existing.count += 1
+    if (Number.isFinite(weight)) {
+      existing.minWeight =
+        existing.minWeight === null ? weight : Math.min(existing.minWeight, weight)
+      existing.maxWeight =
+        existing.maxWeight === null ? weight : Math.max(existing.maxWeight, weight)
+    }
+    groups.set(key, existing)
+  }
+
+  return Array.from(groups.values()).sort((left, right) =>
+    `${left.species} ${left.grade} ${left.weightBucket}`.localeCompare(
+      `${right.species} ${right.grade} ${right.weightBucket}`,
+    ),
+  )
+}
+
+function getBilletWeightBucket(weight) {
+  if (!Number.isFinite(weight)) return 'weight unknown'
+  if (weight < 85) return 'under 85 oz'
+  if (weight < 90) return '85-89 oz'
+  if (weight < 95) return '90-94 oz'
+  if (weight < 100) return '95-99 oz'
+  return '100+ oz'
+}
+
+function formatModelCompatibilityForKnowledge(compatibility = {}) {
+  if (!compatibility || typeof compatibility !== 'object') return ''
+
+  const weightRange = compatibility.billetWeightRange ?? {}
+  const min = Number(weightRange.minOz)
+  const max = Number(weightRange.maxOz)
+  const rangeParts = []
+  if (Number.isFinite(min)) rangeParts.push(`minimum billet weight ${min} oz`)
+  if (Number.isFinite(max)) rangeParts.push(`maximum billet weight ${max} oz`)
+
+  const species = Array.isArray(compatibility.species)
+    ? compatibility.species.map(cleanString).filter(Boolean).join(', ')
+    : cleanString(compatibility.species)
+  const speciesText = species ? `species ${species}` : ''
+  const dependencyText =
+    typeof compatibility.speciesDependent === 'boolean'
+      ? compatibility.speciesDependent
+        ? 'species-specific fit'
+        : 'species-flexible fit'
+      : ''
+
+  return [rangeParts.join(', '), speciesText, dependencyText].filter(Boolean).join('; ')
+}
+
+function renderShoplyBatKnowledgeMarkdown(knowledge) {
+  const lines = [
+    '# Trinity Bat Selector Private Knowledge Export',
+    '',
+    `Generated: ${knowledge.generatedAt}`,
+    `Shop: ${knowledge.source.shop}`,
+    `Access: ${knowledge.source.access}`,
+    '',
+    'This is a private sanitized export from the Trinity Billet Inventory system for an approved AI agent.',
+    'It intentionally excludes customer records, billing contacts, order details, billet barcodes, billet locations, and raw internal notes.',
+    'Do not publish this export to a public web page, storefront page, or unauthenticated crawler URL.',
+    '',
+    '## How The Agent Should Use This',
+    '',
+    ...knowledge.usageRules.map((rule) => `- ${singleLine(rule)}`),
+    '',
+    '## Bat Selection Baseline',
+    '',
+    '- Start by identifying intended use: game bat, training bat, trophy/display bat, team order, or gift.',
+    '- For game or training bats, ask for player age/level, height/weight, current bat length and weight, wood bat experience, preferred swing feel, and the biggest priority: durability, barrel size, control, power, or training use.',
+    '- Treat billet material as production-fit guidance. Finished bat weight is not the same as billet input weight.',
+    '- If a final build depends on inventory, model availability, or production judgment, ask the customer to confirm with Trinity.',
+    '',
+    '## Shopify Catalog Products',
+    '',
+    ...renderShoplyProducts(knowledge.products),
+    '',
+    '## Internal Model Compatibility Guidance',
+    '',
+    ...renderCustomModelGuidance(knowledge.customModelGuidance),
+    '',
+    '## Internal Produced-Bat Fit Examples',
+    '',
+    ...renderProducedBatGuidance(knowledge.producedBatGuidance),
+    '',
+    '## Anonymous Saved Fit Patterns',
+    '',
+    ...renderSavedFitPatterns(knowledge.savedFitPatterns),
+    '',
+    '## Sanitized Material Capacity Summary',
+    '',
+    'Use this only as internal fit context. Do not tell shoppers these are guaranteed live inventory counts.',
+    '',
+    ...renderMaterialCapacity(knowledge.materialCapacity),
+    '',
+  ]
+
+  return `${lines.join('\n')}\n`
+}
+
+function renderShoplyProducts(products) {
+  if (products.length === 0) return ['No catalog products are available in the feed.']
+
+  return products.flatMap((product) => {
+    const lines = [
+      `### ${singleLine(product.name)}`,
+      `- Category: ${singleLine(product.category)}`,
+    ]
+    if (product.url) lines.push(`- URL: ${singleLine(product.url)}`)
+    if (product.tags.length > 0) lines.push(`- Tags: ${product.tags.map(singleLine).join(', ')}`)
+    if (product.variants.length > 0) {
+      lines.push(
+        `- Variants: ${product.variants
+          .map((variant) =>
+            [variant.title, variant.price ? `$${variant.price}` : '', variant.sku]
+              .filter(Boolean)
+              .map(singleLine)
+              .join(' / '),
+          )
+          .filter(Boolean)
+          .join('; ')}`,
+      )
+    }
+    return [...lines, '']
+  })
+}
+
+function renderCustomModelGuidance(models) {
+  if (models.length === 0) return ['No custom model compatibility records are available.']
+
+  return models.flatMap((model) => {
+    const lines = [`- ${singleLine(model.name)}`]
+    if (model.category) lines.push(`  - Category: ${singleLine(model.category)}`)
+    if (model.url) lines.push(`  - URL: ${singleLine(model.url)}`)
+    if (model.compatibility) lines.push(`  - Compatibility: ${singleLine(model.compatibility)}`)
+    return lines
+  })
+}
+
+function renderProducedBatGuidance(records) {
+  if (records.length === 0) return ['No produced-bat fit examples are available.']
+
+  return records.map((record) => {
+    const details = [
+      record.batType,
+      record.length ? `${record.length} in` : '',
+      record.finishedWeight ? `${record.finishedWeight} oz finished` : '',
+      record.billetWeight ? `${record.billetWeight} oz billet` : '',
+      record.billetGrade ? `${record.billetGrade} billet grade` : '',
+      record.cupped ? `cupped: ${record.cupped}` : '',
+      record.examples > 1 ? `${record.examples} examples` : '',
+    ]
+      .filter(Boolean)
+      .map(singleLine)
+      .join('; ')
+
+    return `- ${singleLine(record.model)}: ${details}`
+  })
+}
+
+function renderSavedFitPatterns(patterns) {
+  if (patterns.length === 0) return ['No anonymous saved fit patterns are available.']
+
+  return patterns.map((pattern) => {
+    const details = [
+      pattern.length ? `${pattern.length} in` : '',
+      pattern.finishedWeight ? `${pattern.finishedWeight} oz finished` : '',
+      pattern.woodTier ? `${pattern.woodTier} wood tier` : '',
+      pattern.idealBilletWeight ? `${pattern.idealBilletWeight} oz ideal billet` : '',
+      pattern.examples > 1 ? `${pattern.examples} examples` : '',
+    ]
+      .filter(Boolean)
+      .map(singleLine)
+      .join('; ')
+
+    return `- ${singleLine(pattern.model || 'Saved fit pattern')}: ${details}`
+  })
+}
+
+function renderMaterialCapacity(capacity) {
+  if (capacity.length === 0) return ['No storage billet material summary is available.']
+
+  return capacity.map((item) => {
+    const range =
+      item.minWeight === null
+        ? item.weightBucket
+        : `${item.weightBucket}; observed ${item.minWeight}-${item.maxWeight} oz`
+
+    return `- ${singleLine(item.species)} / ${singleLine(item.grade)} / ${singleLine(
+      item.mlbCapable,
+    )} / ${singleLine(range)}: ${item.count} available material record${item.count === 1 ? '' : 's'}`
+  })
+}
+
+function singleLine(value) {
+  return cleanString(value).replace(/\s+/g, ' ')
 }
 
 async function ensureDefinitionsInternal() {
@@ -1559,6 +3833,56 @@ async function upsertRecord(config, item) {
   return handle
 }
 
+async function deleteRecord(config, id) {
+  const handle = sanitizeHandle(id)
+  if (!handle) return false
+
+  const existing = await shopifyGraphQL(
+    `
+      query MetaobjectIdByHandle($handle: MetaobjectHandleInput!) {
+        metaobjectByHandle(handle: $handle) {
+          id
+        }
+      }
+    `,
+    {
+      handle: {
+        type: config.type,
+        handle,
+      },
+    },
+  )
+  const metaobjectId = existing?.data?.metaobjectByHandle?.id
+  if (!metaobjectId) return false
+
+  const result = await shopifyGraphQL(
+    `
+      mutation DeleteMetaobject($id: ID!) {
+        metaobjectDelete(id: $id) {
+          deletedId
+          userErrors {
+            field
+            message
+            code
+          }
+        }
+      }
+    `,
+    { id: metaobjectId },
+  )
+  const errors = result?.data?.metaobjectDelete?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(
+      `Metaobject delete error for ${config.type}/${handle}: ${errors
+        .map((item) => item.message)
+        .join(', ')}`,
+    )
+  }
+
+  invalidateStateCache()
+  return true
+}
+
 async function getDefinitionByType(type) {
   const result = await shopifyGraphQL(
     `
@@ -1632,7 +3956,10 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
 
   if (!response.ok) {
     const body = await response.text()
-    if ([429, 500, 502, 503, 504].includes(response.status) && attempt < 10) {
+    if (
+      [429, 500, 502, 503, 504].includes(response.status) &&
+      attempt < shopifyGraphqlMaxAttempts - 1
+    ) {
       const retryAfterSeconds = Number(response.headers.get('retry-after'))
       const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0
       await sleep(Math.max(retryAfterMs, getRetryDelayMs(attempt)))
@@ -1644,7 +3971,7 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
   const payload = await response.json()
   if (payload.errors?.length) {
     const shouldRetry = payload.errors.some((item) => isRetryableShopifyError(item))
-    if (shouldRetry && attempt < 10) {
+    if (shouldRetry && attempt < shopifyGraphqlMaxAttempts - 1) {
       await sleep(getShopifyGraphQLRetryDelayMs(payload, attempt))
       return shopifyGraphQL(query, variables, attempt + 1)
     }
@@ -1659,7 +3986,7 @@ async function runWithShopifyRetry(operation, attempt = 0) {
   try {
     return await operation()
   } catch (error) {
-    if (isRetryableShopifyError(error) && attempt < 10) {
+    if (isRetryableShopifyError(error) && attempt < shopifyGraphqlMaxAttempts - 1) {
       await sleep(getRetryDelayMs(attempt))
       return runWithShopifyRetry(operation, attempt + 1)
     }
@@ -1698,7 +4025,7 @@ function getShopifyGraphQLRetryDelayMs(payload, attempt) {
     restoreRate > 0
   ) {
     const deficit = Math.max(0, requestedCost - available)
-    return Math.max(750, Math.ceil((deficit / restoreRate) * 1000) + 500)
+    return Math.max(1500, Math.ceil((deficit / restoreRate) * 1000) + 750)
   }
 
   return getRetryDelayMs(attempt)
@@ -1924,6 +4251,30 @@ async function createPendingOrder(order, options = {}) {
                 id
                 title
                 quantity
+                originalUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                originalTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
                 variant {
                   id
                   title
@@ -2005,6 +4356,30 @@ async function completeDraftOrderAsPending(draftOrderId) {
                   id
                   title
                   quantity
+                  originalUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  discountedUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  originalTotalSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                  discountedTotalSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
                   variant {
                     id
                     title
@@ -2126,6 +4501,30 @@ async function listRecentOrders(first) {
                 id
                 title
                 quantity
+                originalUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedUnitPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                originalTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+                discountedTotalSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
                 variant {
                   id
                   title
@@ -2210,6 +4609,17 @@ async function syncOrderJobMetafields(orderJobs) {
       orderMetafield(ownerId, 'assigned_billet', job.assignedBilletId),
       orderMetafield(ownerId, 'order_submitted_at', job.orderSubmittedAt),
       orderMetafield(ownerId, 'sales_rep', job.salesRep),
+      orderMetafield(ownerId, 'sales_rep_email', job.salesRepEmail),
+      orderMetafield(
+        ownerId,
+        'sales_rep_submission_notification_sent_at',
+        job.salesRepSubmissionNotificationSentAt,
+      ),
+      orderMetafield(
+        ownerId,
+        'sales_rep_paid_notification_sent_at',
+        job.salesRepPaidNotificationSentAt,
+      ),
       orderMetafield(ownerId, 'player_name', job.playerName),
       orderMetafield(ownerId, 'player_email', job.playerEmail),
       orderMetafield(ownerId, 'billing_name', job.billingName),
@@ -2217,6 +4627,15 @@ async function syncOrderJobMetafields(orderJobs) {
       orderMetafield(ownerId, 'billing_phone', job.billingPhone),
       orderMetafield(ownerId, 'billing_company', job.billingCompany),
       orderMetafield(ownerId, 'billing_relationship', job.billingRelationship),
+      job.internalAttachment
+        ? {
+            namespace: 'trinity',
+            key: 'internal_attachment',
+            ownerId,
+            type: 'json',
+            value: JSON.stringify(job.internalAttachment),
+          }
+        : null,
       {
         namespace: 'trinity',
         key: 'specs',
@@ -2224,7 +4643,7 @@ async function syncOrderJobMetafields(orderJobs) {
         type: 'json',
         value: JSON.stringify(job.specs ?? {}),
       },
-    ].filter((field) => field.value !== undefined && field.value !== null && field.value !== '')
+    ].filter((field) => field && field.value !== undefined && field.value !== null && field.value !== '')
 
     if (metafields.length === 0) continue
 
@@ -2897,26 +5316,12 @@ function resolvePayer(payload) {
 }
 
 function buildDirectOrderAddresses(payload) {
-  if (isTruthy(payload.billingDifferent)) {
-    return {
-      shippingAddress: null,
-      billingAddress: null,
-      billingAddressDifferent: false,
-    }
-  }
-
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const shippingAddress = buildMailingAddressInput(payload, 'shipping', playerName, playerPhone)
-  const billingAddressDifferent = isTruthy(payload.billingAddressDifferent)
-  const billingAddress = billingAddressDifferent
-    ? buildMailingAddressInput(payload, 'billing', playerName, playerPhone)
-    : shippingAddress
 
   return {
     shippingAddress,
-    billingAddress,
-    billingAddressDifferent,
   }
 }
 
@@ -2969,7 +5374,7 @@ function formatMailingAddress(address) {
 
 function validateSalesOrderPayload(payload) {
   const playerName = cleanString(payload?.playerName || payload?.customerName)
-  const billingDifferent = isTruthy(payload?.billingDifferent)
+  const salesRepEmail = normalizeEmail(payload?.salesRepEmail)
   const payer = resolvePayer(payload ?? {})
   const requiresShipping = requiresShippingForOrder(payload ?? {})
   const lines = Array.isArray(payload?.lines) ? payload.lines : []
@@ -2977,29 +5382,20 @@ function validateSalesOrderPayload(payload) {
   if (!playerName) return 'Player name is required.'
   if (!payer.email) return 'Payer email is required.'
   if (!isPlausibleEmail(payer.email)) return 'Payer email must be a valid email address.'
+  if (cleanString(payload?.salesRepEmail) && !salesRepEmail) {
+    return 'Sales rep email must be a valid email address.'
+  }
 
-  if (!billingDifferent) {
-    if (!payer.phone) return 'Player phone is required for direct-bill orders.'
+  if (!payer.phone) return 'Payer phone is required.'
 
-    if (requiresShipping) {
-      const missingShippingAddress =
-        !cleanString(payload?.shippingAddress1) ||
-        !cleanString(payload?.shippingCity) ||
-        !cleanString(payload?.shippingProvinceCode) ||
-        !cleanString(payload?.shippingZip) ||
-        !cleanString(payload?.shippingCountryCode)
-      if (missingShippingAddress) return 'Shipping address is required for direct-bill orders.'
-
-      if (isTruthy(payload?.billingAddressDifferent)) {
-        const missingBillingAddress =
-          !cleanString(payload?.billingAddress1) ||
-          !cleanString(payload?.billingCity) ||
-          !cleanString(payload?.billingProvinceCode) ||
-          !cleanString(payload?.billingZip) ||
-          !cleanString(payload?.billingCountryCode)
-        if (missingBillingAddress) return 'Billing address is required when it differs from shipping.'
-      }
-    }
+  if (requiresShipping) {
+    const missingShippingAddress =
+      !cleanString(payload?.shippingAddress1) ||
+      !cleanString(payload?.shippingCity) ||
+      !cleanString(payload?.shippingProvinceCode) ||
+      !cleanString(payload?.shippingZip) ||
+      !cleanString(payload?.shippingCountryCode)
+    if (missingShippingAddress) return 'Shipping address is required for shipped orders.'
   }
 
   if (lines.length === 0) return 'At least one order line is required.'
@@ -3049,6 +5445,179 @@ function isZeroDollarSalesOrder(payload) {
   return Math.abs(total) < 0.005
 }
 
+function normalizePersonKey(value) {
+  return cleanString(value).toLowerCase().replace(/\s+/g, ' ')
+}
+
+function normalizeEmailKey(value) {
+  return cleanString(value).toLowerCase()
+}
+
+function normalizePhoneKey(value) {
+  return cleanString(value).replace(/\D/g, '')
+}
+
+function createStablePeopleRecordId(prefix, ...parts) {
+  const slug = sanitizeHandle(parts.map((part) => cleanString(part)).filter(Boolean).join('-'))
+  return slug ? `${prefix}-${slug}` : createPlainId(prefix)
+}
+
+function buildRememberedPlayerFromJob(job) {
+  if (job?.origin !== 'internal_sales') return null
+
+  const playerName = cleanString(job?.playerName || job?.customerName)
+  if (!playerName) return null
+
+  return {
+    id: createStablePeopleRecordId('player', playerName),
+    profileKind: 'Player',
+    playerName,
+    bats: [],
+  }
+}
+
+function buildRememberedBillingContactFromJob(job) {
+  const billingDifferent = isTruthy(job?.billingDifferent)
+  const name = cleanString(job?.billingName || job?.customerName || job?.playerName || job?.billingEmail)
+  const email = cleanString(job?.billingEmail || job?.customerEmail || job?.playerEmail)
+  const phone = cleanString(job?.billingPhone)
+  const company = cleanString(job?.billingCompany)
+  const relationship =
+    cleanString(job?.billingRelationship) || (billingDifferent ? '' : 'Direct customer')
+
+  if (!name && !email && !phone && !company) return null
+
+  const playerName = cleanString(job?.playerName)
+  const orderName = cleanString(job?.shopifyOrderName || job?.shopifyDraftOrderName)
+  const orderSubmittedAt = cleanString(job?.orderSubmittedAt || job?.createdAt)
+  const notes = [
+    orderSubmittedAt ? `Last invoice/order: ${orderSubmittedAt}` : '',
+    orderName ? `Shopify order: ${orderName}` : '',
+    playerName && normalizePersonKey(playerName) !== normalizePersonKey(name)
+      ? `Player: ${playerName}`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return {
+    id: createStablePeopleRecordId('billing-contact', email || phone || name, company),
+    name: name || email || phone,
+    email,
+    phone,
+    company,
+    relationship,
+    notes,
+  }
+}
+
+function getBillingContactDedupeKey(contact) {
+  const email = normalizeEmailKey(contact?.email)
+  if (email) return `email:${email}`
+
+  const phone = normalizePhoneKey(contact?.phone)
+  if (phone) return `phone:${phone}`
+
+  const name = normalizePersonKey(contact?.name)
+  const company = normalizePersonKey(contact?.company)
+  return [name, company].filter(Boolean).join('|')
+}
+
+function findExistingPlayerProfile(existingPlayers, incomingPlayer) {
+  const playerKey = normalizePersonKey(incomingPlayer?.playerName)
+  if (!playerKey) return null
+
+  return existingPlayers.find((player) => normalizePersonKey(player?.playerName) === playerKey) ?? null
+}
+
+function findExistingBillingContact(existingContacts, incomingContact) {
+  const incomingEmail = normalizeEmailKey(incomingContact?.email)
+  if (incomingEmail) {
+    const match = existingContacts.find((contact) => normalizeEmailKey(contact?.email) === incomingEmail)
+    if (match) return match
+  }
+
+  const incomingPhone = normalizePhoneKey(incomingContact?.phone)
+  if (incomingPhone) {
+    const match = existingContacts.find((contact) => normalizePhoneKey(contact?.phone) === incomingPhone)
+    if (match) return match
+  }
+
+  const incomingName = normalizePersonKey(incomingContact?.name)
+  const incomingCompany = normalizePersonKey(incomingContact?.company)
+  if (!incomingName && !incomingCompany) return null
+
+  return (
+    existingContacts.find((contact) => {
+      const contactName = normalizePersonKey(contact?.name)
+      const contactCompany = normalizePersonKey(contact?.company)
+      return contactName === incomingName && contactCompany === incomingCompany
+    }) ?? null
+  )
+}
+
+function mergeRememberedPlayer(existingPlayer, incomingPlayer) {
+  return {
+    id: cleanString(existingPlayer?.id) || incomingPlayer.id,
+    profileKind: cleanString(existingPlayer?.profileKind) || incomingPlayer.profileKind,
+    playerName: cleanString(existingPlayer?.playerName) || incomingPlayer.playerName,
+    bats: Array.isArray(existingPlayer?.bats) ? existingPlayer.bats : incomingPlayer.bats,
+  }
+}
+
+function mergeRememberedBillingContact(existingContact, incomingContact) {
+  return {
+    id: cleanString(existingContact?.id) || incomingContact.id,
+    name: cleanString(existingContact?.name) || incomingContact.name,
+    email: cleanString(existingContact?.email) || incomingContact.email,
+    phone: cleanString(existingContact?.phone) || incomingContact.phone,
+    company: cleanString(existingContact?.company) || incomingContact.company,
+    relationship: cleanString(existingContact?.relationship) || incomingContact.relationship,
+    notes: cleanString(existingContact?.notes) || incomingContact.notes,
+  }
+}
+
+async function rememberOrderJobContacts(jobs) {
+  const jobList = Array.isArray(jobs) ? jobs : []
+  const playerDrafts = mergeRecordsByKey(
+    [],
+    jobList.map((job) => buildRememberedPlayerFromJob(job)).filter(Boolean),
+    (player) => normalizePersonKey(player.playerName),
+  )
+  const billingContactDrafts = mergeRecordsByKey(
+    [],
+    jobList.map((job) => buildRememberedBillingContactFromJob(job)).filter(Boolean),
+    (contact) => getBillingContactDedupeKey(contact),
+  )
+
+  if (playerDrafts.length === 0 && billingContactDrafts.length === 0) {
+    return { players: [], billingContacts: [] }
+  }
+
+  const [existingPlayers, existingBillingContacts] = await Promise.all([
+    playerDrafts.length > 0 ? listRecords(resourceConfigs.players) : Promise.resolve([]),
+    billingContactDrafts.length > 0
+      ? listRecords(resourceConfigs.billingContacts)
+      : Promise.resolve([]),
+  ])
+
+  const players = playerDrafts.map((player) =>
+    mergeRememberedPlayer(findExistingPlayerProfile(existingPlayers, player), player),
+  )
+  const billingContacts = billingContactDrafts.map((contact) =>
+    mergeRememberedBillingContact(findExistingBillingContact(existingBillingContacts, contact), contact),
+  )
+
+  await Promise.all([
+    Promise.all(players.map((player) => upsertRecord(resourceConfigs.players, player))),
+    Promise.all(
+      billingContacts.map((contact) => upsertRecord(resourceConfigs.billingContacts, contact)),
+    ),
+  ])
+
+  return { players, billingContacts }
+}
+
 function formatSalesLineShopifyTitle(line, isProOrder) {
   const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
   if (!isProOrder) return title
@@ -3088,16 +5657,38 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const emailInput = {
     to: payer.email,
     subject: isZeroDollarOrder
-      ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Sports Group`
-      : `${order?.name ?? 'Shopify order'} invoice from Trinity Sports Group`,
+            ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Sports Group`
+          : `${order?.name ?? 'Shopify order'} invoice from Trinity Sports Group`,
     customMessage,
   }
 
-  if (internalOrderNotificationEmails.length > 0) {
-    emailInput.bcc = internalOrderNotificationEmails
-  }
-
   return emailInput
+}
+
+function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
+  const payer = resolvePayer(payload)
+  const playerName = cleanString(payload.playerName || payload.customerName)
+  const billingCompany = cleanString(payload.billingCompany)
+  const lineSummary = summarizeSalesOrderLines(payload.lines)
+  const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
+  const customMessage = [
+    'A Trinity Bat Company invoice has been created for your order.',
+    invoiceUrl
+      ? `If the payment button does not open correctly, use this secure invoice link: ${invoiceUrl}`
+      : '',
+    playerName ? `Player: ${playerName}` : '',
+    billingCompany ? `Team/agency: ${billingCompany}` : '',
+    lineSummary ? `Order lines: ${lineSummary}` : '',
+    cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  return {
+    to: payer.email,
+    subject: `${draftOrder?.name ?? 'Shopify order'} Draft Order Submitted`,
+    customMessage,
+  }
 }
 
 function buildDraftOrderInvoiceEmailInput(jobs) {
@@ -3128,18 +5719,28 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
   if (recipientEmail) {
     emailInput.to = recipientEmail
   }
-  if (internalOrderNotificationEmails.length > 0) {
-    emailInput.bcc = internalOrderNotificationEmails
-  }
 
   return emailInput
+}
+
+function summarizeSalesOrderLines(lines) {
+  return lines
+    .map((line) => {
+      const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+      const quantity = Number(line?.quantity || 1)
+      return `${quantity} x ${title}`
+    })
+    .filter(Boolean)
+    .join(', ')
 }
 
 function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const salesRep = cleanString(payload.salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
+  const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
   const shippingOption = resolveShippingOption(payload, requiresShipping)
@@ -3149,17 +5750,13 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const proOrderNotificationLabel = hasProOrder
     ? buildProOrderNotificationLabel(payload, payer)
     : ''
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
-  const billingAddress = directAddresses.billingAddress
-  const billingAddressDifferent = requiresShipping
-    ? directAddresses.billingAddressDifferent
-    : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
-  const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
@@ -3171,17 +5768,15 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
-    !billingDifferent && payer.phone ? `Player phone: ${payer.phone}` : '',
+    playerPhone ? `Player phone: ${playerPhone}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
-    billingAddressDifferent ? 'Billing address differs from shipping address' : '',
-    billingAddressDifferent && formattedBillingAddress
-      ? `Billing address: ${formattedBillingAddress}`
-      : '',
     billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
+    internalAttachment ? `Internal attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
+    salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
   ]
     .filter(Boolean)
@@ -3200,7 +5795,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         }
       : {}),
     ...(shippingAddress ? { shippingAddress } : {}),
-    ...(billingAddress ? { billingAddress } : {}),
     ...(shippingLine ? { shippingLines: [shippingLine] } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
@@ -3226,18 +5820,25 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         : '',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
+      trinity_sales_rep_email: salesRepEmail,
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
-      trinity_player_phone: !billingDifferent ? payer.phone : '',
+      trinity_player_phone: playerPhone,
       trinity_shipping_address: formattedShippingAddress,
-      trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
-      trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
       trinity_billing_different: billingDifferent ? 'true' : '',
       trinity_billing_name: payer.name,
       trinity_billing_email: payer.email,
       trinity_billing_phone: payer.phone,
       trinity_billing_company: payer.company,
       trinity_billing_relationship: payer.relationship,
+      trinity_internal_attachment_id: internalAttachment?.id ?? '',
+      trinity_internal_attachment_file_id: internalAttachment?.shopifyFileId ?? '',
+      trinity_internal_attachment_name: internalAttachment?.filename ?? '',
+      trinity_internal_attachment_url: internalAttachment?.downloadUrl ?? '',
+      trinity_internal_attachment_type: internalAttachment?.contentType ?? '',
+      trinity_internal_attachment_bytes: internalAttachment?.bytes
+        ? String(internalAttachment.bytes)
+        : '',
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines
@@ -3256,6 +5857,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
           trinity_wood: line.wood,
           trinity_handle_color: line.handleColor,
           trinity_barrel_color: line.barrelColor,
+          trinity_band_color: line.bandColor,
           trinity_logo_color: line.logoColor,
           trinity_engraving: line.engraving,
           trinity_cupped: line.cupped,
@@ -3281,8 +5883,10 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
 function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const salesRep = cleanString(payload.salesRep)
+  const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
+  const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
   const shippingOption = resolveShippingOption(payload, requiresShipping)
@@ -3292,14 +5896,10 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
-  const billingAddress = directAddresses.billingAddress
-  const billingAddressDifferent = requiresShipping
-    ? directAddresses.billingAddressDifferent
-    : false
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
-  const formattedBillingAddress = formatMailingAddress(billingAddress)
   const note = [
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
@@ -3311,17 +5911,15 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
-    !billingDifferent && payer.phone ? `Player phone: ${payer.phone}` : '',
+    playerPhone ? `Player phone: ${playerPhone}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
-    billingAddressDifferent ? 'Billing address differs from shipping address' : '',
-    billingAddressDifferent && formattedBillingAddress
-      ? `Billing address: ${formattedBillingAddress}`
-      : '',
     billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
+    internalAttachment ? `Internal attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
+    salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
   ]
     .filter(Boolean)
@@ -3331,7 +5929,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     email: payer.email || undefined,
     phone: payer.phone || undefined,
     ...(shippingAddress ? { shippingAddress } : {}),
-    ...(billingAddress ? { billingAddress } : {}),
     ...(shippingLine ? { shippingLine } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
@@ -3359,18 +5956,25 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         : '',
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
+      trinity_sales_rep_email: salesRepEmail,
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
-      trinity_player_phone: !billingDifferent ? payer.phone : '',
+      trinity_player_phone: playerPhone,
       trinity_shipping_address: formattedShippingAddress,
-      trinity_billing_address_different: billingAddressDifferent ? 'true' : '',
-      trinity_billing_address: billingAddressDifferent ? formattedBillingAddress : '',
       trinity_billing_different: billingDifferent ? 'true' : '',
       trinity_billing_name: payer.name,
       trinity_billing_email: payer.email,
       trinity_billing_phone: payer.phone,
       trinity_billing_company: payer.company,
       trinity_billing_relationship: payer.relationship,
+      trinity_internal_attachment_id: internalAttachment?.id ?? '',
+      trinity_internal_attachment_file_id: internalAttachment?.shopifyFileId ?? '',
+      trinity_internal_attachment_name: internalAttachment?.filename ?? '',
+      trinity_internal_attachment_url: internalAttachment?.downloadUrl ?? '',
+      trinity_internal_attachment_type: internalAttachment?.contentType ?? '',
+      trinity_internal_attachment_bytes: internalAttachment?.bytes
+        ? String(internalAttachment.bytes)
+        : '',
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines
@@ -3389,6 +5993,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
           trinity_wood: line.wood,
           trinity_handle_color: line.handleColor,
           trinity_barrel_color: line.barrelColor,
+          trinity_band_color: line.bandColor,
           trinity_logo_color: line.logoColor,
           trinity_engraving: line.engraving,
           trinity_cupped: line.cupped,
@@ -3540,6 +6145,7 @@ function specsFromSalesLine(line = {}) {
     wood: cleanString(line.wood),
     handleColor: cleanString(line.handleColor),
     barrelColor: cleanString(line.barrelColor),
+    bandColor: cleanString(line.bandColor),
     logoColor: cleanString(line.logoColor),
     engraving: cleanString(line.engraving),
     cupped: cleanString(line.cupped),
@@ -3555,6 +6161,7 @@ function mergeSpecs(primary = {}, fallback = {}) {
     wood: cleanString(primary.wood) || cleanString(fallback.wood),
     handleColor: cleanString(primary.handleColor) || cleanString(fallback.handleColor),
     barrelColor: cleanString(primary.barrelColor) || cleanString(fallback.barrelColor),
+    bandColor: cleanString(primary.bandColor) || cleanString(fallback.bandColor),
     logoColor: cleanString(primary.logoColor) || cleanString(fallback.logoColor),
     engraving: cleanString(primary.engraving) || cleanString(fallback.engraving),
     cupped: cleanString(primary.cupped) || cleanString(fallback.cupped),
@@ -3579,6 +6186,7 @@ function mapDraftOrderToJobs(
   const billingDifferent = isTruthy(payload.billingDifferent)
   const payer = resolvePayer(payload)
   const draftInvoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
+  const internalAttachment = normalizeOrderAttachment(payload.attachment)
 
   return lines.map((line, index) => {
     const draftLine = draftLines[index] ?? {}
@@ -3619,6 +6227,7 @@ function mapDraftOrderToJobs(
       assignedBilletId: '',
       linkedProducedBatId: '',
       salesRep: cleanString(payload.salesRep),
+      salesRepEmail: normalizeEmail(payload.salesRepEmail),
       totalPrice: cleanString(line.unitPrice),
       currency: draftOrder?.totalPriceSet?.shopMoney?.currencyCode ?? '',
       specs,
@@ -3630,6 +6239,7 @@ function mapDraftOrderToJobs(
           productId: product?.id ?? '',
         },
       ],
+      internalAttachment,
       notes: cleanString(line.notes),
       internalNotes: cleanString(payload.notes),
       createdAt: draftOrder.createdAt ?? now,
@@ -3660,7 +6270,10 @@ function mapCompletedDraftOrderToJobs(
       shopifyDraftInvoiceUrl: normalizeDraftInvoiceUrl(draftOrder.invoiceUrl),
       orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
+      salesRep: job.salesRep || cleanString(payload.salesRep),
+      salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
       specs: mergeSpecs(job.specs, fallbackSpecs),
+      internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
@@ -3686,7 +6299,10 @@ function mapCreatedOrderToJobs(
       intakeId,
       orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
+      salesRep: job.salesRep || cleanString(payload.salesRep),
+      salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
       specs: mergeSpecs(job.specs, fallbackSpecs),
+      internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
@@ -3715,6 +6331,7 @@ function mapGraphQLOrderToJobs(order) {
       order.customer?.displayName ?? '',
       order.email ?? order.customer?.email ?? '',
     )
+    const internalAttachment = normalizeOrderAttachmentFromAttributes(orderAttributes)
 
     return {
       id: `order-${extractNumericId(order.id)}-line-${extractNumericId(line.id)}`,
@@ -3752,7 +6369,8 @@ function mapGraphQLOrderToJobs(order) {
       assignedBilletId: '',
       linkedProducedBatId: '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
-      totalPrice: money.amount ?? '',
+      salesRepEmail: normalizeEmail(orderAttributes.trinity_sales_rep_email),
+      totalPrice: getGraphQLLineUnitPrice(line, money.amount),
       currency: money.currencyCode ?? '',
       specs,
       lineItems: [
@@ -3763,12 +6381,35 @@ function mapGraphQLOrderToJobs(order) {
           productId: product?.id ?? '',
         },
       ],
+      internalAttachment,
       notes: lineAttributes.trinity_notes ?? order.note ?? '',
       internalNotes: '',
       createdAt: order.createdAt,
       updatedAt: order.updatedAt ?? new Date().toISOString(),
     }
   })
+}
+
+function getGraphQLLineUnitPrice(line, fallbackAmount = '') {
+  const unitAmount =
+    getGraphQLMoneyAmount(line?.discountedUnitPriceSet) ||
+    getGraphQLMoneyAmount(line?.originalUnitPriceSet)
+  if (unitAmount) return unitAmount
+
+  const quantity = Number(line?.quantity || 1)
+  const totalAmount =
+    getGraphQLMoneyAmount(line?.discountedTotalSet) ||
+    getGraphQLMoneyAmount(line?.originalTotalSet)
+  const total = Number(totalAmount)
+  if (Number.isFinite(total) && Number.isFinite(quantity) && quantity > 0) {
+    return String(total / quantity)
+  }
+
+  return cleanString(fallbackAmount)
+}
+
+function getGraphQLMoneyAmount(moneySet) {
+  return cleanString(moneySet?.shopMoney?.amount)
 }
 
 function mapOrderWebhookToJobs(order, topic) {
@@ -3836,6 +6477,7 @@ function mapOrderWebhookToJobs(order, topic) {
       assignedBilletId: '',
       linkedProducedBatId: '',
       salesRep: orderAttributes.trinity_sales_rep ?? '',
+      salesRepEmail: normalizeEmail(orderAttributes.trinity_sales_rep_email),
       totalPrice: cleanString(line.price),
       currency: order.currency ?? '',
       specs,
@@ -3865,6 +6507,9 @@ function mergeOrderJob(existing, incoming) {
       incoming.productionStatus === 'cancelled'
         ? 'cancelled'
         : existing.productionStatus || incoming.productionStatus,
+    shopifyDraftOrderId: existing.shopifyDraftOrderId || incoming.shopifyDraftOrderId,
+    shopifyDraftOrderName: existing.shopifyDraftOrderName || incoming.shopifyDraftOrderName,
+    shopifyDraftInvoiceUrl: existing.shopifyDraftInvoiceUrl || incoming.shopifyDraftInvoiceUrl,
     assignedBilletId: existing.assignedBilletId || incoming.assignedBilletId,
     linkedProducedBatId: existing.linkedProducedBatId || incoming.linkedProducedBatId,
     orderSubmittedAt:
@@ -3873,6 +6518,12 @@ function mergeOrderJob(existing, incoming) {
       existing.createdAt ||
       incoming.createdAt,
     salesRep: existing.salesRep || incoming.salesRep,
+    salesRepEmail: existing.salesRepEmail || incoming.salesRepEmail,
+    salesRepSubmissionNotificationSentAt:
+      existing.salesRepSubmissionNotificationSentAt ||
+      incoming.salesRepSubmissionNotificationSentAt,
+    salesRepPaidNotificationSentAt:
+      existing.salesRepPaidNotificationSentAt || incoming.salesRepPaidNotificationSentAt,
     playerName: existing.playerName || incoming.playerName,
     playerEmail: existing.playerEmail || incoming.playerEmail,
     billingDifferent: existing.billingDifferent || incoming.billingDifferent,
@@ -3882,23 +6533,57 @@ function mergeOrderJob(existing, incoming) {
     billingCompany: existing.billingCompany || incoming.billingCompany,
     billingRelationship: existing.billingRelationship || incoming.billingRelationship,
     specs: mergeSpecs(existing.specs, incoming.specs),
+    internalAttachment: existing.internalAttachment || incoming.internalAttachment || null,
     internalNotes: existing.internalNotes || incoming.internalNotes,
     createdAt: existing.createdAt || incoming.createdAt,
     updatedAt: incoming.updatedAt || new Date().toISOString(),
   }
 }
 
-function findMatchingOrderJob(existingJobs, incomingJob) {
-  return existingJobs.find((job) => {
-    if (job.id === incomingJob.id) return true
-    if (job.lineItemId && job.lineItemId === incomingJob.lineItemId) return true
-    return Boolean(
-      job.intakeId &&
-        incomingJob.intakeId &&
-        job.intakeId === incomingJob.intakeId &&
-        job.productTitle === incomingJob.productTitle,
-    )
-  })
+function mergeIncomingOrderJobs(existingJobs, incomingJobs) {
+  const matchIndex = createOrderJobMatchIndex(existingJobs)
+  return incomingJobs.map((job) => mergeOrderJob(findMatchingOrderJob(matchIndex, job), job))
+}
+
+function createOrderJobMatchIndex(existingJobs) {
+  const byId = new Map()
+  const byLineItemId = new Map()
+  const byIntakeProduct = new Map()
+
+  for (const job of existingJobs) {
+    rememberFirstOrderJob(byId, cleanString(job.id), job)
+    rememberFirstOrderJob(byLineItemId, cleanString(job.lineItemId), job)
+    rememberFirstOrderJob(byIntakeProduct, orderJobIntakeProductKey(job), job)
+  }
+
+  return { byId, byLineItemId, byIntakeProduct }
+}
+
+function rememberFirstOrderJob(index, key, job) {
+  if (key && !index.has(key)) index.set(key, job)
+}
+
+function findMatchingOrderJob(matchIndex, incomingJob) {
+  const id = cleanString(incomingJob.id)
+  if (id && matchIndex.byId.has(id)) return matchIndex.byId.get(id)
+
+  const lineItemId = cleanString(incomingJob.lineItemId)
+  if (lineItemId && matchIndex.byLineItemId.has(lineItemId)) {
+    return matchIndex.byLineItemId.get(lineItemId)
+  }
+
+  const intakeProductKey = orderJobIntakeProductKey(incomingJob)
+  if (intakeProductKey && matchIndex.byIntakeProduct.has(intakeProductKey)) {
+    return matchIndex.byIntakeProduct.get(intakeProductKey)
+  }
+
+  return null
+}
+
+function orderJobIntakeProductKey(job) {
+  const intakeId = cleanString(job.intakeId)
+  const productTitle = cleanString(job.productTitle)
+  return intakeId && productTitle ? `${intakeId}::${productTitle}` : ''
 }
 
 function extractSpecs(orderAttributes, lineAttributes) {
@@ -3909,6 +6594,7 @@ function extractSpecs(orderAttributes, lineAttributes) {
     wood: lineAttributes.trinity_wood ?? orderAttributes.trinity_wood ?? '',
     handleColor: lineAttributes.trinity_handle_color ?? orderAttributes.trinity_handle_color ?? '',
     barrelColor: lineAttributes.trinity_barrel_color ?? orderAttributes.trinity_barrel_color ?? '',
+    bandColor: lineAttributes.trinity_band_color ?? orderAttributes.trinity_band_color ?? '',
     logoColor: lineAttributes.trinity_logo_color ?? orderAttributes.trinity_logo_color ?? '',
     engraving: lineAttributes.trinity_engraving ?? orderAttributes.trinity_engraving ?? '',
     cupped: lineAttributes.trinity_cupped ?? orderAttributes.trinity_cupped ?? '',
@@ -4022,6 +6708,17 @@ function normalizePositiveMoneyAmount(value) {
   const amount = Number(cleanString(value))
   if (!Number.isFinite(amount) || amount <= 0) return ''
   return amount.toFixed(2)
+}
+
+function normalizeNonNegativeMoneyAmount(value) {
+  const amount = Number(cleanString(value))
+  if (!Number.isFinite(amount) || amount < 0) return ''
+  return amount.toFixed(2)
+}
+
+function readPositiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name])
+  return Number.isInteger(value) && value > 0 ? value : fallback
 }
 
 function isBatProductLike(product) {
@@ -4203,17 +6900,20 @@ function createPlainId(prefix) {
 function parseEmailList(value, fallback = [], required = []) {
   const configuredEmails = cleanString(value)
     .split(/[\s,;]+/)
-    .map((email) => email.trim().toLowerCase())
+    .map((email) => normalizeEmail(email))
     .filter(Boolean)
   const emails = (configuredEmails.length > 0 ? configuredEmails : fallback).concat(required)
 
-  return Array.from(
-    new Set(
-      emails
-        .map((email) => cleanString(email).toLowerCase())
-        .filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)),
-    ),
-  )
+  return uniqueEmails(emails)
+}
+
+function uniqueEmails(emails) {
+  return Array.from(new Set(emails.map((email) => normalizeEmail(email)).filter(Boolean)))
+}
+
+function normalizeEmail(email) {
+  const normalized = cleanString(email).toLowerCase()
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : ''
 }
 
 function toMoneyInput(value) {

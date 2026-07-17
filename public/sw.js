@@ -1,10 +1,17 @@
-const CACHE_NAME = 'trinity-internal-tool-v2'
+const CACHE_NAME = 'trinity-internal-tool-v3'
 const ROOT_URL = new URL('./', self.registration.scope).toString()
 const APP_SHELL = [
   ROOT_URL,
   new URL('site.webmanifest', ROOT_URL).toString(),
   new URL('favicon.svg', ROOT_URL).toString(),
 ]
+
+function shouldBypassCache(request) {
+  if (request.cache === 'no-store' || request.cache === 'reload') return true
+
+  const url = new URL(request.url)
+  return url.origin === self.location.origin && url.pathname.startsWith('/api/')
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -30,6 +37,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request
 
   if (request.method !== 'GET') return
+  if (shouldBypassCache(request)) return
 
   if (request.mode === 'navigate') {
     event.respondWith(

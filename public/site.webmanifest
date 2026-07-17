@@ -8,9 +8,9 @@
   "theme_color": "#2f4c32",
   "icons": [
     {
-      "src": "favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml"
+      "src": "trinity-logo-cropped.png",
+      "sizes": "1189x653",
+      "type": "image/png"
     }
   ]
 }

@@ -35,13 +35,19 @@ The customer behavior collector is intentionally isolated as a second Render ser
 Required environment variables:
 
 - `SHOPIFY_SHOP`
-- `SHOPIFY_ADMIN_ACCESS_TOKEN`
+- `SHOPIFY_ADMIN_ACCESS_TOKEN` (inventory app only)
+- `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN` (analytics collector only; use a token from a separate Shopify custom app so analytics writes do not drain the inventory app's Admin API throttle bucket)
 - `SHOPIFY_API_VERSION` (optional, defaults to `2026-01`)
-- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated staff invoice BCC list; defaults to Matt, Jeremy, Stefan, and Keith at `trinitybats.com`; Matt is always included)
+- `TRINITY_ORDER_NOTIFICATION_EMAILS` (optional, comma-separated additional staff contact list for internal manual-order copies; Matt, Jeremy, Stefan, and Keith at `trinitybats.com` are always included)
+- `RESEND_API_KEY` / `TRINITY_RESEND_API_KEY` (required for live sales portal email-code sign-in; also the preferred provider for internal manual-order copy emails to staff and sales reps)
+- `TRINITY_INTERNAL_EMAIL_FROM` (required when using Resend, for example `Trinity Orders <orders@trinitybats.com>`)
+- `TRINITY_INTERNAL_EMAIL_REPLY_TO` (optional reply-to address when using Resend)
+- Manual-order attachments are uploaded to Shopify Files and linked from the order, production job, and internal order-copy email. Attachments must be 20 MB or smaller.
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
 - `TRINITY_DRAFT_SHIPPING_TITLE` / `TRINITY_DRAFT_SHIPPING_AMOUNT` (optional standard shipping fallback; defaults to `Standard Shipping` / `15.00`)
 - `TRINITY_DRAFT_SHIPPING_FAST_TITLE` / `TRINITY_DRAFT_SHIPPING_FAST_AMOUNT` (optional, defaults to `Fast Shipping` / `50.00`)
 - `TRINITY_DRAFT_SHIPPING_REALLY_FAST_TITLE` / `TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT` (optional, defaults to `Really Fast Shipping` / `75.00`)
+- `TRINITY_DRAFT_SHIPPING_COMPED_TITLE` / `TRINITY_DRAFT_SHIPPING_COMPED_AMOUNT` (optional, defaults to `Comped Shipping` / `0.00`)
 - `TRINITY_RUSH_PRODUCTION_TITLE` / `TRINITY_RUSH_PRODUCTION_AMOUNT` (optional, defaults to `Rush Production Surcharge` / `50.00` per bat)
 - `GA4_MEASUREMENT_ID` (analytics collector only; optional, enables server-side GA4 ecommerce forwarding)
 - `GA4_API_SECRET` (analytics collector only; optional, required with `GA4_MEASUREMENT_ID`)
@@ -52,9 +58,11 @@ Render:
 1. Create a new web service from this GitHub repo.
 2. Let Render use the included `render.yaml`.
 3. Add the Shopify environment variables to `trinity-billet-inventory`.
-4. Add the Shopify and optional GA4 environment variables to `trinity-analytics-collector`.
+4. Add `SHOPIFY_SHOP`, `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN`, and optional GA4 environment variables to `trinity-analytics-collector`.
 5. Deploy and copy the public `onrender.com` URLs.
 6. Update the Shopify app URLs in Dev Dashboard to the inventory host.
+
+For the analytics token, create a second Shopify custom app or app installation with only the Admin API access the collector needs. Do not paste the inventory app's `SHOPIFY_ADMIN_ACCESS_TOKEN` into `TRINITY_ANALYTICS_SHOPIFY_ADMIN_ACCESS_TOKEN`; that would keep both services on the same Shopify throttle bucket.
 
 Railway:
 
