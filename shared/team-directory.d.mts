@@ -18,4 +18,13 @@ export function isSalesTeamMember(
   member: TrinityTeamMember | null | undefined,
 ): boolean
 
+export function isTeamToolMember(
+  member: TrinityTeamMember | null | undefined,
+): boolean
+
+export function canTeamMemberAccessToolSection(
+  member: TrinityTeamMember | null | undefined,
+  section: string,
+): boolean
+
 export function getTeamMemberByEmail(email: string): TrinityTeamMember | null

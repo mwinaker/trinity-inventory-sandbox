@@ -13,6 +13,8 @@ import {
   parseManualBatOrderSegments,
 } from '../shared/pro-player-affiliations.mjs'
 import {
+  canTeamMemberAccessToolSection,
+  getTeamMemberByEmail,
   isAdminTeamMember,
   isSalesTeamMember,
   trinityTeamMembers,
@@ -457,6 +459,11 @@ type SalesRepSummary = {
   openValue: number
   averageDaysToPay: number | null
 }
+
+type TeamLeaderboardRow = Pick<
+  SalesRepSummary,
+  'key' | 'label' | 'submittedCount' | 'submittedValue'
+>
 
 type CrmStage =
   | 'lead'
@@ -1645,6 +1652,20 @@ function createCrmOwnerFromEmail(email: string): CrmOwnerOption {
 
 function getSalesPortalOwnerForEmail(email: string) {
   return getCrmOwnerByEmail(email) ?? createCrmOwnerFromEmail(email)
+}
+
+function getTeamToolOwnerForEmail(email: string) {
+  const member = getTeamMemberByEmail(email)
+  if (!member) return null
+
+  return {
+    key: member.key ?? member.email,
+    label: member.name,
+    name: member.name,
+    email: member.email,
+    aliases: member.aliases,
+    role: member.role,
+  } satisfies CrmOwnerOption
 }
 
 function getSalesPortalOwnerOptions(email: string) {
@@ -3569,7 +3590,7 @@ const publicOrderFormPaths = new Set([
   '/trinity-order-from',
 ])
 
-const salesPortalPaths = new Set(['/sales-portal', '/sales-crm'])
+const salesPortalPaths = new Set(['/sales-portal', '/sales-crm', '/team-tool'])
 const internalToolPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
 const defaultDemoEmail = 'keith@trinitybats.com'
 const salesPortalDemoOnly =
@@ -4897,9 +4918,26 @@ function PublicSalesOrderForm() {
   )
 }
 
-function InternalApp() {
+type InternalAppProps = {
+  accessSession?: SalesPortalSession | null
+  onSignOut?: () => void | Promise<void>
+}
+
+function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {}) {
   const crmSandboxPreviewEnabled = isCrmSandboxPreviewRoute()
-  const [activeSection, setActiveSection] = useState<ActiveSection>(() => getInitialActiveSection())
+  const accessMember = accessSession ? getTeamMemberByEmail(accessSession.email) : null
+  const accessOwner = accessSession ? getTeamToolOwnerForEmail(accessSession.email) : null
+  const hasTeamToolSession = Boolean(accessSession)
+  const hasAdminAccess = !accessSession || Boolean(accessSession.isAdmin)
+  const canAccessToolSection = (section: ActiveSection) =>
+    !accessSession || canTeamMemberAccessToolSection(accessMember, section)
+  const stateEndpoint = hasTeamToolSession ? '/api/team-tool/state' : '/api/state'
+  const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
+    const initialSection = getInitialActiveSection()
+    return accessSession && !canTeamMemberAccessToolSection(accessMember, initialSection)
+      ? 'inventory'
+      : initialSection
+  })
   const [billets, setBillets] = useState<Billet[]>(() => {
     const stored = window.localStorage.getItem(billetStorageKey)
     const parsed = stored ? (JSON.parse(stored) as Billet[]) : seedBillets
@@ -4928,6 +4966,7 @@ function InternalApp() {
     const stored = window.localStorage.getItem(orderJobStorageKey)
     return stored ? (JSON.parse(stored) as OrderJob[]).map((job) => normalizeOrderJob(job)) : []
   })
+  const [teamLeaderboardRows, setTeamLeaderboardRows] = useState<TeamLeaderboardRow[]>([])
   const [billingContacts, setBillingContacts] = useState<BillingContact[]>(() => {
     const stored = window.localStorage.getItem(billingContactStorageKey)
     const parsed = stored ? (JSON.parse(stored) as BillingContact[]) : []
@@ -4940,23 +4979,29 @@ function InternalApp() {
     return stored ? getManualCrmContacts(JSON.parse(stored) as CrmContact[]) : []
   })
   const [draft, setDraft] = useState(emptyBillet)
-  const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() =>
-    emptySalesOrderDraft(),
-  )
+  const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() => ({
+    ...emptySalesOrderDraft(),
+    salesRep: accessOwner?.name ?? '',
+    salesRepEmail: accessOwner?.email ?? '',
+  }))
   const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
   const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
-  const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState('all')
+  const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState(
+    accessOwner?.key ?? 'all',
+  )
   const [activeCrmView, setActiveCrmView] = useState<CrmWorkspaceView>('new_contact')
   const [crmQuery, setCrmQuery] = useState('')
   const [crmStageFilter, setCrmStageFilter] = useState<'all' | CrmStage>('all')
-  const [crmOwnerFilter, setCrmOwnerFilter] = useState(
-    () => window.localStorage.getItem(crmActiveOwnerStorageKey) || 'all',
+  const [crmOwnerFilter, setCrmOwnerFilter] = useState(() =>
+    accessOwner?.key || window.localStorage.getItem(crmActiveOwnerStorageKey) || 'all',
   )
   const [selectedCrmContactId, setSelectedCrmContactId] = useState('')
   const [selectedCrmEngagementId, setSelectedCrmEngagementId] = useState('')
-  const [newCrmContactDraft, setNewCrmContactDraft] = useState<CrmContact>(() =>
-    emptyCrmContact(),
-  )
+  const [newCrmContactDraft, setNewCrmContactDraft] = useState<CrmContact>(() => ({
+    ...emptyCrmContact(),
+    salesOwner: accessOwner?.name ?? '',
+    ownerEmail: accessOwner?.email ?? '',
+  }))
   const [crmTouchpointDraft, setCrmTouchpointDraft] = useState<CrmTouchpointDraft>(() =>
     emptyCrmTouchpointDraft(),
   )
@@ -5020,6 +5065,12 @@ function InternalApp() {
       : 'Connecting to Shopify backend...',
   )
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState('')
+  const [accessCodeIssuerEmail, setAccessCodeIssuerEmail] = useState(
+    seedCrmOwnerOptions.find((owner) => owner.email)?.email ?? '',
+  )
+  const [issuedTeamAccessCode, setIssuedTeamAccessCode] = useState('')
+  const [teamAccessMessage, setTeamAccessMessage] = useState('')
+  const [isIssuingTeamAccessCode, setIsIssuingTeamAccessCode] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const hasLoadedRemoteState = useRef(false)
@@ -5100,7 +5151,7 @@ function InternalApp() {
       }
 
       setSyncMessage(`Syncing ${changeCount} changed record${changeCount === 1 ? '' : 's'} to Shopify...`)
-      const response = await fetch(getApiPath('/api/state'), {
+      const response = await fetch(getApiPath(stateEndpoint), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -5156,7 +5207,7 @@ function InternalApp() {
 
   const loadRemoteState = useEffectEvent(async (options?: { quiet?: boolean }) => {
     try {
-      const response = await fetch(getApiPath('/api/state'), {
+      const response = await fetch(getApiPath(stateEndpoint), {
         cache: 'no-store',
         headers: {
           'Cache-Control': 'no-store',
@@ -5170,7 +5221,10 @@ function InternalApp() {
         return false
       }
       if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
-      const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
+      const remote = (await response.json()) as Partial<RemoteState> & {
+        ok?: boolean
+        teamLeaderboardRows?: TeamLeaderboardRow[]
+      }
 
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
@@ -5188,6 +5242,9 @@ function InternalApp() {
         : []
       const remoteOrderJobs = Array.isArray(remote.orderJobs)
         ? remote.orderJobs.map((job) => normalizeOrderJob(job))
+        : []
+      const remoteTeamLeaderboardRows = Array.isArray(remote.teamLeaderboardRows)
+        ? remote.teamLeaderboardRows
         : []
       const remoteBillingContacts = Array.isArray(remote.billingContacts)
         ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
@@ -5216,6 +5273,7 @@ function InternalApp() {
       setProducedBats(remoteState.producedBats)
       setCustomBatModels(remoteState.customBatModels)
       setOrderJobs(remoteState.orderJobs)
+      setTeamLeaderboardRows(remoteTeamLeaderboardRows)
       setBillingContacts(remoteState.billingContacts)
       setCrmContacts(remoteState.crmContacts)
       setLastLiveRefreshAt(new Date().toISOString())
@@ -5613,6 +5671,14 @@ function InternalApp() {
     () => buildSalesRepSummaries(salesDashboardSales),
     [salesDashboardSales],
   )
+  const trailingMonthLeaderboardRows = useMemo(() => {
+    if (hasTeamToolSession) return teamLeaderboardRows
+
+    const trailingMonthSales = buildSalesDashboardSales(orderJobs).filter((sale) =>
+      isSaleInsideDashboardRange(sale, '30'),
+    )
+    return buildTeamSalesRows(trailingMonthSales, seedCrmOwnerOptions)
+  }, [hasTeamToolSession, orderJobs, teamLeaderboardRows])
   const {
     paidSales: salesDashboardPaidSales,
     openSales: salesDashboardOpenSales,
@@ -5669,15 +5735,20 @@ function InternalApp() {
     [crmDirectory, orderJobs],
   )
   const crmOwnerOptions = useMemo(
-    () => [...seedCrmOwnerOptions].sort((a, b) => compareText(a.label, b.label)),
-    [],
+    () =>
+      hasAdminAccess || !accessOwner
+        ? [...seedCrmOwnerOptions].sort((a, b) => compareText(a.label, b.label))
+        : [accessOwner],
+    [accessOwner, hasAdminAccess],
   )
   const resolvedCrmOwnerFilter =
-    crmOwnerFilter === 'all' ||
-    crmOwnerFilter === 'unassigned' ||
-    crmOwnerOptions.some((owner) => owner.key === crmOwnerFilter)
-      ? crmOwnerFilter
-      : 'all'
+    !hasAdminAccess && accessOwner
+      ? accessOwner.key
+      : crmOwnerFilter === 'all' ||
+          crmOwnerFilter === 'unassigned' ||
+          crmOwnerOptions.some((owner) => owner.key === crmOwnerFilter)
+        ? crmOwnerFilter
+        : 'all'
   const activeCrmOwnerOption =
     crmOwnerOptions.find((owner) => owner.key === resolvedCrmOwnerFilter) ?? null
   const crmOwnerScopedSummaries = useMemo(
@@ -6069,7 +6140,11 @@ function InternalApp() {
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
-      setSalesOrderDraft(emptySalesOrderDraft())
+      setSalesOrderDraft({
+        ...emptySalesOrderDraft(),
+        salesRep: accessOwner?.name ?? '',
+        salesRepEmail: accessOwner?.email ?? '',
+      })
       setSalesOrderAttachmentFile(null)
       setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
     } catch (error) {
@@ -6208,6 +6283,13 @@ function InternalApp() {
   }
 
   function getActiveCrmOwnerAssignment(fallback?: Pick<CrmContact, 'salesOwner' | 'ownerEmail'>) {
+    if (!hasAdminAccess && accessOwner) {
+      return {
+        salesOwner: accessOwner.name,
+        ownerEmail: accessOwner.email,
+      }
+    }
+
     return {
       salesOwner: fallback?.salesOwner || activeCrmOwnerOption?.name || '',
       ownerEmail: fallback?.ownerEmail || activeCrmOwnerOption?.email || '',
@@ -6293,7 +6375,11 @@ function InternalApp() {
         : newCrmContactDraft.touchpoints,
     })
     saveCrmContact(contact)
-    setNewCrmContactDraft(emptyCrmContact())
+    setNewCrmContactDraft({
+      ...emptyCrmContact(),
+      salesOwner: accessOwner?.name ?? '',
+      ownerEmail: accessOwner?.email ?? '',
+    })
     setActiveCrmView('contact_list')
     setCrmMessage('Contact saved to the CRM sandbox.')
   }
@@ -6847,6 +6933,40 @@ function InternalApp() {
     }
   }
 
+  async function issueTeamAccessCode() {
+    const email = normalizeTrinityEmail(accessCodeIssuerEmail)
+    const owner = getTeamToolOwnerForEmail(email)
+    if (!owner) {
+      setIssuedTeamAccessCode('')
+      setTeamAccessMessage('Choose an approved Trinity team member.')
+      return
+    }
+
+    try {
+      setIsIssuingTeamAccessCode(true)
+      const response = await fetch(getApiPath('/api/sales-portal/admin-login-code'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      const payload = (await response.json()) as SalesPortalApiResponse
+      const accessCode = payload.accessCode ?? payload.loginCode
+      if (!response.ok || !payload.ok || !accessCode) {
+        throw new Error(payload.message ?? 'Could not create an access code.')
+      }
+
+      setIssuedTeamAccessCode(accessCode)
+      setTeamAccessMessage(`New access code created for ${owner.label}.`)
+    } catch (error) {
+      setIssuedTeamAccessCode('')
+      setTeamAccessMessage(
+        error instanceof Error ? error.message : 'Could not create an access code.',
+      )
+    } finally {
+      setIsIssuingTeamAccessCode(false)
+    }
+  }
+
   return (
     <main className={`app-shell app-section-${activeSection}`}>
       <section className="hero-panel">
@@ -6865,34 +6985,42 @@ function InternalApp() {
             >
               Inventory
             </button>
-            <button
-              type="button"
-              className={activeSection === 'orders' ? 'active' : ''}
-              onClick={() => setActiveSection('orders')}
-            >
-              Submit New Order
-            </button>
-            <button
-              type="button"
-              className={activeSection === 'production' ? 'active' : ''}
-              onClick={() => setActiveSection('production')}
-            >
-              Production Queue
-            </button>
-            <button
-              type="button"
-              className={activeSection === 'sales' ? 'active' : ''}
-              onClick={() => setActiveSection('sales')}
-            >
-              Sales Dashboard
-            </button>
-            <button
-              type="button"
-              className={activeSection === 'crm' ? 'active' : ''}
-              onClick={() => setActiveSection('crm')}
-            >
-              CRM
-            </button>
+            {canAccessToolSection('orders') ? (
+              <button
+                type="button"
+                className={activeSection === 'orders' ? 'active' : ''}
+                onClick={() => setActiveSection('orders')}
+              >
+                Submit New Order
+              </button>
+            ) : null}
+            {canAccessToolSection('production') ? (
+              <button
+                type="button"
+                className={activeSection === 'production' ? 'active' : ''}
+                onClick={() => setActiveSection('production')}
+              >
+                Production Queue
+              </button>
+            ) : null}
+            {canAccessToolSection('sales') ? (
+              <button
+                type="button"
+                className={activeSection === 'sales' ? 'active' : ''}
+                onClick={() => setActiveSection('sales')}
+              >
+                Sales Dashboard
+              </button>
+            ) : null}
+            {canAccessToolSection('crm') ? (
+              <button
+                type="button"
+                className={activeSection === 'crm' ? 'active' : ''}
+                onClick={() => setActiveSection('crm')}
+              >
+                CRM
+              </button>
+            ) : null}
             <button
               type="button"
               className={activeSection === 'players' ? 'active' : ''}
@@ -6926,6 +7054,63 @@ function InternalApp() {
                 : 'Live sync unavailable'}
           </strong>
           <p>{syncMessage}</p>
+          {accessSession ? (
+            <div className="sales-portal-session">
+              <span>
+                Signed in as <strong>{accessOwner?.label ?? accessSession.email}</strong>
+              </span>
+              {onSignOut ? (
+                <button type="button" className="secondary-button" onClick={() => void onSignOut()}>
+                  Sign out
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {hasAdminAccess ? (
+            <details className="sales-portal-code-issuer">
+              <summary>Team access codes</summary>
+              <label>
+                Team member
+                <select
+                  value={accessCodeIssuerEmail}
+                  onChange={(event) => {
+                    setAccessCodeIssuerEmail(event.target.value)
+                    setIssuedTeamAccessCode('')
+                    setTeamAccessMessage('')
+                  }}
+                >
+                  {trinityTeamMembers
+                    .filter((member) => member.email)
+                    .map((member) => (
+                      <option key={member.email} value={member.email}>
+                        {member.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={isIssuingTeamAccessCode}
+                onClick={issueTeamAccessCode}
+              >
+                {isIssuingTeamAccessCode ? 'Creating...' : 'Create access code'}
+              </button>
+              {issuedTeamAccessCode ? (
+                <div className="helper-text sales-portal-issued-code">
+                  <strong>{issuedTeamAccessCode}</strong>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void navigator.clipboard?.writeText(issuedTeamAccessCode)}
+                  >
+                    Copy
+                  </button>
+                </div>
+              ) : null}
+              {teamAccessMessage ? <p className="helper-text">{teamAccessMessage}</p> : null}
+            </details>
+          ) : null}
         </div>
       </section>
 
@@ -7742,6 +7927,7 @@ function InternalApp() {
                 attachmentFile={salesOrderAttachmentFile}
                 setAttachmentFile={setSalesOrderAttachmentFile}
                 isSubmitting={isCreatingDraftOrder}
+                hideSalesRepFields={!hasAdminAccess}
               />
             </form>
           </section>
@@ -7797,24 +7983,26 @@ function InternalApp() {
               </div>
             </div>
 
-            <div className="order-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={importRecentOrders}
-                disabled={isImportingOrders}
-              >
-                {isImportingOrders ? 'Importing...' : 'Import recent website orders'}
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={registerOrderWebhooks}
-                disabled={isRegisteringWebhooks}
-              >
-                {isRegisteringWebhooks ? 'Connecting...' : 'Connect website webhooks'}
-              </button>
-            </div>
+            {hasAdminAccess ? (
+              <div className="order-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={importRecentOrders}
+                  disabled={isImportingOrders}
+                >
+                  {isImportingOrders ? 'Importing...' : 'Import recent website orders'}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={registerOrderWebhooks}
+                  disabled={isRegisteringWebhooks}
+                >
+                  {isRegisteringWebhooks ? 'Connecting...' : 'Connect website webhooks'}
+                </button>
+              </div>
+            ) : null}
 
             {orderActionMessage ? <p className="helper-text">{orderActionMessage}</p> : null}
 
@@ -7990,7 +8178,9 @@ function InternalApp() {
                             />
                           </label>
 
-                          {job.shopifyDraftOrderId && job.invoiceStatus === 'draft' ? (
+                          {hasAdminAccess &&
+                          job.shopifyDraftOrderId &&
+                          job.invoiceStatus === 'draft' ? (
                             <>
                               {job.shopifyDraftInvoiceUrl ? (
                                 <a
@@ -8037,7 +8227,7 @@ function InternalApp() {
           <section className="panel sales-dashboard-toolbar">
             <div className="section-heading">
               <p className="eyebrow">Sales performance</p>
-              <h2>Team dashboard</h2>
+              <h2>{hasAdminAccess ? 'Team dashboard' : 'My sales dashboard'}</h2>
             </div>
             <div className="dashboard-controls">
               <label>
@@ -8055,24 +8245,60 @@ function InternalApp() {
                   ))}
                 </select>
               </label>
-              <label>
-                Sales rep
-                <select
-                  value={salesDashboardRepFilter}
-                  onChange={(event) => setSalesDashboardRepFilter(event.target.value)}
-                >
-                  <option value="all">Whole team</option>
-                  {salesDashboardRepOptions.map((summary) => (
-                    <option key={summary.key} value={summary.key}>
-                      {summary.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              {hasAdminAccess ? (
+                <label>
+                  Sales rep
+                  <select
+                    value={salesDashboardRepFilter}
+                    onChange={(event) => setSalesDashboardRepFilter(event.target.value)}
+                  >
+                    <option value="all">Whole team</option>
+                    {salesDashboardRepOptions.map((summary) => (
+                      <option key={summary.key} value={summary.key}>
+                        {summary.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               <div className="live-sync-stamp">
                 <span>Last updated</span>
                 <strong>{formatSalesDashboardSyncTime(lastLiveRefreshAt)}</strong>
               </div>
+            </div>
+          </section>
+
+          <section className="panel sales-leaderboard-panel">
+            <div className="split-heading">
+              <div className="section-heading">
+                <p className="eyebrow">Team sales</p>
+                <h2>Trailing 30-day sales leaderboard</h2>
+              </div>
+            </div>
+            <p className="helper-text">
+              Ranked by submitted order value. Each order is counted once as it moves from open to
+              paid.
+            </p>
+            <div className="sales-leaderboard-grid">
+              {trailingMonthLeaderboardRows.map((row, index) => (
+                <article
+                  className={`sales-leaderboard-card ${
+                    row.key === accessOwner?.key ? 'current' : ''
+                  }`}
+                  key={row.key}
+                >
+                  <span className="sales-leaderboard-rank">#{index + 1}</span>
+                  <div>
+                    <h3>{row.label}</h3>
+                    <p>
+                      {row.submittedCount} submitted sale{row.submittedCount === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div className="sales-leaderboard-value">
+                    <strong>{formatSalesOrderMoney(row.submittedValue)}</strong>
+                  </div>
+                </article>
+              ))}
             </div>
           </section>
 
@@ -8104,8 +8330,8 @@ function InternalApp() {
             <section className="panel sales-rep-panel">
               <div className="split-heading">
                 <div className="section-heading">
-                  <p className="eyebrow">By sales rep</p>
-                  <h2>Performance</h2>
+                  <p className="eyebrow">{hasAdminAccess ? 'By sales rep' : 'My reporting'}</p>
+                  <h2>{hasAdminAccess ? 'Performance' : accessOwner?.label}</h2>
                 </div>
                 <div className="dashboard-total-chip">
                   <span>Awaiting</span>
@@ -8240,21 +8466,25 @@ function InternalApp() {
               <h2>{crmWorkspaceViews.find((view) => view.value === activeCrmView)?.label}</h2>
             </div>
             <div className="crm-toolbar-actions">
-              <label className="crm-owner-selector">
-                Team member
-                <select
-                  value={resolvedCrmOwnerFilter}
-                  onChange={(event) => setCrmOwnerFilter(event.target.value)}
-                >
-                  <option value="all">All team members</option>
-                  {crmOwnerOptions.map((owner) => (
-                    <option key={owner.key} value={owner.key}>
-                      {owner.label}
-                    </option>
-                  ))}
-                  <option value="unassigned">Unassigned</option>
-                </select>
-              </label>
+              {hasAdminAccess ? (
+                <label className="crm-owner-selector">
+                  Team member
+                  <select
+                    value={resolvedCrmOwnerFilter}
+                    onChange={(event) => setCrmOwnerFilter(event.target.value)}
+                  >
+                    <option value="all">All team members</option>
+                    {crmOwnerOptions.map((owner) => (
+                      <option key={owner.key} value={owner.key}>
+                        {owner.label}
+                      </option>
+                    ))}
+                    <option value="unassigned">Unassigned</option>
+                  </select>
+                </label>
+              ) : (
+                <span className="profile-type-pill">{accessOwner?.label}</span>
+              )}
               <div className="crm-tab-strip" role="tablist" aria-label="CRM sections">
                 {crmWorkspaceViews.map((view) => (
                   <button
@@ -11069,7 +11299,7 @@ function SalesPortalApp() {
             <img src="/trinity-logo-cropped.png" alt="Trinity Bat Company" className="sales-portal-logo" />
             <div className="section-heading">
               <p className="eyebrow">Trinity Bat Co.</p>
-              <h1>Sales portal</h1>
+              <h1>{isDemoSession ? 'Sales portal' : 'Team tool access'}</h1>
             </div>
           </div>
           <form className="bat-form" onSubmit={loginToPortal}>
@@ -11150,6 +11380,10 @@ function SalesPortalApp() {
         </section>
       </main>
     )
+  }
+
+  if (!isDemoSession) {
+    return <InternalApp accessSession={session} onSignOut={handlePortalSignOut} />
   }
 
   return (

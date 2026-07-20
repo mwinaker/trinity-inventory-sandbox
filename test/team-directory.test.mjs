@@ -2,9 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  canTeamMemberAccessToolSection,
   getTeamMemberByEmail,
   isAdminTeamMember,
   isSalesTeamMember,
+  isTeamToolMember,
   trinityTeamMembers,
 } from '../shared/team-directory.mjs'
 
@@ -33,6 +35,12 @@ test('Stefan is an admin and Henry is excluded from sales ownership', () => {
   assert.equal(henry?.role, 'production')
   assert.equal(isAdminTeamMember(henry), false)
   assert.equal(isSalesTeamMember(henry), false)
+  assert.equal(isTeamToolMember(henry), true)
+  assert.equal(canTeamMemberAccessToolSection(henry, 'production'), true)
+  assert.equal(canTeamMemberAccessToolSection(henry, 'sales'), false)
+  assert.equal(canTeamMemberAccessToolSection(nick, 'production'), false)
+  assert.equal(canTeamMemberAccessToolSection(nick, 'inventory'), true)
+  assert.equal(canTeamMemberAccessToolSection(stefan, 'production'), true)
   assert.equal(
     trinityTeamMembers.filter(isSalesTeamMember).some((member) => member.email === henry?.email),
     false,

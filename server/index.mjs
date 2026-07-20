@@ -22,9 +22,11 @@ import {
   getKnownProPlayerAffiliation,
   normalizePlayerNameKey,
 } from '../shared/pro-player-affiliations.mjs'
+import { buildTrailingSalesLeaderboard } from './team-leaderboard.mjs'
 import {
   isAdminTeamMember,
   isSalesTeamMember,
+  isTeamToolMember,
   trinityTeamMembers,
 } from '../shared/team-directory.mjs'
 
@@ -164,7 +166,7 @@ const publicSalesOrderFormPaths = [
   '/trinity-order-form',
   '/trinity-order-from',
 ]
-const salesPortalPaths = ['/sales-portal', '/sales-crm']
+const salesPortalPaths = ['/sales-portal', '/sales-crm', '/team-tool']
 const publicStaticAssetPaths = [
   '/favicon.svg',
   '/icons.svg',
@@ -186,11 +188,19 @@ const internalOrderNotificationEmails = parseEmailList(
   defaultInternalOrderNotificationEmails,
   requiredInternalOrderNotificationEmails,
 )
+const teamToolTeamMembers = trinityTeamMembers.filter(isTeamToolMember).map((member) => ({
+  ...member,
+  label: member.name,
+  key: member.key ?? member.email,
+}))
 const salesPortalTeamMembers = trinityTeamMembers.filter(isSalesTeamMember).map((member) => ({
   ...member,
   label: member.name,
   key: member.key ?? member.email,
 }))
+const teamToolTeamByEmail = new Map(
+  teamToolTeamMembers.filter((member) => member.email).map((member) => [member.email, member]),
+)
 const salesPortalTeamByEmail = new Map(
   salesPortalTeamMembers.filter((member) => member.email).map((member) => [member.email, member]),
 )
@@ -808,11 +818,11 @@ app.get('/api/sales-portal/session', async (request, response) => {
 app.post('/api/sales-portal/login-code', salesPortalLoginRateLimiter, async (request, response) => {
   try {
     const email = normalizeSalesPortalEmail(request.body?.email)
-    const owner = getSalesPortalOwnerForEmail(email)
+    const owner = getTeamToolMemberForEmail(email)
     if (!email || !owner) {
       response.status(400).json({
         ok: false,
-        message: 'Use a Trinity sales team email address.',
+        message: 'Use an approved Trinity team email address.',
       })
       return
     }
@@ -821,7 +831,7 @@ app.post('/api/sales-portal/login-code', salesPortalLoginRateLimiter, async (req
     if (!activeUser) {
       response.status(400).json({
         ok: false,
-        message: 'Use an active Trinity sales team account.',
+        message: 'Use an active Trinity team account.',
       })
       return
     }
@@ -859,11 +869,11 @@ app.post('/api/sales-portal/login-code', salesPortalLoginRateLimiter, async (req
 app.post('/api/sales-portal/admin-login-code', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
   try {
     const email = normalizeSalesPortalEmail(request.body?.email)
-    const owner = getSalesPortalOwnerForEmail(email)
+    const owner = getTeamToolMemberForEmail(email)
     if (!email || !owner) {
       response.status(400).json({
         ok: false,
-        message: 'Choose an approved Trinity sales team member.',
+        message: 'Choose an approved Trinity team member.',
       })
       return
     }
@@ -889,7 +899,7 @@ app.post('/api/sales-portal/verify-code', salesPortalVerifyRateLimiter, async (r
   const email = normalizeSalesPortalEmail(request.body?.email)
   const rawCode = cleanString(request.body?.code)
   const code = rawCode.replace(/\D/g, '')
-  const owner = getSalesPortalOwnerForEmail(email)
+  const owner = getTeamToolMemberForEmail(email)
   const savedCode = salesPortalLoginCodes.get(email)
 
   if (!email || !owner || !rawCode) {
@@ -1040,6 +1050,62 @@ app.patch('/api/sales-portal/state', requireSalesPortalAccess, async (request, r
   }
 })
 
+app.get('/api/team-tool/state', requireSalesPortalAccess, async (request, response) => {
+  try {
+    response.set('Cache-Control', 'no-store')
+
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const state = await getSharedState()
+    response.json(filterFullToolStateForSession(state, request.salesPortalSession))
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown team tool state error.',
+    })
+  }
+})
+
+app.patch('/api/team-tool/state', requireSalesPortalAccess, async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const prepared = await prepareFullToolStatePatchForSession(
+      request.body ?? {},
+      request.salesPortalSession,
+    )
+    if (prepared.error) {
+      response.status(403).json({ ok: false, message: prepared.error })
+      return
+    }
+
+    const result = await enqueueStateWrite(() => applyStatePatch(prepared.patch))
+    response.json({
+      ok: true,
+      syncedAt: new Date().toISOString(),
+      mode: 'team-delta',
+      applied: result.applied,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Unknown team tool save error.',
+    })
+  }
+})
+
 app.post('/api/analytics/events', async (request, response) => {
   setAnalyticsCorsHeaders(response)
 
@@ -1149,7 +1215,7 @@ app.get('/api/state', requireInternalAccess, async (_request, response) => {
   }
 })
 
-app.get('/api/billets/game-model-matches', requireInternalAccess, async (request, response) => {
+app.get('/api/billets/game-model-matches', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
   try {
     response.set('Cache-Control', 'no-store')
 
@@ -1224,7 +1290,7 @@ app.get('/api/shoply-bat-knowledge.json', (_request, response) => {
   response.status(404).json({ ok: false, message: 'Not found.' })
 })
 
-app.get('/api/internal/shoply-bat-knowledge.md', requireInternalAccess, async (_request, response) => {
+app.get('/api/internal/shoply-bat-knowledge.md', requireSalesPortalAdminOrInternalAccess, async (_request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).type('text/plain').send('Shopify credentials are not configured.')
@@ -1243,7 +1309,7 @@ app.get('/api/internal/shoply-bat-knowledge.md', requireInternalAccess, async (_
   }
 })
 
-app.get('/api/internal/shoply-bat-knowledge.json', requireInternalAccess, async (_request, response) => {
+app.get('/api/internal/shoply-bat-knowledge.json', requireSalesPortalAdminOrInternalAccess, async (_request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -1382,6 +1448,13 @@ app.post('/api/sales-orders', async (request, response) => {
     }
 
     const isAuthenticatedOperator = await hasAuthenticatedSalesOrderAccess(request)
+    if (request.salesPortalSession?.role === 'production') {
+      response.status(403).json({
+        ok: false,
+        message: 'Production accounts cannot submit sales orders.',
+      })
+      return
+    }
     if (
       !isAuthenticatedOperator &&
       !applyRateLimit(publicSalesOrderRateLimiter, request, response)
@@ -1594,7 +1667,7 @@ app.post('/api/sales-orders/send-draft-invoice', async (request, response) => {
   }
 })
 
-app.post('/api/draft-orders/send-invoice', requireInternalAccess, async (request, response) => {
+app.post('/api/draft-orders/send-invoice', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
   try {
     const draftOrderId = request.body?.draftOrderId
     if (!draftOrderId) {
@@ -1613,7 +1686,7 @@ app.post('/api/draft-orders/send-invoice', requireInternalAccess, async (request
   }
 })
 
-app.post('/api/orders/import', requireInternalAccess, async (request, response) => {
+app.post('/api/orders/import', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -1662,7 +1735,7 @@ app.post('/api/orders/import', requireInternalAccess, async (request, response) 
   }
 })
 
-app.post('/api/webhooks/register', requireInternalAccess, async (request, response) => {
+app.post('/api/webhooks/register', requireSalesPortalAdminOrInternalAccess, async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -1777,7 +1850,30 @@ function isHtmlNavigationRequest(request) {
   return accept.includes('text/html')
 }
 
-function requireInternalAccess(request, response, next) {
+async function requireInternalAccess(request, response, next) {
+  if (getSalesPortalSessionPayload(request)) {
+    try {
+      const session = await getValidatedSalesPortalSession(request)
+      if (session?.isAdmin) {
+        request.salesPortalSession = session
+        next()
+        return
+      }
+
+      response.status(403).json({
+        ok: false,
+        message: 'This action is limited to Trinity administrators.',
+      })
+      return
+    } catch (error) {
+      response.status(503).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Could not validate internal access.',
+      })
+      return
+    }
+  }
+
   if (hasVerifiedInternalAccess(request)) {
     next()
     return
@@ -1988,6 +2084,13 @@ function getSalesPortalOwnerForEmail(email) {
   return salesPortalTeamByEmail.get(normalizedEmail) ?? null
 }
 
+function getTeamToolMemberForEmail(email) {
+  const normalizedEmail = normalizeSalesPortalEmail(email)
+  if (!normalizedEmail) return null
+
+  return teamToolTeamByEmail.get(normalizedEmail) ?? null
+}
+
 function normalizeSalesPortalOwnerName(value) {
   return cleanString(value)
     .toLowerCase()
@@ -2028,7 +2131,7 @@ function getSalesPortalOwnerKey(name, email) {
 }
 
 function buildSalesPortalSession(email, loggedInAt = new Date().toISOString()) {
-  const owner = getSalesPortalOwnerForEmail(email)
+  const owner = getTeamToolMemberForEmail(email)
   if (!owner) return null
 
   return {
@@ -2042,7 +2145,7 @@ function buildSalesPortalSession(email, loggedInAt = new Date().toISOString()) {
 }
 
 function createSalesPortalSessionToken(email) {
-  const owner = getSalesPortalOwnerForEmail(email)
+  const owner = getTeamToolMemberForEmail(email)
   if (!owner) return ''
 
   const issuedAt = Date.now()
@@ -2066,7 +2169,7 @@ async function getValidatedSalesPortalSession(request) {
   const payload = getSalesPortalSessionPayload(request)
   if (!payload) return null
 
-  const owner = getSalesPortalOwnerForEmail(payload.email)
+  const owner = getTeamToolMemberForEmail(payload.email)
   if (!owner) return null
 
   await ensureDefinitions()
@@ -2110,6 +2213,29 @@ async function requireSalesPortalAccess(request, response, next) {
 }
 
 async function requireSalesPortalAdminOrInternalAccess(request, response, next) {
+  if (getSalesPortalSessionPayload(request)) {
+    try {
+      const session = await getValidatedSalesPortalSession(request)
+      if (session?.isAdmin) {
+        request.salesPortalSession = session
+        next()
+        return
+      }
+
+      response.status(403).json({
+        ok: false,
+        message: 'Admin access is required for this action.',
+      })
+      return
+    } catch (error) {
+      response.status(503).json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'Could not validate admin access.',
+      })
+      return
+    }
+  }
+
   if (hasVerifiedInternalAccess(request)) {
     next()
     return
@@ -2136,6 +2262,13 @@ async function requireSalesPortalAdminOrInternalAccess(request, response, next) 
 }
 
 async function hasAuthenticatedSalesOrderAccess(request) {
+  if (getSalesPortalSessionPayload(request)) {
+    const session = await getValidatedSalesPortalSession(request)
+    if (!session) return false
+    request.salesPortalSession = session
+    return true
+  }
+
   if (hasVerifiedInternalAccess(request)) return true
 
   const session = await getValidatedSalesPortalSession(request)
@@ -2190,8 +2323,8 @@ function hashSalesPortalAccessCode(email, code) {
 }
 
 async function issueSalesPortalAccessCode(email) {
-  const owner = getSalesPortalOwnerForEmail(email)
-  if (!owner) throw new Error('Choose an approved Trinity sales team member.')
+  const owner = getTeamToolMemberForEmail(email)
+  if (!owner) throw new Error('Choose an approved Trinity team member.')
 
   await ensureDefinitions()
   const now = new Date().toISOString()
@@ -2215,7 +2348,7 @@ async function issueSalesPortalAccessCode(email) {
 }
 
 async function verifySalesPortalAccessCode(email, code) {
-  const owner = getSalesPortalOwnerForEmail(email)
+  const owner = getTeamToolMemberForEmail(email)
   if (!owner) return null
 
   await ensureDefinitions()
@@ -2228,7 +2361,7 @@ async function verifySalesPortalAccessCode(email, code) {
 }
 
 async function getOrCreateActiveSalesPortalUser(email) {
-  const owner = getSalesPortalOwnerForEmail(email)
+  const owner = getTeamToolMemberForEmail(email)
   if (!owner) return null
 
   await ensureDefinitions()
@@ -2256,7 +2389,7 @@ async function getOrCreateActiveSalesPortalUser(email) {
 async function recordSalesPortalLogin(email) {
   try {
     if (!shopDomain || !adminToken) return
-    const owner = getSalesPortalOwnerForEmail(email)
+    const owner = getTeamToolMemberForEmail(email)
     if (!owner) return
 
     await ensureDefinitions()
@@ -2410,6 +2543,125 @@ function filterSalesPortalStateForSession(state, session) {
     teamReportingOrderJobs,
     players,
     teamMembers: salesPortalTeamMembers,
+  }
+}
+
+function filterFullToolStateForSession(state, session) {
+  const salesPortalState = filterSalesPortalStateForSession(state, session)
+  const teamLeaderboardRows = buildTrailingSalesLeaderboard(
+    state?.orderJobs,
+    salesPortalTeamMembers,
+  )
+
+  if (session?.isAdmin) {
+    return {
+      ...state,
+      ok: true,
+      session,
+      teamLeaderboardRows,
+      teamMembers: salesPortalTeamMembers,
+    }
+  }
+
+  if (session?.role === 'production') {
+    return {
+      ...state,
+      ok: true,
+      session,
+      billingContacts: [],
+      crmContacts: [],
+      teamLeaderboardRows: [],
+      teamMembers: teamToolTeamMembers,
+    }
+  }
+
+  return {
+    ...state,
+    ok: true,
+    session,
+    crmContacts: salesPortalState.crmContacts,
+    orderJobs: salesPortalState.orderJobs,
+    teamLeaderboardRows,
+    teamMembers: salesPortalTeamMembers,
+  }
+}
+
+async function prepareFullToolStatePatchForSession(payload, session) {
+  if (session?.isAdmin) return { patch: payload, error: '' }
+
+  if (session?.role === 'production') {
+    return {
+      error: '',
+      patch: {
+        billets: arrayFromPayload(payload?.billets),
+        players: arrayFromPayload(payload?.players),
+        producedBats: arrayFromPayload(payload?.producedBats),
+        customBatModels: arrayFromPayload(payload?.customBatModels),
+        orderJobs: arrayFromPayload(payload?.orderJobs),
+        deletes: {
+          producedBats: arrayFromPayload(payload?.deletes?.producedBats),
+        },
+      },
+    }
+  }
+
+  const sessionOwner = getSalesPortalOwnerForEmail(session?.email)
+  if (!sessionOwner) {
+    return { patch: {}, error: 'An active Trinity sales account is required.' }
+  }
+
+  const requestedContacts = arrayFromPayload(payload?.crmContacts)
+  const existingContacts = await listRecords(resourceConfigs.crmContacts)
+  const existingContactsById = new Map(
+    existingContacts
+      .map((contact) => [cleanString(contact?.id), contact])
+      .filter(([id]) => Boolean(id)),
+  )
+  const unauthorizedContact = requestedContacts.find((contact) => {
+    const existingContact = existingContactsById.get(cleanString(contact?.id))
+    return (
+      existingContact &&
+      (!isManualCrmContactRecord(existingContact) ||
+        !canUpdateOwnedRecord({
+          isAdmin: false,
+          existingOwnerKey: getSalesPortalOwnerKey(
+            existingContact?.salesOwner,
+            existingContact?.ownerEmail,
+          ),
+          sessionOwnerKey: sessionOwner.key,
+        }))
+    )
+  })
+  if (unauthorizedContact) {
+    return {
+      patch: {},
+      error: 'Sales team members can only update CRM contacts assigned to them.',
+    }
+  }
+
+  const crmContacts = requestedContacts
+    .map((contact) =>
+      prepareSalesPortalCrmContactForSession(
+        contact,
+        session,
+        existingContactsById.get(cleanString(contact?.id)),
+      ),
+    )
+    .filter(Boolean)
+
+  return {
+    error: '',
+    patch: {
+      billets: arrayFromPayload(payload?.billets),
+      players: arrayFromPayload(payload?.players),
+      producedBats: arrayFromPayload(payload?.producedBats),
+      customBatModels: arrayFromPayload(payload?.customBatModels),
+      billingContacts: arrayFromPayload(payload?.billingContacts),
+      crmContacts,
+      deletes: {
+        producedBats: arrayFromPayload(payload?.deletes?.producedBats),
+      },
+    },
   }
 }
 

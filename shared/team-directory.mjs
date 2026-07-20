@@ -82,6 +82,19 @@ export function isSalesTeamMember(member) {
   return member?.role === 'sales' || member?.role === 'admin'
 }
 
+export function isTeamToolMember(member) {
+  return Boolean(member?.email && ['admin', 'sales', 'production'].includes(member.role))
+}
+
+export function canTeamMemberAccessToolSection(member, section) {
+  if (!member) return false
+  if (member.role === 'admin') return true
+  if (member.role === 'production') {
+    return ['inventory', 'production', 'players', 'models', 'costs'].includes(section)
+  }
+  return section !== 'production'
+}
+
 export function getTeamMemberByEmail(email) {
   const normalizedEmail = String(email ?? '').trim().toLowerCase()
   return trinityTeamMembers.find((member) => member.email === normalizedEmail) ?? null
