@@ -1014,6 +1014,87 @@ button:hover {
   align-items: start;
 }
 
+.sales-portal-reports-page {
+  display: grid;
+  gap: 18px;
+}
+
+.sales-leaderboard-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.sales-leaderboard-window {
+  margin: 0;
+  color: #6f5a47;
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.sales-leaderboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.sales-leaderboard-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(72, 50, 31, 0.12);
+  border-radius: 16px;
+  padding: 14px;
+  background: #fffaf0;
+}
+
+.sales-leaderboard-card.current {
+  border-color: rgba(47, 76, 50, 0.42);
+  background: rgba(47, 76, 50, 0.09);
+}
+
+.sales-leaderboard-rank {
+  display: inline-grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 999px;
+  background: #2f4c32;
+  color: #fff8ef;
+  font-weight: 900;
+}
+
+.sales-leaderboard-card h3,
+.sales-leaderboard-card p {
+  margin: 0;
+}
+
+.sales-leaderboard-card h3 {
+  color: #26190f;
+  font-size: 1.05rem;
+}
+
+.sales-leaderboard-card p,
+.sales-leaderboard-value span {
+  color: #746353;
+  font-size: 0.78rem;
+}
+
+.sales-leaderboard-value {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+}
+
+.sales-leaderboard-value strong {
+  color: #253f2a;
+  font-size: 1.12rem;
+}
+
+.team-sales-report-list {
+  margin-top: 14px;
+}
+
 .sales-portal-shell .order-intake-form {
   max-width: 980px;
 }
@@ -2312,6 +2393,16 @@ td select {
 
   .section-tabs button {
     flex: 1 1 160px;
+  }
+
+  .sales-leaderboard-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sales-leaderboard-value {
+    grid-column: 2;
+    justify-items: start;
+    text-align: left;
   }
 }
 

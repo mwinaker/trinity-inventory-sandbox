@@ -1704,8 +1704,11 @@ function getCrmContactedAtFromInput(value: string) {
   return Number.isNaN(date.getTime()) ? getCrmDateFromInput(value) || now.toISOString() : date.toISOString()
 }
 
-function getCrmTodayInputValue() {
-  return new Date().toISOString().slice(0, 10)
+function getCrmTodayInputValue(date = new Date()) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function extractCrmEmail(value: string) {
@@ -2744,6 +2747,37 @@ function buildSalesRepSummaries(sales: SalesDashboardSale[]): SalesRepSummary[] 
     .sort((a, b) => b.paidValue - a.paidValue || b.submittedValue - a.submittedValue)
 }
 
+function buildTeamSalesRows(
+  sales: SalesDashboardSale[],
+  owners: CrmOwnerOption[],
+): SalesRepSummary[] {
+  const summariesByKey = new Map(
+    buildSalesRepSummaries(sales).map((summary) => [summary.key, summary]),
+  )
+
+  return owners
+    .map((owner) =>
+      summariesByKey.get(owner.key) ?? {
+        key: owner.key,
+        label: owner.label,
+        email: owner.email,
+        submittedCount: 0,
+        submittedValue: 0,
+        paidCount: 0,
+        paidValue: 0,
+        openCount: 0,
+        openValue: 0,
+        averageDaysToPay: null,
+      },
+    )
+    .sort(
+      (first, second) =>
+        second.submittedValue - first.submittedValue ||
+        second.submittedCount - first.submittedCount ||
+        compareText(first.label, second.label),
+    )
+}
+
 function isSaleInsideDashboardRange(sale: SalesDashboardSale, range: SalesDashboardRange) {
   if (range === 'all') return true
 
@@ -3398,6 +3432,7 @@ type SalesPortalApiResponse = {
   session?: SalesPortalSession
   crmContacts?: CrmContact[]
   orderJobs?: OrderJob[]
+  teamReportingOrderJobs?: OrderJob[]
   players?: PlayerProfile[]
 }
 
@@ -9705,6 +9740,7 @@ function SalesPortalApp() {
   const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
     return []
   })
+  const [teamReportingOrderJobs, setTeamReportingOrderJobs] = useState<OrderJob[]>([])
   const [portalPlayers, setPortalPlayers] = useState<PlayerProfile[]>(() =>
     isDemoSession ? seedPlayers.map((player) => normalizePlayerProfile(player)) : [],
   )
@@ -9722,10 +9758,11 @@ function SalesPortalApp() {
   const [reportStartDate, setReportStartDate] = useState(() => {
     const date = new Date()
     date.setDate(date.getDate() - 6)
-    return date.toISOString().slice(0, 10)
+    return getCrmTodayInputValue(date)
   })
-  const [reportEndDate, setReportEndDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [reportEndDate, setReportEndDate] = useState(() => getCrmTodayInputValue())
   const [reportTypeFilter, setReportTypeFilter] = useState<'all' | CrmTouchpointType>('all')
+  const [reportClock] = useState(() => Date.now())
 
   const portalOwner = session ? getSalesPortalOwnerForEmail(session.email) : null
   const isAdmin = Boolean(
@@ -9771,6 +9808,13 @@ function SalesPortalApp() {
         ? portalOrders.map((order) => createSalesDashboardSaleFromPortalOrder(order))
         : buildSalesDashboardSales(orderJobs),
     [isDemoSession, orderJobs, portalOrders],
+  )
+  const teamPortalSales = useMemo(
+    () =>
+      isDemoSession
+        ? portalSales
+        : buildSalesDashboardSales(teamReportingOrderJobs),
+    [isDemoSession, portalSales, teamReportingOrderJobs],
   )
   const visibleSales = useMemo(
     () =>
@@ -9835,6 +9879,35 @@ function SalesPortalApp() {
       }),
     [reportDateWindow, visibleSales],
   )
+  const teamReportSales = useMemo(
+    () =>
+      teamPortalSales.filter((sale) => {
+        const timestamp = getDateTimestamp(sale.submittedAt)
+        return timestamp >= reportDateWindow.start && timestamp <= reportDateWindow.end
+      }),
+    [reportDateWindow, teamPortalSales],
+  )
+  const teamReportRows = useMemo(
+    () =>
+      buildTeamSalesRows(teamReportSales, portalOwnerOptions).filter(
+        (row) => row.submittedCount > 0,
+      ),
+    [portalOwnerOptions, teamReportSales],
+  )
+  const trailingMonthReport = useMemo(() => {
+    const end = reportClock
+    const start = end - 30 * 24 * 60 * 60 * 1000
+    const sales = teamPortalSales.filter((sale) => {
+      const submittedAt = getDateTimestamp(sale.submittedAt)
+      return submittedAt >= start && submittedAt <= end
+    })
+    return {
+      start,
+      end,
+      sales,
+      rows: buildTeamSalesRows(sales, portalOwnerOptions),
+    }
+  }, [portalOwnerOptions, reportClock, teamPortalSales])
   const reportNewContacts = useMemo(
     () =>
       visibleContactSummaries.filter((summary) => {
@@ -10055,6 +10128,11 @@ function SalesPortalApp() {
             ? statePayload.orderJobs.map((job) => normalizeOrderJob(job))
             : [],
         )
+        setTeamReportingOrderJobs(
+          Array.isArray(statePayload.teamReportingOrderJobs)
+            ? statePayload.teamReportingOrderJobs.map((job) => normalizeOrderJob(job))
+            : [],
+        )
         setPortalPlayers(
           Array.isArray(statePayload.players)
             ? statePayload.players.map((player) => normalizePlayerProfile(player))
@@ -10182,6 +10260,7 @@ function SalesPortalApp() {
     setSession(null)
     setCrmContacts([])
     setOrderJobs([])
+    setTeamReportingOrderJobs([])
     setPortalPlayers([])
     setPortalOrders([])
     setShopifyCatalog([])
@@ -10945,7 +11024,50 @@ function SalesPortalApp() {
       ) : null}
 
       {activeView === 'reports' ? (
-        <section className="sales-portal-report-layout">
+        <div className="sales-portal-reports-page">
+          <section className="panel sales-leaderboard-panel">
+            <div className="split-heading">
+              <div className="section-heading">
+                <p className="eyebrow">Team sales</p>
+                <h2>Trailing 30-day sales leaderboard</h2>
+              </div>
+              <p className="sales-leaderboard-window">
+                {formatSalesDashboardDate(new Date(trailingMonthReport.start).toISOString())}
+                {' – '}
+                {formatSalesDashboardDate(new Date(trailingMonthReport.end).toISOString())}
+              </p>
+            </div>
+            <p className="helper-text">
+              Ranked by submitted order value. Paid and open sales both count when the order was
+              submitted during the rolling 30-day period.
+            </p>
+            <div className="sales-leaderboard-grid">
+              {trailingMonthReport.rows.map((row, index) => (
+                <article
+                  className={`sales-leaderboard-card ${
+                    row.key === portalOwner?.key ? 'current' : ''
+                  }`}
+                  key={row.key}
+                >
+                  <span className="sales-leaderboard-rank">#{index + 1}</span>
+                  <div>
+                    <h3>{row.label}</h3>
+                    <p>
+                      {row.submittedCount} submitted sale
+                      {row.submittedCount === 1 ? '' : 's'}
+                    </p>
+                  </div>
+                  <div className="sales-leaderboard-value">
+                    <strong>{formatSalesOrderMoney(row.submittedValue)}</strong>
+                    <span>{formatSalesOrderMoney(row.paidValue)} paid</span>
+                    <span>{formatSalesOrderMoney(row.openValue)} open</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="sales-portal-report-layout">
           <section className="panel crm-side-panel">
             <div className="section-heading">
               <p className="eyebrow">{isAdmin ? 'Admin report' : 'My report'}</p>
@@ -11070,6 +11192,45 @@ function SalesPortalApp() {
 
           <section className="panel crm-detail-panel">
             <div className="section-heading">
+              <p className="eyebrow">Team sales report</p>
+              <h2>Submitted sales by team member</h2>
+            </div>
+            <p className="helper-text">
+              Team totals for the selected start and end dates. Customer and CRM details remain
+              private to the assigned sales rep and admins.
+            </p>
+            <div className="crm-engagement-list team-sales-report-list">
+              {teamReportRows.length === 0 ? (
+                <p className="empty-state">No team sales in this date range.</p>
+              ) : (
+                teamReportRows.map((row) => (
+                  <article className="crm-engagement-detail sales-portal-report-row" key={row.key}>
+                    <div>
+                      <h3>{row.label}</h3>
+                      <p>{row.email || 'No login email stored'}</p>
+                    </div>
+                    <div className="sales-portal-report-row-grid">
+                      <span>
+                        {row.submittedCount} submitted sale
+                        {row.submittedCount === 1 ? '' : 's'}
+                      </span>
+                      <span>{formatSalesOrderMoney(row.submittedValue)} submitted</span>
+                      <span>
+                        {row.paidCount} paid sale{row.paidCount === 1 ? '' : 's'}
+                      </span>
+                      <span>{formatSalesOrderMoney(row.paidValue)} paid</span>
+                      <span>
+                        {row.openCount} open sale{row.openCount === 1 ? '' : 's'}
+                      </span>
+                      <span>{formatSalesOrderMoney(row.openValue)} open</span>
+                    </div>
+                  </article>
+                ))
+              )}
+            </div>
+
+            <div className="sales-portal-report-section">
+            <div className="section-heading">
               <p className="eyebrow">{isAdmin ? 'By team member' : 'My activity'}</p>
               <h2>{reportRowsByRep.length} rows</h2>
             </div>
@@ -11097,6 +11258,7 @@ function SalesPortalApp() {
                   </article>
                 ))
               )}
+            </div>
             </div>
 
             <div className="sales-portal-report-section">
@@ -11154,6 +11316,7 @@ function SalesPortalApp() {
             </div>
           </section>
         </section>
+        </div>
       ) : null}
     </main>
   )

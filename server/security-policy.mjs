@@ -119,6 +119,32 @@ export function isOrderJobLinkedToCrmContacts(job, contacts) {
   })
 }
 
+export function sanitizeOrderJobForTeamReporting(job) {
+  return {
+    id: cleanString(job?.id),
+    origin: 'internal_sales',
+    intakeId: cleanString(job?.intakeId),
+    shopifyOrderId: cleanString(job?.shopifyOrderId),
+    shopifyOrderName: cleanString(job?.shopifyOrderName),
+    shopifyDraftOrderId: cleanString(job?.shopifyDraftOrderId),
+    shopifyDraftOrderName: cleanString(job?.shopifyDraftOrderName),
+    lineItemId: cleanString(job?.lineItemId),
+    orderSubmittedAt: cleanString(job?.orderSubmittedAt),
+    productTitle: cleanString(job?.productTitle),
+    variantTitle: cleanString(job?.variantTitle),
+    quantity: Number(job?.quantity || 1),
+    financialStatus: cleanString(job?.financialStatus),
+    invoiceStatus: cleanString(job?.invoiceStatus),
+    salesRep: cleanString(job?.salesRep),
+    salesRepEmail: cleanString(job?.salesRepEmail),
+    salesRepPaidNotificationSentAt: cleanString(job?.salesRepPaidNotificationSentAt),
+    totalPrice: cleanString(job?.totalPrice),
+    currency: cleanString(job?.currency),
+    createdAt: cleanString(job?.createdAt),
+    updatedAt: cleanString(job?.updatedAt),
+  }
+}
+
 export function enforcePublicDraftOrderPolicy(payload, isAuthenticatedOperator) {
   const nextPayload = payload && typeof payload === 'object' ? { ...payload } : {}
   if (!isAuthenticatedOperator) {

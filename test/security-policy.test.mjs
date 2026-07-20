@@ -12,6 +12,7 @@ import {
   isManualCrmContactRecord,
   isOrderJobLinkedToCrmContacts,
   isSalesPortalSessionCurrent,
+  sanitizeOrderJobForTeamReporting,
 } from '../server/security-policy.mjs'
 
 test('Shopify launch timestamps must be recent and cannot be far in the future', () => {
@@ -96,6 +97,32 @@ test('a rep can see website orders tied to their own CRM players without seeing 
     ),
     false,
   )
+})
+
+test('team reporting keeps sales totals while removing customer and CRM details', () => {
+  const sanitized = sanitizeOrderJobForTeamReporting({
+    id: 'job-1',
+    origin: 'internal_sales',
+    intakeId: 'sales-1',
+    orderSubmittedAt: '2026-07-19T18:00:00.000Z',
+    salesRep: 'Shane Telfer',
+    salesRepEmail: 'shane@trinitybats.com',
+    quantity: 2,
+    totalPrice: '159.00',
+    customerName: 'Private Customer',
+    customerEmail: 'private@example.com',
+    playerName: 'Private Player',
+    billingPhone: '555-555-1212',
+    notes: 'Private note',
+  })
+
+  assert.equal(sanitized.salesRep, 'Shane Telfer')
+  assert.equal(sanitized.totalPrice, '159.00')
+  assert.equal('customerName' in sanitized, false)
+  assert.equal('customerEmail' in sanitized, false)
+  assert.equal('playerName' in sanitized, false)
+  assert.equal('billingPhone' in sanitized, false)
+  assert.equal('notes' in sanitized, false)
 })
 
 test('attachment policy accepts common business files and rejects executable web content', () => {

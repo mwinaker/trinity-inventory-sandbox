@@ -15,6 +15,7 @@ import {
   isManualCrmContactRecord,
   isOrderJobLinkedToCrmContacts,
   isSalesPortalSessionCurrent,
+  sanitizeOrderJobForTeamReporting,
 } from './security-policy.mjs'
 import {
   getKnownProPlayerAffiliation,
@@ -2359,6 +2360,9 @@ function filterSalesPortalStateForSession(state, session) {
   const internalOrderJobs = allOrderJobs.filter(
     (job) => job?.origin === 'internal_sales',
   )
+  const teamReportingOrderJobs = internalOrderJobs.map((job) =>
+    sanitizeOrderJobForTeamReporting(job),
+  )
   const crmContacts = getManualCrmContactRecords(state?.crmContacts)
   const players = arrayFromPayload(state?.players)
     .filter((player) => player?.profileKind !== 'Trainer' && arrayFromPayload(player?.bats).length > 0)
@@ -2373,6 +2377,7 @@ function filterSalesPortalStateForSession(state, session) {
       session,
       crmContacts,
       orderJobs: allOrderJobs,
+      teamReportingOrderJobs,
       players,
       teamMembers: salesPortalTeamMembers,
     }
@@ -2391,6 +2396,7 @@ function filterSalesPortalStateForSession(state, session) {
         (job?.origin === 'internal_sales' && isSalesPortalOrderJobOwnedBy(job, owner)) ||
         isOrderJobLinkedToCrmContacts(job, ownedContacts),
     ),
+    teamReportingOrderJobs,
     players,
     teamMembers: salesPortalTeamMembers,
   }
