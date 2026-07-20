@@ -4187,7 +4187,7 @@ function SalesOrderFormFields({
                     })
                   }}
                 />
-                <span>Pro order</span>
+                <span>MLB/MILB Order</span>
               </label>
 
               <div className="form-row">
