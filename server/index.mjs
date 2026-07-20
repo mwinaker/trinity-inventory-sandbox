@@ -4,6 +4,17 @@ import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import crypto from 'node:crypto'
 import dotenv from 'dotenv'
+import {
+  canUpdateOwnedRecord,
+  createFixedWindowRateLimiter,
+  enforcePublicDraftOrderPolicy,
+  getAllowedOrderAttachmentContentType,
+  getDerivedCrmContactDeleteIds,
+  getSalesOrderBoundsError,
+  isFreshShopifyLaunchTimestamp,
+  isManualCrmContactRecord,
+  isSalesPortalSessionCurrent,
+} from './security-policy.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -92,6 +103,7 @@ const salesPortalSessionMaxAgeDays = 30
 const salesPortalSessionMaxAgeMs = salesPortalSessionMaxAgeDays * 24 * 60 * 60 * 1000
 const salesPortalLoginCodeMaxAgeMs = 10 * 60 * 1000
 const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
+const orderAttachmentUploadTokenMaxAgeMs = 2 * 60 * 60 * 1000
 const internalSessionSecret =
   process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
 const standaloneInternalAccessQueryParam = 'access'
@@ -105,6 +117,31 @@ const stateCacheFilePath =
 const catalogCacheTtlMs = 10 * 60 * 1000
 const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
 const maxOrderAttachmentBytes = 20 * 1024 * 1024
+const orderAttachmentTransportRateLimiter = createFixedWindowRateLimiter({
+  max: 30,
+  windowMs: 15 * 60 * 1000,
+  message: 'Too many attachment uploads. Please wait before uploading another file.',
+})
+const publicOrderAttachmentRateLimiter = createFixedWindowRateLimiter({
+  max: 10,
+  windowMs: 60 * 60 * 1000,
+  message: 'Too many public attachment uploads. Please wait before trying again.',
+})
+const publicSalesOrderRateLimiter = createFixedWindowRateLimiter({
+  max: 10,
+  windowMs: 60 * 60 * 1000,
+  message: 'Too many public order submissions. Please wait before trying again.',
+})
+const salesPortalLoginRateLimiter = createFixedWindowRateLimiter({
+  max: 5,
+  windowMs: 15 * 60 * 1000,
+  message: 'Too many sign-in code requests. Please wait before requesting another code.',
+})
+const salesPortalVerifyRateLimiter = createFixedWindowRateLimiter({
+  max: 20,
+  windowMs: 15 * 60 * 1000,
+  message: 'Too many sign-in attempts. Please wait and try again.',
+})
 const billetDiameterWeightCorrectionOz = 1.75
 const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
 const billetSourceOptions = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
@@ -625,8 +662,11 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
   }
 })
 
+app.use(establishInternalSession)
+
 app.post(
   '/api/order-attachments',
+  orderAttachmentTransportRateLimiter,
   express.raw({ type: '*/*', limit: maxOrderAttachmentBytes }),
   async (request, response) => {
     try {
@@ -648,17 +688,39 @@ app.post(
         return
       }
 
-      const filename =
-        decodeAttachmentHeader(request.get('x-trinity-attachment-name')) || 'attachment'
-      const contentType =
-        cleanString(request.get('x-trinity-attachment-type')) || 'application/octet-stream'
+      const isAuthenticatedOperator = await hasAuthenticatedSalesOrderAccess(request)
+      if (
+        !isAuthenticatedOperator &&
+        !applyRateLimit(publicOrderAttachmentRateLimiter, request, response)
+      ) {
+        return
+      }
+
+      const filename = decodeAttachmentHeader(request.get('x-trinity-attachment-name'))
+      const declaredContentType =
+        cleanString(request.get('x-trinity-attachment-type')) || cleanString(request.get('content-type'))
+      const contentType = getAllowedOrderAttachmentContentType(filename, declaredContentType)
+      if (!filename || !contentType) {
+        response.status(415).json({
+          ok: false,
+          message:
+            'Attachment type is not allowed. Use PDF, JPG, PNG, WEBP, HEIC, TXT, CSV, Word, or Excel.',
+        })
+        return
+      }
       const attachment = await uploadOrderAttachmentToShopifyFiles({
         filename,
         contentType,
         buffer: fileBuffer,
       })
 
-      response.json({ ok: true, attachment })
+      response.json({
+        ok: true,
+        attachment: {
+          ...attachment,
+          uploadToken: createOrderAttachmentUploadToken(attachment),
+        },
+      })
     } catch (error) {
       response.status(500).json({
         ok: false,
@@ -669,7 +731,6 @@ app.post(
 )
 
 app.use(express.json({ limit: '5mb' }))
-app.use(establishInternalSession)
 
 app.options('/api/analytics/events', (request, response) => {
   setAnalyticsCorsHeaders(response)
@@ -689,19 +750,26 @@ app.get('/api/health', async (_request, response) => {
   })
 })
 
-app.get('/api/sales-portal/session', (request, response) => {
-  const session = getSalesPortalSession(request)
-  response.set('Cache-Control', 'no-store')
+app.get('/api/sales-portal/session', async (request, response) => {
+  try {
+    const session = await getValidatedSalesPortalSession(request)
+    response.set('Cache-Control', 'no-store')
 
-  if (!session) {
-    response.status(401).json({ ok: false, message: 'Sales portal sign-in required.' })
-    return
+    if (!session) {
+      response.status(401).json({ ok: false, message: 'Sales portal sign-in required.' })
+      return
+    }
+
+    response.json({ ok: true, session })
+  } catch (error) {
+    response.status(503).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not validate the sales portal session.',
+    })
   }
-
-  response.json({ ok: true, session })
 })
 
-app.post('/api/sales-portal/login-code', async (request, response) => {
+app.post('/api/sales-portal/login-code', salesPortalLoginRateLimiter, async (request, response) => {
   try {
     const email = normalizeSalesPortalEmail(request.body?.email)
     const owner = getSalesPortalOwnerForEmail(email)
@@ -709,6 +777,15 @@ app.post('/api/sales-portal/login-code', async (request, response) => {
       response.status(400).json({
         ok: false,
         message: 'Use a Trinity sales team email address.',
+      })
+      return
+    }
+
+    const activeUser = await getOrCreateActiveSalesPortalUser(email)
+    if (!activeUser) {
+      response.status(400).json({
+        ok: false,
+        message: 'Use an active Trinity sales team account.',
       })
       return
     }
@@ -772,7 +849,7 @@ app.post('/api/sales-portal/admin-login-code', requireSalesPortalAdminOrInternal
   }
 })
 
-app.post('/api/sales-portal/verify-code', async (request, response) => {
+app.post('/api/sales-portal/verify-code', salesPortalVerifyRateLimiter, async (request, response) => {
   const email = normalizeSalesPortalEmail(request.body?.email)
   const rawCode = cleanString(request.body?.code)
   const code = rawCode.replace(/\D/g, '')
@@ -785,6 +862,7 @@ app.post('/api/sales-portal/verify-code', async (request, response) => {
   }
 
   let verified = false
+  let verifiedUser = null
   if (savedCode) {
     if (savedCode.expiresAt < Date.now()) {
       salesPortalLoginCodes.delete(email)
@@ -799,16 +877,20 @@ app.post('/api/sales-portal/verify-code', async (request, response) => {
     }
   }
 
-  if (!verified) {
-    try {
-      verified = await verifySalesPortalAccessCode(email, rawCode)
-    } catch (error) {
-      response.status(500).json({
-        ok: false,
-        message: error instanceof Error ? error.message : 'Could not verify the access code.',
-      })
-      return
+  try {
+    if (verified) {
+      verifiedUser = await getOrCreateActiveSalesPortalUser(email)
+      verified = Boolean(verifiedUser)
+    } else {
+      verifiedUser = await verifySalesPortalAccessCode(email, rawCode)
+      verified = Boolean(verifiedUser)
     }
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not verify the access code.',
+    })
+    return
   }
 
   if (!verified) {
@@ -864,8 +946,48 @@ app.patch('/api/sales-portal/state', requireSalesPortalAccess, async (request, r
       return
     }
 
-    const crmContacts = arrayFromPayload(request.body?.crmContacts)
-      .map((contact) => prepareSalesPortalCrmContactForSession(contact, request.salesPortalSession))
+    const requestedContacts = arrayFromPayload(request.body?.crmContacts)
+    const existingContacts = await listRecords(resourceConfigs.crmContacts)
+    const existingContactsById = new Map(
+      existingContacts
+        .map((contact) => [cleanString(contact?.id), contact])
+        .filter(([id]) => Boolean(id)),
+    )
+
+    if (!request.salesPortalSession?.isAdmin) {
+      const sessionOwner = getSalesPortalOwnerForEmail(request.salesPortalSession?.email)
+      const unauthorizedContact = requestedContacts.find((contact) => {
+        const existingContact = existingContactsById.get(cleanString(contact?.id))
+        return (
+          existingContact &&
+          (!isManualCrmContactRecord(existingContact) ||
+            !canUpdateOwnedRecord({
+              isAdmin: false,
+              existingOwnerKey: getSalesPortalOwnerKey(
+                existingContact?.salesOwner,
+                existingContact?.ownerEmail,
+              ),
+              sessionOwnerKey: sessionOwner?.key,
+            }))
+        )
+      })
+      if (unauthorizedContact) {
+        response.status(403).json({
+          ok: false,
+          message: 'Sales team members can only update CRM contacts assigned to them.',
+        })
+        return
+      }
+    }
+
+    const crmContacts = requestedContacts
+      .map((contact) =>
+        prepareSalesPortalCrmContactForSession(
+          contact,
+          request.salesPortalSession,
+          existingContactsById.get(cleanString(contact?.id)),
+        ),
+      )
       .filter(Boolean)
     const result = await enqueueStateWrite(() => applyStatePatch({ crmContacts }))
 
@@ -1226,7 +1348,28 @@ app.post('/api/sales-orders', async (request, response) => {
       return
     }
 
-    const payload = request.body ?? {}
+    const isAuthenticatedOperator = await hasAuthenticatedSalesOrderAccess(request)
+    if (
+      !isAuthenticatedOperator &&
+      !applyRateLimit(publicSalesOrderRateLimiter, request, response)
+    ) {
+      return
+    }
+
+    const preparedPayload = prepareSalesOrderPayloadForRequest(request.body ?? {}, {
+      isAuthenticatedOperator,
+      salesPortalSession: request.salesPortalSession,
+    })
+    if (preparedPayload.error) {
+      response.status(400).json({ ok: false, message: preparedPayload.error })
+      return
+    }
+    const payload = preparedPayload.payload
+    const attachmentValidationMessage = validateOrderAttachmentUploadReceipt(payload.attachment)
+    if (attachmentValidationMessage) {
+      response.status(400).json({ ok: false, message: attachmentValidationMessage })
+      return
+    }
     const validationMessage = validateSalesOrderPayload(payload)
     if (validationMessage) {
       response.status(400).json({
@@ -1535,28 +1678,12 @@ function serveAppShell(_request, response) {
 
 function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
-  const hasTrustedEmbeddedContext = hasTrustedEmbeddedShopifyContext(request)
   const hasCryptographicallyVerifiedLaunch = hasValidShopifyLaunch(request)
   const isNavigationRequest = isHtmlNavigationRequest(request)
 
   if (
     isNavigationRequest &&
-    hasTrustedEmbeddedContext &&
-    !hasStandaloneAccess &&
-    !hasValidInternalSession(request)
-  ) {
-    const fallbackToken = createStandaloneInternalAccessToken()
-    if (fallbackToken) {
-      const redirectUrl = new URL(request.originalUrl, getRequestOrigin(request))
-      redirectUrl.searchParams.set(standaloneInternalAccessQueryParam, fallbackToken)
-      response.redirect(302, `${redirectUrl.pathname}${redirectUrl.search}`)
-      return
-    }
-  }
-
-  if (
-    isNavigationRequest &&
-    (hasCryptographicallyVerifiedLaunch || hasTrustedEmbeddedContext || hasStandaloneAccess)
+    (hasCryptographicallyVerifiedLaunch || hasStandaloneAccess)
   ) {
     const token = createInternalSessionToken()
     if (token) {
@@ -1570,7 +1697,7 @@ function establishInternalSession(request, response, next) {
     }
   }
 
-  if (hasStandaloneAccess && !hasTrustedEmbeddedContext) {
+  if (hasStandaloneAccess) {
     const redirectUrl = new URL(request.originalUrl, getRequestOrigin(request))
     redirectUrl.searchParams.delete(standaloneInternalAccessQueryParam)
     const sanitizedPath = `${redirectUrl.pathname}${redirectUrl.search}`
@@ -1597,14 +1724,7 @@ function isHtmlNavigationRequest(request) {
 }
 
 function requireInternalAccess(request, response, next) {
-  if (
-    isLocalRequest(request) ||
-    hasValidInternalSession(request) ||
-    hasValidBearerSession(request) ||
-    hasValidShopifyLaunch(request) ||
-    hasTrustedEmbeddedShopifyContext(request) ||
-    hasValidEmbeddedAdminReferer(request)
-  ) {
+  if (hasVerifiedInternalAccess(request)) {
     next()
     return
   }
@@ -1613,6 +1733,15 @@ function requireInternalAccess(request, response, next) {
     ok: false,
     message: 'Internal inventory access requires a verified Shopify session.',
   })
+}
+
+function hasVerifiedInternalAccess(request) {
+  return (
+    isLocalRequest(request) ||
+    hasValidInternalSession(request) ||
+    hasValidBearerSession(request) ||
+    hasValidShopifyLaunch(request)
+  )
 }
 
 function hasValidShopifyLaunch(request) {
@@ -1627,42 +1756,6 @@ function hasValidStandaloneInternalAccess(request) {
   if (!expectedToken) return false
 
   return safeEqual(expectedToken, providedToken, 'utf8')
-}
-
-function hasTrustedEmbeddedShopifyContext(request) {
-  const requestShop = cleanString(getQueryParam(request, 'shop'))
-  if (shopDomain && requestShop !== shopDomain) return false
-
-  const embedded = cleanString(getQueryParam(request, 'embedded'))
-  const host = cleanString(getQueryParam(request, 'host'))
-  if (!requestShop || (embedded !== '1' && !host)) return false
-
-  const shopSlug = shopDomain?.replace('.myshopify.com', '') ?? ''
-  const trustedHostPath = shopSlug ? `admin.shopify.com/store/${shopSlug}` : ''
-  const decodedHost = host ? decodeBase64Url(host) : ''
-  if (trustedHostPath && decodedHost.includes(trustedHostPath)) return true
-
-  return hasValidEmbeddedAdminReferer(request)
-}
-
-function hasValidEmbeddedAdminReferer(request) {
-  const referer = cleanString(request.get('referer'))
-  if (!referer) return false
-
-  try {
-    const url = new URL(referer)
-    if (url.hostname !== 'admin.shopify.com') return false
-
-    const requestShop = cleanString(getQueryParam(request, 'shop'))
-    if (shopDomain && requestShop && requestShop !== shopDomain) return false
-    if (shopDomain && !requestShop && !referer.includes(`/store/${shopDomain.replace('.myshopify.com', '')}/`)) {
-      return false
-    }
-
-    return url.pathname.includes('/apps/trinity-billet-inventory')
-  } catch {
-    return false
-  }
 }
 
 function hasValidShopifyHmac(request) {
@@ -1685,6 +1778,8 @@ function hasValidShopifyHmac(request) {
     .digest('hex')
 
   if (!safeEqual(digest, hmac, 'hex')) return false
+
+  if (!isFreshShopifyLaunchTimestamp(getQueryParam(request, 'timestamp'))) return false
 
   const requestShop = getQueryParam(request, 'shop')
   return !shopDomain || !requestShop || requestShop === shopDomain
@@ -1823,7 +1918,8 @@ function isSecureRequest(request) {
 }
 
 function isLocalRequest(request) {
-  return ['localhost', '127.0.0.1', '::1'].includes(request.hostname)
+  const remoteAddress = cleanString(request.socket?.remoteAddress).replace(/^::ffff:/, '')
+  return remoteAddress === '127.0.0.1' || remoteAddress === '::1'
 }
 
 function normalizeSalesPortalEmail(value) {
@@ -1903,14 +1999,27 @@ function createSalesPortalSessionToken(email) {
   })
 }
 
-function getSalesPortalSession(request) {
+function getSalesPortalSessionPayload(request) {
   const payload = verifySalesPortalSignedPayload(getCookie(request, salesPortalSessionCookieName))
   if (payload?.purpose !== 'sales_portal_session') return null
   if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
+  if (typeof payload.iat !== 'number' || payload.iat <= 0) return null
+  return payload
+}
+
+async function getValidatedSalesPortalSession(request) {
+  const payload = getSalesPortalSessionPayload(request)
+  if (!payload) return null
+
+  const owner = getSalesPortalOwnerForEmail(payload.email)
+  if (!owner) return null
+
+  await ensureDefinitions()
+  const user = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
+  if (!isSalesPortalSessionCurrent(payload, user)) return null
+
   const loggedInAt =
-    typeof payload.iat === 'number' && payload.iat > 0
-      ? new Date(payload.iat).toISOString()
-      : new Date().toISOString()
+    new Date(payload.iat).toISOString()
   return buildSalesPortalSession(payload.email, loggedInAt)
 }
 
@@ -1924,29 +2033,68 @@ function getSalesPortalCookieOptions(request) {
   }
 }
 
-function requireSalesPortalAccess(request, response, next) {
-  const session = getSalesPortalSession(request)
-  if (session) {
-    request.salesPortalSession = session
-    next()
-    return
-  }
+async function requireSalesPortalAccess(request, response, next) {
+  try {
+    const session = await getValidatedSalesPortalSession(request)
+    if (session) {
+      request.salesPortalSession = session
+      next()
+      return
+    }
 
-  response.status(401).json({
-    ok: false,
-    message: 'Sales portal sign-in required.',
-  })
+    response.status(401).json({
+      ok: false,
+      message: 'Sales portal sign-in required.',
+    })
+  } catch (error) {
+    response.status(503).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not validate sales portal access.',
+    })
+  }
 }
 
-function requireSalesPortalAdminOrInternalAccess(request, response, next) {
-  const session = getSalesPortalSession(request)
-  if (session?.isAdmin) {
-    request.salesPortalSession = session
+async function requireSalesPortalAdminOrInternalAccess(request, response, next) {
+  if (hasVerifiedInternalAccess(request)) {
     next()
     return
   }
 
-  requireInternalAccess(request, response, next)
+  try {
+    const session = await getValidatedSalesPortalSession(request)
+    if (session?.isAdmin) {
+      request.salesPortalSession = session
+      next()
+      return
+    }
+
+    response.status(401).json({
+      ok: false,
+      message: 'Admin access is required to issue sales portal access codes.',
+    })
+  } catch (error) {
+    response.status(503).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not validate admin access.',
+    })
+  }
+}
+
+async function hasAuthenticatedSalesOrderAccess(request) {
+  if (hasVerifiedInternalAccess(request)) return true
+
+  const session = await getValidatedSalesPortalSession(request)
+  if (!session) return false
+  request.salesPortalSession = session
+  return true
+}
+
+function applyRateLimit(rateLimiter, request, response) {
+  let allowed = false
+  rateLimiter(request, response, () => {
+    allowed = true
+  })
+  return allowed
 }
 
 function createSalesPortalLoginCode() {
@@ -2013,15 +2161,41 @@ async function issueSalesPortalAccessCode(email) {
 
 async function verifySalesPortalAccessCode(email, code) {
   const owner = getSalesPortalOwnerForEmail(email)
-  if (!owner) return false
+  if (!owner) return null
 
   await ensureDefinitions()
   const user = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
   const status = cleanString(user?.status).toLowerCase()
   const codeHash = cleanString(user?.accessCodeHash)
-  if (status !== 'active' || !codeHash) return false
+  if (status !== 'active' || !codeHash) return null
 
-  return safeEqual(codeHash, hashSalesPortalAccessCode(owner.email, code), 'utf8')
+  return safeEqual(codeHash, hashSalesPortalAccessCode(owner.email, code), 'utf8') ? user : null
+}
+
+async function getOrCreateActiveSalesPortalUser(email) {
+  const owner = getSalesPortalOwnerForEmail(email)
+  if (!owner) return null
+
+  await ensureDefinitions()
+  const existing = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
+  if (existing) {
+    return cleanString(existing.status).toLowerCase() === 'active' ? existing : null
+  }
+
+  const now = new Date().toISOString()
+  const user = {
+    id: owner.email,
+    email: owner.email,
+    name: owner.name,
+    role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+    status: 'active',
+    accessCodeHash: '',
+    accessCodeRotatedAt: '',
+    createdAt: now,
+    updatedAt: now,
+  }
+  await upsertRecord(resourceConfigs.salesPortalUsers, user)
+  return user
 }
 
 async function recordSalesPortalLogin(email) {
@@ -2032,7 +2206,7 @@ async function recordSalesPortalLogin(email) {
 
     await ensureDefinitions()
     const existing = await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)
-    if (!existing?.accessCodeHash) return
+    if (!existing || cleanString(existing.status).toLowerCase() !== 'active') return
 
     const now = new Date().toISOString()
     await upsertRecord(resourceConfigs.salesPortalUsers, {
@@ -2129,43 +2303,12 @@ function isSalesPortalOrderJobOwnedBy(job, owner) {
   return getSalesPortalOwnerKey(job?.salesRep, job?.salesRepEmail) === owner.key
 }
 
-const manualCrmContactSourceLabels = new Set([
-  'manual crm entry',
-  'sales portal',
-  'sales portal demo',
-  'crm assistant',
-])
-const manualCrmContactTagLabels = new Set(['manual entry', 'ai captured'])
-
-function normalizeCrmContactLabel(value) {
-  return cleanString(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim()
-}
-
 function getCrmContactTags(contact) {
   return arrayFromPayload(contact?.tags).map((tag) => cleanString(tag)).filter(Boolean)
 }
 
-function isManualCrmContactRecord(contact) {
-  const source = normalizeCrmContactLabel(contact?.source)
-  if (manualCrmContactSourceLabels.has(source)) return true
-
-  return getCrmContactTags(contact).some((tag) =>
-    manualCrmContactTagLabels.has(normalizeCrmContactLabel(tag)),
-  )
-}
-
 function getManualCrmContactRecords(contacts) {
   return arrayFromPayload(contacts).filter(isManualCrmContactRecord)
-}
-
-function getNonManualCrmContactDeleteIds(contacts) {
-  return arrayFromPayload(contacts)
-    .filter((contact) => !isManualCrmContactRecord(contact))
-    .map((contact) => cleanString(contact?.id))
-    .filter(Boolean)
 }
 
 function filterSalesPortalStateForSession(state, session) {
@@ -2194,39 +2337,47 @@ function filterSalesPortalStateForSession(state, session) {
   }
 }
 
-function prepareSalesPortalCrmContactForSession(contact, session) {
+function prepareSalesPortalCrmContactForSession(contact, session, existingContact = null) {
   if (!contact || typeof contact !== 'object') return null
   const sessionOwner = getSalesPortalOwnerForEmail(session?.email)
   if (!sessionOwner) return null
+  const mergedContact = existingContact ? { ...existingContact, ...contact } : contact
   const requestedOwner =
     session?.isAdmin
-      ? getSalesPortalOwnerForEmail(contact.ownerEmail) ?? getSalesPortalOwnerForName(contact.salesOwner)
+      ? getSalesPortalOwnerForEmail(mergedContact.ownerEmail) ??
+        getSalesPortalOwnerForName(mergedContact.salesOwner)
       : sessionOwner
   const owner = requestedOwner || sessionOwner
   const now = new Date().toISOString()
-  const touchpoints = arrayFromPayload(contact.touchpoints).map((touchpoint) => {
+  const touchpoints = arrayFromPayload(mergedContact.touchpoints).map((touchpoint) => {
     const touchpointOwner = getSalesPortalOwnerForName(touchpoint?.salesRep)
     return {
       ...touchpoint,
-      salesRep: touchpointOwner?.name || cleanString(touchpoint?.salesRep) || owner.name,
+      salesRep: session?.isAdmin
+        ? touchpointOwner?.name || cleanString(touchpoint?.salesRep) || owner.name
+        : owner.name,
     }
   })
-  const tags = Array.from(new Set([...getCrmContactTags(contact), 'Manual entry']))
+  const tags = Array.from(new Set([...getCrmContactTags(mergedContact), 'Manual entry']))
 
   return {
-    ...contact,
-    id: cleanString(contact.id) || createPlainId('crm-contact'),
+    ...mergedContact,
+    id: cleanString(mergedContact.id) || createPlainId('crm-contact'),
     salesOwner:
-      session?.isAdmin && !requestedOwner ? cleanString(contact.salesOwner) || owner.name : owner.name,
+      session?.isAdmin && !requestedOwner
+        ? cleanString(mergedContact.salesOwner) || owner.name
+        : owner.name,
     ownerEmail: session?.isAdmin
-      ? normalizeSalesPortalEmail(contact.ownerEmail) || owner.email
+      ? requestedOwner
+        ? owner.email
+        : normalizeSalesPortalEmail(mergedContact.ownerEmail)
       : owner.email,
     source: 'Manual CRM entry',
     tags,
     touchpoints,
     sandboxOnly: false,
-    updatedAt: cleanString(contact.updatedAt) || now,
-    createdAt: cleanString(contact.createdAt) || now,
+    updatedAt: now,
+    createdAt: cleanString(existingContact?.createdAt) || cleanString(mergedContact.createdAt) || now,
   }
 }
 
@@ -2246,6 +2397,47 @@ function verifyDraftInvoiceSendToken(token) {
   if (payload?.purpose !== 'draft_invoice_send') return null
   if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
   return payload
+}
+
+function createOrderAttachmentUploadToken(attachment) {
+  const normalized = normalizeOrderAttachment(attachment)
+  if (!normalized) return ''
+
+  return createSignedPayload({
+    purpose: 'order_attachment_upload',
+    id: normalized.id,
+    shopifyFileId: normalized.shopifyFileId,
+    filename: normalized.filename,
+    downloadUrl: normalized.downloadUrl,
+    contentType: normalized.contentType,
+    bytes: normalized.bytes,
+    exp: Date.now() + orderAttachmentUploadTokenMaxAgeMs,
+  })
+}
+
+function validateOrderAttachmentUploadReceipt(attachment) {
+  if (!attachment) return ''
+
+  const normalized = normalizeOrderAttachment(attachment)
+  const payload = verifySignedPayload(cleanString(attachment?.uploadToken))
+  if (
+    !normalized ||
+    payload?.purpose !== 'order_attachment_upload' ||
+    typeof payload.exp !== 'number' ||
+    payload.exp < Date.now()
+  ) {
+    return 'Attachment upload could not be verified. Upload the file again.'
+  }
+
+  const matchesReceipt =
+    cleanString(payload.id) === normalized.id &&
+    cleanString(payload.shopifyFileId) === normalized.shopifyFileId &&
+    cleanString(payload.filename) === normalized.filename &&
+    cleanString(payload.downloadUrl) === normalized.downloadUrl &&
+    cleanString(payload.contentType) === normalized.contentType &&
+    Number(payload.bytes) === normalized.bytes
+
+  return matchesReceipt ? '' : 'Attachment details changed after upload. Upload the file again.'
 }
 
 function createSignedPayload(payload) {
@@ -2961,7 +3153,7 @@ function normalizeStatePatch(payload) {
   patch.deletes.crmContacts = Array.from(
     new Set([
       ...arrayFromPayload(patch.deletes.crmContacts).map((id) => cleanString(id)).filter(Boolean),
-      ...getNonManualCrmContactDeleteIds(payload?.crmContacts),
+      ...getDerivedCrmContactDeleteIds(payload?.crmContacts),
     ]),
   )
 
@@ -2994,7 +3186,7 @@ function buildStatePatchFromStates(baseState, nextState) {
       patch[entry.key] = changedRecords
     }
   }
-  const deletedCrmContactIds = getNonManualCrmContactDeleteIds(baseState?.crmContacts)
+  const deletedCrmContactIds = getDerivedCrmContactDeleteIds(baseState?.crmContacts)
   if (deletedCrmContactIds.length > 0) {
     patch.deletes = {
       ...(patch.deletes ?? {}),
@@ -3044,7 +3236,7 @@ async function applyStatePatch(payload, options = {}) {
 
   const patch = normalizeStatePatch(payload)
   if (patch.crmContacts.length > 0 || patch.deletes.crmContacts.length > 0) {
-    const staleCrmContactIds = getNonManualCrmContactDeleteIds(
+    const staleCrmContactIds = getDerivedCrmContactDeleteIds(
       await listRecords(resourceConfigs.crmContacts),
     )
     patch.deletes.crmContacts = Array.from(
@@ -5372,7 +5564,43 @@ function formatMailingAddress(address) {
     .join(' | ')
 }
 
+function prepareSalesOrderPayloadForRequest(payload, options = {}) {
+  const nextPayload = {
+    ...enforcePublicDraftOrderPolicy(payload, options.isAuthenticatedOperator),
+    lines: arrayFromPayload(payload?.lines).map((line) => ({ ...line })),
+  }
+  const portalOwner = getSalesPortalOwnerForEmail(options.salesPortalSession?.email)
+
+  if (portalOwner) {
+    nextPayload.salesRep = portalOwner.name
+    nextPayload.salesRepEmail = portalOwner.email
+  } else {
+    const submittedRepName = cleanString(nextPayload.salesRep)
+    const submittedRepEmail = normalizeSalesPortalEmail(nextPayload.salesRepEmail)
+    const emailOwner = submittedRepEmail ? getSalesPortalOwnerForEmail(submittedRepEmail) : null
+    const nameOwner = submittedRepName ? getSalesPortalOwnerForName(submittedRepName) : null
+
+    if ((submittedRepName || cleanString(nextPayload.salesRepEmail)) && !emailOwner && !nameOwner) {
+      return { error: 'Choose an approved Trinity sales team member.', payload: null }
+    }
+    if (emailOwner && nameOwner && emailOwner.key !== nameOwner.key) {
+      return { error: 'Sales rep name and email must identify the same team member.', payload: null }
+    }
+
+    const submittedOwner = emailOwner || nameOwner
+    if (submittedOwner) {
+      nextPayload.salesRep = submittedOwner.name
+      nextPayload.salesRepEmail = submittedOwner.email
+    }
+  }
+
+  return { error: '', payload: nextPayload }
+}
+
 function validateSalesOrderPayload(payload) {
+  const boundsError = getSalesOrderBoundsError(payload)
+  if (boundsError) return boundsError
+
   const playerName = cleanString(payload?.playerName || payload?.customerName)
   const salesRepEmail = normalizeEmail(payload?.salesRepEmail)
   const payer = resolvePayer(payload ?? {})

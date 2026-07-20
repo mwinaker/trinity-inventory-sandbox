@@ -202,6 +202,7 @@ type OrderAttachment = {
   bytes: number
   uploadedAt: string
   fileStatus: string
+  uploadToken: string
 }
 
 type OrderJob = {
@@ -1351,6 +1352,7 @@ function normalizeOrderAttachment(
     bytes: Number(attachment.bytes ?? 0) || 0,
     uploadedAt: String(attachment.uploadedAt ?? ''),
     fileStatus: String(attachment.fileStatus ?? ''),
+    uploadToken: String(attachment.uploadToken ?? ''),
   }
 }
 
@@ -3547,6 +3549,7 @@ type SalesOrderFormFieldsProps = {
   setAttachmentFile: Dispatch<SetStateAction<File | null>>
   isSubmitting: boolean
   hideSalesRepFields?: boolean
+  draftOnly?: boolean
 }
 
 function SalesOrderFormFields({
@@ -3567,6 +3570,7 @@ function SalesOrderFormFields({
   setAttachmentFile,
   isSubmitting,
   hideSalesRepFields = false,
+  draftOnly = false,
 }: SalesOrderFormFieldsProps) {
   return (
     <>
@@ -3754,26 +3758,24 @@ function SalesOrderFormFields({
       <SalesOrderShippingAddressFields draft={draft} updateField={updateField} />
 
       {!hideSalesRepFields ? (
-        <>
-          <label>
-            Sales rep
-            <input
-              value={draft.salesRep}
-              placeholder="Example: Matt"
-              onChange={(event) => updateField('salesRep', event.target.value)}
-            />
-          </label>
-
-          <label>
-            Sales rep email
-            <input
-              type="email"
-              value={draft.salesRepEmail}
-              placeholder="rep@trinitybats.com"
-              onChange={(event) => updateField('salesRepEmail', event.target.value)}
-            />
-          </label>
-        </>
+        <label>
+          Sales rep
+          <select
+            value={getCanonicalCrmOwnerOption(draft.salesRep, draft.salesRepEmail)?.key ?? ''}
+            onChange={(event) => {
+              const owner = seedCrmOwnerOptions.find((option) => option.key === event.target.value)
+              updateField('salesRep', owner?.name ?? '')
+              updateField('salesRepEmail', owner?.email ?? '')
+            }}
+          >
+            <option value="">Unassigned</option>
+            {seedCrmOwnerOptions.map((owner) => (
+              <option key={owner.key} value={owner.key}>
+                {owner.label}
+              </option>
+            ))}
+          </select>
+        </label>
       ) : null}
 
       <div className="sales-line-list">
@@ -4008,6 +4010,7 @@ function SalesOrderFormFields({
           Internal attachment
           <input
             type="file"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.txt,.csv,.doc,.docx,.xls,.xlsx"
             onChange={(event) => setAttachmentFile(event.target.files?.[0] ?? null)}
           />
         </label>
@@ -4034,23 +4037,30 @@ function SalesOrderFormFields({
         />
       </label>
 
-      <label className="checkbox-row invoice-toggle">
-        <input
-          type="checkbox"
-          checked={draft.createDraftOrder}
-          onChange={(event) => {
-            const createDraftOrder = event.target.checked
-            setDraft((current) => ({
-              ...current,
-              createDraftOrder,
-              sendInvoice: createDraftOrder ? false : current.sendInvoice,
-            }))
-          }}
-        />
-        <span>Create and send Shopify draft invoice</span>
-      </label>
+      {draftOnly ? (
+        <div className="form-instructions">
+          <strong>Public submissions create Shopify draft orders</strong>
+          <p>A team member can review the draft before it becomes a finalized order.</p>
+        </div>
+      ) : (
+        <label className="checkbox-row invoice-toggle">
+          <input
+            type="checkbox"
+            checked={draft.createDraftOrder}
+            onChange={(event) => {
+              const createDraftOrder = event.target.checked
+              setDraft((current) => ({
+                ...current,
+                createDraftOrder,
+                sendInvoice: createDraftOrder ? false : current.sendInvoice,
+              }))
+            }}
+          />
+          <span>Create and send Shopify draft invoice</span>
+        </label>
+      )}
 
-      {!draft.createDraftOrder ? (
+      {!draftOnly && !draft.createDraftOrder ? (
         <label className="checkbox-row invoice-toggle">
           <input
             type="checkbox"
@@ -4320,6 +4330,8 @@ function PublicSalesOrderForm() {
         : null
       const submittedDraft = {
         ...cloneSalesOrderDraft(salesOrderDraft),
+        createDraftOrder: true,
+        sendInvoice: false,
         attachment,
       }
       const response = await fetch(getApiPath('/api/sales-orders'), {
@@ -4537,6 +4549,7 @@ function PublicSalesOrderForm() {
             attachmentFile={salesOrderAttachmentFile}
             setAttachmentFile={setSalesOrderAttachmentFile}
             isSubmitting={isSubmitting}
+            draftOnly
           />
         </form>
       </section>
