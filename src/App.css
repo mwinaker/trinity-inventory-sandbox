@@ -1833,6 +1833,52 @@ button:hover {
   letter-spacing: -0.05em;
 }
 
+.profile-affiliation-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  border: 1px solid rgba(47, 76, 50, 0.14);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(47, 76, 50, 0.07);
+  color: #5d4b3c;
+}
+
+.profile-affiliation-summary strong {
+  color: #253f2a;
+}
+
+.profile-affiliation-summary p {
+  flex-basis: 100%;
+  margin: 0;
+  line-height: 1.35;
+}
+
+.profile-order-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(72, 50, 31, 0.12);
+}
+
+.profile-order-history .sales-dashboard-card {
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.sales-portal-contact-editor {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 18px 0;
+  border: 1px solid rgba(47, 76, 50, 0.14);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(47, 76, 50, 0.06);
+}
+
+.sales-portal-contact-editor .notes-field {
+  grid-column: 1 / -1;
+}
+
 .profile-toolbar {
   grid-template-columns: minmax(0, 0.8fr) minmax(260px, 1fr);
 }
@@ -2149,6 +2195,7 @@ td select {
   .crm-detail-grid,
   .crm-history-grid,
   .crm-engagement-layout,
+  .sales-portal-contact-editor,
   .metrics-grid {
     grid-template-columns: 1fr;
   }

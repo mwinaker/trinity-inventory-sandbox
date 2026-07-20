@@ -13,8 +13,13 @@ import {
   getSalesOrderBoundsError,
   isFreshShopifyLaunchTimestamp,
   isManualCrmContactRecord,
+  isOrderJobLinkedToCrmContacts,
   isSalesPortalSessionCurrent,
 } from './security-policy.mjs'
+import {
+  getKnownProPlayerAffiliation,
+  normalizePlayerNameKey,
+} from '../shared/pro-player-affiliations.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -270,12 +275,22 @@ const resourceConfigs = {
       return [
         fieldValue('profile_kind', item.profileKind),
         fieldValue('player_name', item.playerName),
+        fieldValue('level_of_play', item.levelOfPlay),
+        fieldValue('current_club', item.currentClub),
+        fieldValue('mlb_organization', item.mlbOrganization),
+        fieldValue('affiliation_verified_at', item.affiliationVerifiedAt),
+        fieldValue('affiliation_note', item.affiliationNote),
         fieldValue('bats_json', JSON.stringify(item.bats ?? [])),
       ].filter(Boolean)
     },
     fieldDefinitions: [
       definitionField('profile_kind', 'Profile Kind', 'single_line_text_field'),
       definitionField('player_name', 'Pro Player Name', 'single_line_text_field'),
+      definitionField('level_of_play', 'Level of Play', 'single_line_text_field'),
+      definitionField('current_club', 'Current Club', 'single_line_text_field'),
+      definitionField('mlb_organization', 'MLB Organization', 'single_line_text_field'),
+      definitionField('affiliation_verified_at', 'Affiliation Verified At', 'single_line_text_field'),
+      definitionField('affiliation_note', 'Affiliation Note', 'multi_line_text_field'),
       definitionField('bats_json', 'Bats JSON', 'json'),
     ],
   },
@@ -335,6 +350,7 @@ const resourceConfigs = {
     fieldsFor(item) {
       return [
         fieldValue('origin', item.origin),
+        fieldValue('player_profile_id', item.playerProfileId),
         fieldValue('shopify_order_id', item.shopifyOrderId),
         fieldValue('shopify_order_name', item.shopifyOrderName),
         fieldValue('shopify_draft_order_id', item.shopifyDraftOrderId),
@@ -378,6 +394,7 @@ const resourceConfigs = {
     },
     fieldDefinitions: [
       definitionField('origin', 'Origin', 'single_line_text_field'),
+      definitionField('player_profile_id', 'Player Profile ID', 'single_line_text_field'),
       definitionField('shopify_order_id', 'Shopify Order ID', 'single_line_text_field'),
       definitionField('shopify_order_name', 'Shopify Order Name', 'single_line_text_field'),
       definitionField('shopify_draft_order_id', 'Shopify Draft Order ID', 'single_line_text_field'),
@@ -488,12 +505,14 @@ const resourceConfigs = {
         fieldValue('role', item.role),
         fieldValue('email', item.email),
         fieldValue('phone', item.phone),
+        fieldValue('player_names_json', JSON.stringify(item.playerNames ?? [])),
         fieldValue('sales_owner', item.salesOwner),
         fieldValue('owner_email', item.ownerEmail),
         fieldValue('stage', item.stage),
         fieldValue('priority', item.priority),
         fieldValue('source', item.source),
         fieldValue('preferred_contact_method', item.preferredContactMethod),
+        fieldValue('personal_notes', item.personalNotes),
         fieldValue('follow_up_at', item.followUpAt),
         fieldValue('last_contacted_at', item.lastContactedAt),
         fieldValue('created_at', item.createdAt),
@@ -507,12 +526,14 @@ const resourceConfigs = {
       definitionField('role', 'Role', 'single_line_text_field'),
       definitionField('email', 'Email', 'single_line_text_field'),
       definitionField('phone', 'Phone', 'single_line_text_field'),
+      definitionField('player_names_json', 'Player Names JSON', 'json'),
       definitionField('sales_owner', 'Sales Owner', 'single_line_text_field'),
       definitionField('owner_email', 'Owner Email', 'single_line_text_field'),
       definitionField('stage', 'Stage', 'single_line_text_field'),
       definitionField('priority', 'Priority', 'single_line_text_field'),
       definitionField('source', 'Source', 'single_line_text_field'),
       definitionField('preferred_contact_method', 'Preferred Contact Method', 'single_line_text_field'),
+      definitionField('personal_notes', 'Personal Notes', 'multi_line_text_field'),
       definitionField('follow_up_at', 'Follow Up At', 'single_line_text_field'),
       definitionField('last_contacted_at', 'Last Contacted At', 'single_line_text_field'),
       definitionField('created_at', 'Created At', 'single_line_text_field'),
@@ -641,10 +662,11 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
 
     const topic = String(request.get('x-shopify-topic') ?? '')
     const payload = JSON.parse(request.body.toString('utf8'))
-    const incomingJobs = mapOrderWebhookToJobs(payload, topic)
+    const mappedIncomingJobs = mapOrderWebhookToJobs(payload, topic)
 
-    if (incomingJobs.length > 0) {
+    if (mappedIncomingJobs.length > 0) {
       await ensureDefinitions()
+      const incomingJobs = await attachOrderJobsToPlayerProfiles(mappedIncomingJobs)
       const existingJobs = await listRecords(resourceConfigs.orderJobs)
       const mergedJobs = mergeIncomingOrderJobs(existingJobs, incomingJobs)
       await Promise.all([
@@ -653,7 +675,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
       ])
     }
 
-    response.status(200).json({ ok: true, jobs: incomingJobs.length })
+    response.status(200).json({ ok: true, jobs: mappedIncomingJobs.length })
   } catch (error) {
     response.status(500).json({
       ok: false,
@@ -1389,7 +1411,13 @@ app.post('/api/sales-orders', async (request, response) => {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
       const payerInvoiceNotification = await trySendDraftOrderPayerInvoice(draftOrder, payload)
-      const jobs = mapDraftOrderToJobs(draftOrder, payload, intakeId, false, orderSubmittedAt).map(
+      const mappedJobs = mapDraftOrderToJobs(
+        draftOrder,
+        payload,
+        intakeId,
+        false,
+        orderSubmittedAt,
+      ).map(
         (job) =>
           payerInvoiceNotification.sentAt
             ? {
@@ -1398,6 +1426,7 @@ app.post('/api/sales-orders', async (request, response) => {
               }
             : job,
       )
+      const jobs = await attachOrderJobsToPlayerProfiles(mappedJobs)
       const [rememberedContacts] = await Promise.all([
         rememberOrderJobContacts(jobs),
         Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
@@ -1454,7 +1483,9 @@ app.post('/api/sales-orders', async (request, response) => {
       invoiceSent = true
     }
 
-    const jobs = mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt)
+    const jobs = await attachOrderJobsToPlayerProfiles(
+      mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt),
+    )
     const [rememberedContacts] = await Promise.all([
       rememberOrderJobContacts(jobs),
       Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
@@ -1583,9 +1614,19 @@ app.post('/api/orders/import', requireInternalAccess, async (request, response) 
 
     const first = Math.min(Math.max(Number(request.body?.first ?? 50), 1), 100)
     await ensureDefinitions()
-    const orders = await listRecentOrders(first)
+    const affiliationBackfill = await backfillKnownProPlayerAffiliations()
+    const [orders, completedDraftOrders] = await Promise.all([
+      listRecentOrders(first),
+      listRecentCompletedDraftOrders(first),
+    ])
     const existingJobs = await listRecords(resourceConfigs.orderJobs)
-    const jobs = orders.flatMap((order) => mapGraphQLOrderToJobs(order))
+    const jobs = await attachOrderJobsToPlayerProfiles(
+      linkCompletedDraftMetadataToOrderJobs(
+        orders.flatMap((order) => mapGraphQLOrderToJobs(order)),
+        completedDraftOrders,
+      ),
+      affiliationBackfill.players,
+    )
     const mergedJobs = mergeIncomingOrderJobs(existingJobs, jobs)
 
     const [rememberedContacts] = await Promise.all([
@@ -1596,6 +1637,8 @@ app.post('/api/orders/import', requireInternalAccess, async (request, response) 
     response.json({
       ok: true,
       importedOrders: orders.length,
+      linkedCompletedDraftOrders: completedDraftOrders.length,
+      updatedPlayerAffiliations: affiliationBackfill.updatedCount,
       orderJobs: mergedJobs,
       players: rememberedContacts.players,
       billingContacts: rememberedContacts.billingContacts,
@@ -2312,27 +2355,43 @@ function getManualCrmContactRecords(contacts) {
 }
 
 function filterSalesPortalStateForSession(state, session) {
-  const internalOrderJobs = arrayFromPayload(state?.orderJobs).filter(
+  const allOrderJobs = arrayFromPayload(state?.orderJobs)
+  const internalOrderJobs = allOrderJobs.filter(
     (job) => job?.origin === 'internal_sales',
   )
   const crmContacts = getManualCrmContactRecords(state?.crmContacts)
+  const players = arrayFromPayload(state?.players)
+    .filter((player) => player?.profileKind !== 'Trainer' && arrayFromPayload(player?.bats).length > 0)
+    .map((player) => ({
+      ...hydrateKnownProPlayerAffiliation(player),
+      bats: [],
+    }))
 
   if (session?.isAdmin) {
     return {
       ok: true,
       session,
       crmContacts,
-      orderJobs: internalOrderJobs,
+      orderJobs: allOrderJobs,
+      players,
       teamMembers: salesPortalTeamMembers,
     }
   }
 
   const owner = getSalesPortalOwnerForEmail(session?.email)
+  const ownedContacts = crmContacts.filter((contact) =>
+    isSalesPortalContactOwnedBy(contact, owner),
+  )
   return {
     ok: true,
     session,
-    crmContacts: crmContacts.filter((contact) => isSalesPortalContactOwnedBy(contact, owner)),
-    orderJobs: internalOrderJobs.filter((job) => isSalesPortalOrderJobOwnedBy(job, owner)),
+    crmContacts: ownedContacts,
+    orderJobs: allOrderJobs.filter(
+      (job) =>
+        (job?.origin === 'internal_sales' && isSalesPortalOrderJobOwnedBy(job, owner)) ||
+        isOrderJobLinkedToCrmContacts(job, ownedContacts),
+    ),
+    players,
     teamMembers: salesPortalTeamMembers,
   }
 }
@@ -3398,7 +3457,9 @@ async function getCatalogProducts() {
 async function loadSharedState() {
   await ensureDefinitions()
   const billets = await listRecords(resourceConfigs.billets)
-  const players = await listRecords(resourceConfigs.players)
+  const players = (await listRecords(resourceConfigs.players)).map((player) =>
+    hydrateKnownProPlayerAffiliation(player),
+  )
   const producedBats = await listRecords(resourceConfigs.producedBats)
   const customBatModels = await listRecords(resourceConfigs.customBatModels)
   const orderJobs = await listRecords(resourceConfigs.orderJobs)
@@ -4359,6 +4420,9 @@ async function createDraftOrder(input) {
               displayName
               email
             }
+            shippingAddress {
+              name
+            }
             lineItems(first: 50) {
               nodes {
                 id
@@ -4437,6 +4501,9 @@ async function createPendingOrder(order, options = {}) {
               id
               displayName
               email
+            }
+            shippingAddress {
+              name
             }
             lineItems(first: 50) {
               nodes {
@@ -4688,6 +4755,9 @@ async function listRecentOrders(first) {
               displayName
               email
             }
+            shippingAddress {
+              name
+            }
             lineItems(first: 50) {
               nodes {
                 id
@@ -4741,6 +4811,67 @@ async function listRecentOrders(first) {
   )
 
   return result?.data?.orders?.nodes ?? []
+}
+
+async function listRecentCompletedDraftOrders(first) {
+  try {
+    const result = await shopifyGraphQL(
+      `
+        query RecentCompletedDraftOrders($first: Int!) {
+          draftOrders(
+            first: $first
+            sortKey: UPDATED_AT
+            reverse: true
+            query: "status:completed"
+          ) {
+            nodes {
+              id
+              name
+              createdAt
+              completedAt
+              order {
+                id
+                name
+              }
+            }
+          }
+        }
+      `,
+      { first },
+    )
+
+    return result?.data?.draftOrders?.nodes ?? []
+  } catch (error) {
+    console.warn(
+      `Completed draft order history could not be loaded: ${
+        error instanceof Error ? error.message : 'Unknown Shopify error'
+      }`,
+    )
+    return []
+  }
+}
+
+function linkCompletedDraftMetadataToOrderJobs(jobs, draftOrders) {
+  const draftsByOrderId = new Map(
+    arrayFromPayload(draftOrders)
+      .filter((draftOrder) => cleanString(draftOrder?.order?.id))
+      .map((draftOrder) => [cleanString(draftOrder.order.id), draftOrder]),
+  )
+
+  return arrayFromPayload(jobs).map((job) => {
+    const draftOrder = draftsByOrderId.get(cleanString(job?.shopifyOrderId))
+    if (!draftOrder) return job
+    return {
+      ...job,
+      shopifyDraftOrderId: cleanString(job.shopifyDraftOrderId) || cleanString(draftOrder.id),
+      shopifyDraftOrderName:
+        cleanString(job.shopifyDraftOrderName) || cleanString(draftOrder.name),
+      orderSubmittedAt:
+        cleanString(job.orderSubmittedAt) === cleanString(job.createdAt)
+          ? cleanString(draftOrder.createdAt) || cleanString(job.orderSubmittedAt)
+          : cleanString(job.orderSubmittedAt) || cleanString(draftOrder.createdAt),
+    }
+  })
 }
 
 async function registerWebhook(topic, uri) {
@@ -4813,6 +4944,7 @@ async function syncOrderJobMetafields(orderJobs) {
         job.salesRepPaidNotificationSentAt,
       ),
       orderMetafield(ownerId, 'player_name', job.playerName),
+      orderMetafield(ownerId, 'player_profile_id', job.playerProfileId),
       orderMetafield(ownerId, 'player_email', job.playerEmail),
       orderMetafield(ownerId, 'billing_name', job.billingName),
       orderMetafield(ownerId, 'billing_email', job.billingEmail),
@@ -5685,6 +5817,96 @@ function normalizePhoneKey(value) {
   return cleanString(value).replace(/\D/g, '')
 }
 
+function hydrateKnownProPlayerAffiliation(player = {}) {
+  const known = getKnownProPlayerAffiliation(player?.playerName)
+  return {
+    ...player,
+    levelOfPlay: cleanString(player?.levelOfPlay) || known?.levelOfPlay || '',
+    currentClub: cleanString(player?.currentClub) || known?.currentClub || '',
+    mlbOrganization: cleanString(player?.mlbOrganization) || known?.mlbOrganization || '',
+    affiliationVerifiedAt:
+      cleanString(player?.affiliationVerifiedAt) || known?.affiliationVerifiedAt || '',
+    affiliationNote: cleanString(player?.affiliationNote) || known?.note || '',
+  }
+}
+
+function hasCurrentKnownPlayerAffiliation(storedPlayer, hydratedPlayer) {
+  return [
+    'levelOfPlay',
+    'currentClub',
+    'mlbOrganization',
+    'affiliationVerifiedAt',
+    'affiliationNote',
+  ].every((field) => cleanString(storedPlayer?.[field]) === cleanString(hydratedPlayer?.[field]))
+}
+
+async function backfillKnownProPlayerAffiliations() {
+  const storedPlayers = await listRecords(resourceConfigs.players)
+  const players = storedPlayers.map((player) => hydrateKnownProPlayerAffiliation(player))
+  const changedPlayers = players.filter((player, index) => {
+    if (!getKnownProPlayerAffiliation(player?.playerName)) return false
+    return !hasCurrentKnownPlayerAffiliation(storedPlayers[index], player)
+  })
+
+  for (let index = 0; index < changedPlayers.length; index += 5) {
+    await Promise.all(
+      changedPlayers
+        .slice(index, index + 5)
+        .map((player) => upsertRecord(resourceConfigs.players, player)),
+    )
+  }
+
+  return { players, updatedCount: changedPlayers.length }
+}
+
+function findPlayerProfileForOrderJob(job, players) {
+  const playerList = arrayFromPayload(players).filter((player) => cleanString(player?.playerName))
+  const requestedId = cleanString(job?.playerProfileId)
+  if (requestedId) {
+    const idMatch = playerList.find((player) => cleanString(player?.id) === requestedId)
+    if (idMatch) return idMatch
+  }
+
+  const requestedName = normalizePlayerNameKey(job?.playerName)
+  if (requestedName) {
+    const nameMatch = playerList.find(
+      (player) => normalizePlayerNameKey(player?.playerName) === requestedName,
+    )
+    if (nameMatch) return nameMatch
+  }
+
+  const orderContext = normalizePlayerNameKey([job?.notes, job?.internalNotes].filter(Boolean).join(' '))
+  if (!orderContext) return null
+
+  return (
+    [...playerList]
+      .sort((first, second) => cleanString(second?.playerName).length - cleanString(first?.playerName).length)
+      .find((player) => {
+        const playerKey = normalizePlayerNameKey(player?.playerName)
+        return playerKey && ` ${orderContext} `.includes(` ${playerKey} `)
+      }) ?? null
+  )
+}
+
+async function attachOrderJobsToPlayerProfiles(jobs, playerRecords = null) {
+  const jobList = arrayFromPayload(jobs)
+  if (jobList.length === 0) return []
+
+  const storedPlayers = Array.isArray(playerRecords)
+    ? playerRecords
+    : await listRecords(resourceConfigs.players)
+  const players = storedPlayers.map((player) => hydrateKnownProPlayerAffiliation(player))
+  return jobList.map((job) => {
+    const player = findPlayerProfileForOrderJob(job, players)
+    if (!player) return job
+    return {
+      ...job,
+      playerProfileId: cleanString(player.id),
+      playerName: cleanString(player.playerName) || cleanString(job.playerName),
+    }
+  })
+}
+
 function createStablePeopleRecordId(prefix, ...parts) {
   const slug = sanitizeHandle(parts.map((part) => cleanString(part)).filter(Boolean).join('-'))
   return slug ? `${prefix}-${slug}` : createPlainId(prefix)
@@ -5696,12 +5918,12 @@ function buildRememberedPlayerFromJob(job) {
   const playerName = cleanString(job?.playerName || job?.customerName)
   if (!playerName) return null
 
-  return {
+  return hydrateKnownProPlayerAffiliation({
     id: createStablePeopleRecordId('player', playerName),
     profileKind: 'Player',
     playerName,
     bats: [],
-  }
+  })
 }
 
 function buildRememberedBillingContactFromJob(job) {
@@ -5785,12 +6007,20 @@ function findExistingBillingContact(existingContacts, incomingContact) {
 }
 
 function mergeRememberedPlayer(existingPlayer, incomingPlayer) {
-  return {
+  return hydrateKnownProPlayerAffiliation({
     id: cleanString(existingPlayer?.id) || incomingPlayer.id,
     profileKind: cleanString(existingPlayer?.profileKind) || incomingPlayer.profileKind,
     playerName: cleanString(existingPlayer?.playerName) || incomingPlayer.playerName,
+    levelOfPlay: cleanString(existingPlayer?.levelOfPlay) || incomingPlayer.levelOfPlay,
+    currentClub: cleanString(existingPlayer?.currentClub) || incomingPlayer.currentClub,
+    mlbOrganization:
+      cleanString(existingPlayer?.mlbOrganization) || incomingPlayer.mlbOrganization,
+    affiliationVerifiedAt:
+      cleanString(existingPlayer?.affiliationVerifiedAt) || incomingPlayer.affiliationVerifiedAt,
+    affiliationNote:
+      cleanString(existingPlayer?.affiliationNote) || incomingPlayer.affiliationNote,
     bats: Array.isArray(existingPlayer?.bats) ? existingPlayer.bats : incomingPlayer.bats,
-  }
+  })
 }
 
 function mergeRememberedBillingContact(existingContact, incomingContact) {
@@ -6426,6 +6656,7 @@ function mapDraftOrderToJobs(
       id: `draft-${extractNumericId(draftOrder.id)}-line-${index + 1}`,
       origin: 'internal_sales',
       intakeId,
+      playerProfileId: '',
       shopifyOrderId: '',
       shopifyOrderName: '',
       shopifyDraftOrderId: draftOrder.id,
@@ -6496,7 +6727,7 @@ function mapCompletedDraftOrderToJobs(
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
       shopifyDraftInvoiceUrl: normalizeDraftInvoiceUrl(draftOrder.invoiceUrl),
-      orderSubmittedAt: job.orderSubmittedAt || orderSubmittedAt,
+      orderSubmittedAt: orderSubmittedAt || job.orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
@@ -6556,6 +6787,7 @@ function mapGraphQLOrderToJobs(order) {
     const identity = extractOrderIdentity(
       orderAttributes,
       lineAttributes,
+      order.shippingAddress?.name ?? order.customer?.displayName ?? '',
       order.customer?.displayName ?? '',
       order.email ?? order.customer?.email ?? '',
     )
@@ -6565,6 +6797,7 @@ function mapGraphQLOrderToJobs(order) {
       id: `order-${extractNumericId(order.id)}-line-${extractNumericId(line.id)}`,
       origin,
       intakeId: orderAttributes.trinity_intake_id ?? '',
+      playerProfileId: '',
       shopifyOrderId: order.id,
       shopifyOrderName: order.name ?? '',
       shopifyDraftOrderId: '',
@@ -6664,6 +6897,12 @@ function mapOrderWebhookToJobs(order, topic) {
     const identity = extractOrderIdentity(
       orderAttributes,
       lineAttributes,
+      cleanString(
+        order.shipping_address?.name ||
+          [order.shipping_address?.first_name, order.shipping_address?.last_name]
+            .filter(Boolean)
+            .join(' '),
+      ) || customerNameFromWebhook(order.customer),
       customerNameFromWebhook(order.customer),
       order.email ?? order.customer?.email ?? '',
     )
@@ -6672,6 +6911,7 @@ function mapOrderWebhookToJobs(order, topic) {
       id: `order-${extractNumericId(orderId)}-line-${extractNumericId(lineItemId)}`,
       origin,
       intakeId: orderAttributes.trinity_intake_id ?? '',
+      playerProfileId: '',
       shopifyOrderId: orderId,
       shopifyOrderName: order.name ?? '',
       shopifyDraftOrderId: orderAttributes.trinity_draft_order_id ?? '',
@@ -6725,6 +6965,11 @@ function mapOrderWebhookToJobs(order, topic) {
   })
 }
 
+function getEarlierOrderTimestamp(...values) {
+  const candidates = values.map((value) => cleanString(value)).filter(Boolean)
+  return candidates.sort()[0] ?? ''
+}
+
 function mergeOrderJob(existing, incoming) {
   if (!existing) return incoming
 
@@ -6740,11 +6985,12 @@ function mergeOrderJob(existing, incoming) {
     shopifyDraftInvoiceUrl: existing.shopifyDraftInvoiceUrl || incoming.shopifyDraftInvoiceUrl,
     assignedBilletId: existing.assignedBilletId || incoming.assignedBilletId,
     linkedProducedBatId: existing.linkedProducedBatId || incoming.linkedProducedBatId,
-    orderSubmittedAt:
-      existing.orderSubmittedAt ||
-      incoming.orderSubmittedAt ||
-      existing.createdAt ||
+    orderSubmittedAt: getEarlierOrderTimestamp(
+      existing.orderSubmittedAt,
+      incoming.orderSubmittedAt,
+      existing.createdAt,
       incoming.createdAt,
+    ),
     salesRep: existing.salesRep || incoming.salesRep,
     salesRepEmail: existing.salesRepEmail || incoming.salesRepEmail,
     salesRepSubmissionNotificationSentAt:
@@ -6752,6 +6998,7 @@ function mergeOrderJob(existing, incoming) {
       incoming.salesRepSubmissionNotificationSentAt,
     salesRepPaidNotificationSentAt:
       existing.salesRepPaidNotificationSentAt || incoming.salesRepPaidNotificationSentAt,
+    playerProfileId: existing.playerProfileId || incoming.playerProfileId,
     playerName: existing.playerName || incoming.playerName,
     playerEmail: existing.playerEmail || incoming.playerEmail,
     billingDifferent: existing.billingDifferent || incoming.billingDifferent,
@@ -6830,7 +7077,13 @@ function extractSpecs(orderAttributes, lineAttributes) {
   }
 }
 
-function extractOrderIdentity(orderAttributes, lineAttributes, fallbackName, fallbackEmail) {
+function extractOrderIdentity(
+  orderAttributes,
+  lineAttributes,
+  fallbackPlayerName,
+  fallbackBillingName,
+  fallbackEmail,
+) {
   const playerName =
     attributeValue([lineAttributes, orderAttributes], [
       'trinity_player_name',
@@ -6838,7 +7091,7 @@ function extractOrderIdentity(orderAttributes, lineAttributes, fallbackName, fal
       'player',
       'player name',
       'name on bat',
-    ]) || cleanString(fallbackName)
+    ]) || cleanString(fallbackPlayerName)
   const playerEmail =
     attributeValue([lineAttributes, orderAttributes], [
       'trinity_player_email',
@@ -6854,7 +7107,7 @@ function extractOrderIdentity(orderAttributes, lineAttributes, fallbackName, fal
       'payer_name',
       'team',
       'agent',
-    ]) || cleanString(fallbackName)
+    ]) || cleanString(fallbackBillingName)
   const billingEmail =
     attributeValue([orderAttributes, lineAttributes], [
       'trinity_billing_email',
@@ -6977,6 +7230,10 @@ function isBatProductLike(product) {
     title.includes('bat') ||
     title.includes('pro model') ||
     title.includes('pro select') ||
+    title.includes('birch') ||
+    title.includes('maple') ||
+    title.includes('ash') ||
+    /\b[a-z]{1,5}\d+(?:\.\d+)?[a-z]*\b/i.test(title) ||
     title.includes('fungo') ||
     title.includes('trainer') ||
     title.includes('boom stick') ||

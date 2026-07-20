@@ -7,6 +7,11 @@ import {
   useRef,
   useState,
 } from 'react'
+import {
+  getKnownProPlayerAffiliation,
+  normalizePlayerNameKey,
+  parseManualBatOrderSegments,
+} from '../shared/pro-player-affiliations.mjs'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -122,10 +127,23 @@ type EditingVariantTarget = {
   variantId: string
 }
 
+type PlayerAffiliationDraft = {
+  levelOfPlay: string
+  currentClub: string
+  mlbOrganization: string
+  affiliationVerifiedAt: string
+  affiliationNote: string
+}
+
 type PlayerProfile = {
   id: string
   profileKind: ProfileKind
   playerName: string
+  levelOfPlay: string
+  currentClub: string
+  mlbOrganization: string
+  affiliationVerifiedAt: string
+  affiliationNote: string
   bats: BatVariation[]
 }
 
@@ -209,6 +227,7 @@ type OrderJob = {
   id: string
   origin: OrderOrigin
   intakeId: string
+  playerProfileId: string
   shopifyOrderId: string
   shopifyOrderName: string
   shopifyDraftOrderId: string
@@ -439,6 +458,7 @@ type CrmContact = {
   buyingContext: string
   batPreferences: string
   relationshipNotes: string
+  personalNotes: string
   objections: string
   opportunities: string
   followUpAt: string
@@ -463,6 +483,7 @@ type CrmTouchpointDraft = {
 type CrmContactSummary = {
   contact: CrmContact
   orders: OrderJob[]
+  orderHistory: PlayerOrderHistoryRecord[]
   orderCount: number
   submittedValue: number
   paidValue: number
@@ -471,6 +492,22 @@ type CrmContactSummary = {
   lastOrderAt: string
   lastActivityAt: string
   followUpDue: boolean
+}
+
+type PlayerOrderHistoryRecord = {
+  key: string
+  jobs: OrderJob[]
+  shopifyOrderName: string
+  shopifyDraftOrderName: string
+  submittedAt: string
+  shopifyCreatedAt: string
+  playerName: string
+  totalQuantity: number
+  totalValue: number
+  currency: string
+  isPaid: boolean
+  lineSummaries: string[]
+  note: string
 }
 
 type CrmOwnerOption = {
@@ -921,6 +958,11 @@ const seedPlayers: PlayerProfile[] = [
     id: 'player-001',
     profileKind: 'Player',
     playerName: 'Corey Seager',
+    levelOfPlay: 'MLB',
+    currentClub: 'Texas Rangers',
+    mlbOrganization: 'Texas Rangers',
+    affiliationVerifiedAt: '2026-07-19',
+    affiliationNote: '',
     bats: [
       {
         id: 'bat-001',
@@ -997,6 +1039,26 @@ const emptyBat: Omit<BatVariation, 'id'> = {
   idealBilletWeight: '',
   compatibleBilletIds: [],
   notes: '',
+}
+
+const emptyPlayerAffiliation = (): PlayerAffiliationDraft => ({
+  levelOfPlay: '',
+  currentClub: '',
+  mlbOrganization: '',
+  affiliationVerifiedAt: '',
+  affiliationNote: '',
+})
+
+function getPlayerAffiliationDraft(playerName: string, profile?: PlayerProfile) {
+  const known = getKnownProPlayerAffiliation(playerName)
+  return {
+    levelOfPlay: profile?.levelOfPlay ?? known?.levelOfPlay ?? '',
+    currentClub: profile?.currentClub ?? known?.currentClub ?? '',
+    mlbOrganization: profile?.mlbOrganization ?? known?.mlbOrganization ?? '',
+    affiliationVerifiedAt:
+      profile?.affiliationVerifiedAt ?? known?.affiliationVerifiedAt ?? '',
+    affiliationNote: profile?.affiliationNote ?? known?.note ?? '',
+  }
 }
 
 function createBatDraftFromVariation(bat: BatVariation): Omit<BatVariation, 'id'> {
@@ -1112,6 +1174,7 @@ const emptyCrmContact = (): CrmContact => {
     buyingContext: '',
     batPreferences: '',
     relationshipNotes: '',
+    personalNotes: '',
     objections: '',
     opportunities: '',
     followUpAt: '',
@@ -1367,6 +1430,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     id: record.id,
     origin: record.origin === 'internal_sales' ? 'internal_sales' : 'website',
     intakeId: record.intakeId ?? '',
+    playerProfileId: record.playerProfileId ?? '',
     shopifyOrderId: record.shopifyOrderId ?? '',
     shopifyOrderName: record.shopifyOrderName ?? '',
     shopifyDraftOrderId: record.shopifyDraftOrderId ?? '',
@@ -1789,6 +1853,7 @@ function normalizeCrmContact(record: Partial<CrmContact> & Pick<CrmContact, 'id'
     buyingContext: record.buyingContext ?? '',
     batPreferences: record.batPreferences ?? '',
     relationshipNotes: record.relationshipNotes ?? '',
+    personalNotes: record.personalNotes ?? '',
     objections: record.objections ?? '',
     opportunities: record.opportunities ?? '',
     followUpAt: record.followUpAt ?? '',
@@ -1923,6 +1988,103 @@ function mergeCrmContacts(base: CrmContact, incoming: CrmContact): CrmContact {
   })
 }
 
+function getPlayerOrderGroupKey(job: OrderJob) {
+  if (job.intakeId) return `intake:${job.intakeId}`
+  if (job.shopifyOrderId) return `order:${job.shopifyOrderId}`
+  if (job.shopifyDraftOrderId) return `draft:${job.shopifyDraftOrderId}`
+  return `job:${job.id}`
+}
+
+function getOrderBatModel(job: OrderJob) {
+  if (job.specs.model.trim()) return job.specs.model.trim()
+  const titleModel = job.productTitle.match(/\b[A-Za-z]{1,5}\d+(?:\.\d+)?[A-Za-z]*\b/)
+  return titleModel?.[0] ?? job.productTitle.trim() ?? 'Bat'
+}
+
+function getManualOrderNoteLineSummaries(job: OrderJob) {
+  return parseManualBatOrderSegments(job.notes, getOrderBatModel(job)).map(
+    (segment) => segment.summary,
+  )
+}
+
+function getOrderJobLineSummaries(job: OrderJob) {
+  const parsedNoteSummaries = getManualOrderNoteLineSummaries(job)
+  if (parsedNoteSummaries.length > 0) return parsedNoteSummaries
+
+  const dimensions = [
+    job.specs.length ? `${job.specs.length}"` : '',
+    job.specs.targetWeight ? `${job.specs.targetWeight} oz` : '',
+  ]
+    .filter(Boolean)
+    .join('/')
+  return [
+    `${job.quantity} × ${[dimensions, getOrderBatModel(job)].filter(Boolean).join(' ')}`,
+  ]
+}
+
+function buildPlayerOrderHistory(orderJobs: OrderJob[]) {
+  const groups = new Map<string, OrderJob[]>()
+  for (const job of orderJobs) {
+    const key = getPlayerOrderGroupKey(job)
+    groups.set(key, [...(groups.get(key) ?? []), job])
+  }
+
+  return Array.from(groups.entries())
+    .map(([key, jobs]): PlayerOrderHistoryRecord => {
+      const paidJobs = jobs.filter((job) => job.shopifyOrderId || isSalesDashboardPaid(job))
+      const displayJobs = paidJobs.length > 0 ? paidJobs : jobs
+      const primaryJob = displayJobs[0] ?? jobs[0]
+      const lineSummaries = Array.from(
+        new Set(displayJobs.flatMap((job) => getOrderJobLineSummaries(job))),
+      )
+      const submittedAt =
+        [...jobs]
+          .map((job) => job.orderSubmittedAt || job.createdAt)
+          .filter(Boolean)
+          .sort()[0] ?? ''
+      const shopifyCreatedAt =
+        [...displayJobs]
+          .map((job) => job.createdAt)
+          .filter(Boolean)
+          .sort()[0] ?? ''
+
+      return {
+        key,
+        jobs,
+        shopifyOrderName:
+          displayJobs.find((job) => job.shopifyOrderName)?.shopifyOrderName ?? '',
+        shopifyDraftOrderName:
+          jobs.find((job) => job.shopifyDraftOrderName)?.shopifyDraftOrderName ?? '',
+        submittedAt,
+        shopifyCreatedAt,
+        playerName: displayJobs.find((job) => job.playerName)?.playerName ?? '',
+        totalQuantity: displayJobs.reduce((total, job) => total + job.quantity, 0),
+        totalValue: displayJobs.reduce(
+          (total, job) => total + getSalesDashboardLineValue(job),
+          0,
+        ),
+        currency: primaryJob?.currency ?? '',
+        isPaid: displayJobs.some((job) => isSalesDashboardPaid(job)),
+        lineSummaries,
+        note: displayJobs.find((job) => job.notes.trim())?.notes.trim() ?? '',
+      }
+    })
+    .sort(
+      (a, b) =>
+        getDateTimestamp(b.submittedAt || b.shopifyCreatedAt) -
+        getDateTimestamp(a.submittedAt || a.shopifyCreatedAt),
+    )
+}
+
+function getOrderJobsForPlayerProfile(profile: PlayerProfile, orderJobs: OrderJob[]) {
+  const profileNameKey = normalizePlayerNameKey(profile.playerName)
+  return orderJobs.filter(
+    (job) =>
+      (job.playerProfileId && job.playerProfileId === profile.id) ||
+      (profileNameKey && normalizePlayerNameKey(job.playerName) === profileNameKey),
+  )
+}
+
 function getCrmOrdersForContact(contact: CrmContact, orderJobs: OrderJob[]) {
   const contactEmails = new Set(
     [contact.email]
@@ -1947,6 +2109,11 @@ function getCrmOrdersForContact(contact: CrmContact, orderJobs: OrderJob[]) {
       const jobNames = [job.billingName, job.customerName, job.playerName]
         .map((value) => normalizeCrmSearchText(value))
         .filter(Boolean)
+
+      const jobPlayerName = normalizeCrmSearchText(job.playerName)
+      if (jobPlayerName && (jobPlayerName === contactName || playerNames.includes(jobPlayerName))) {
+        return true
+      }
 
       const jobCompany = normalizeCrmSearchText(job.billingCompany)
       if (!contactCompany || !jobCompany || contactCompany !== jobCompany) return false
@@ -1995,13 +2162,14 @@ function buildCrmContactSummaries(
 ): CrmContactSummary[] {
   return directory.map((contact) => {
     const orders = getCrmOrdersForContact(contact, orderJobs)
+    const orderHistory = buildPlayerOrderHistory(orders)
     const submittedValue = orders.reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
     const paidValue = orders
       .filter((job) => isSalesDashboardPaid(job))
       .reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
     const openValue = submittedValue - paidValue
     const openInvoiceCount = orders.filter((job) => !isSalesDashboardPaid(job)).length
-    const lastOrderAt = orders[0]?.orderSubmittedAt || orders[0]?.createdAt || ''
+    const lastOrderAt = orderHistory[0]?.submittedAt || orderHistory[0]?.shopifyCreatedAt || ''
     const lastTouchpointAt = contact.touchpoints[0]?.contactedAt || ''
     const lastActivityAt = getLaterDate(getLaterDate(lastOrderAt, lastTouchpointAt), contact.lastContactedAt)
     const followUpAt = contact.followUpAt || contact.touchpoints[0]?.nextFollowUpAt || ''
@@ -2010,7 +2178,8 @@ function buildCrmContactSummaries(
     return {
       contact,
       orders,
-      orderCount: orders.length,
+      orderHistory,
+      orderCount: orderHistory.length,
       submittedValue,
       paidValue,
       openValue,
@@ -2120,6 +2289,7 @@ function salesPortalContactMatchesSearch(
       summary.contact.buyingContext,
       summary.contact.batPreferences,
       summary.contact.relationshipNotes,
+      summary.contact.personalNotes,
       summary.contact.objections,
       summary.contact.opportunities,
       ...summary.contact.playerNames,
@@ -2151,10 +2321,18 @@ function salesPortalContactMatchesSearch(
 function normalizePlayerProfile(
   record: Partial<PlayerProfile> & Pick<PlayerProfile, 'id'>,
 ): PlayerProfile {
+  const knownAffiliation = getKnownProPlayerAffiliation(record.playerName)
+
   return {
     id: record.id,
     profileKind: record.profileKind === 'Trainer' ? 'Trainer' : 'Player',
     playerName: record.playerName ?? '',
+    levelOfPlay: record.levelOfPlay ?? knownAffiliation?.levelOfPlay ?? '',
+    currentClub: record.currentClub ?? knownAffiliation?.currentClub ?? '',
+    mlbOrganization: record.mlbOrganization ?? knownAffiliation?.mlbOrganization ?? '',
+    affiliationVerifiedAt:
+      record.affiliationVerifiedAt ?? knownAffiliation?.affiliationVerifiedAt ?? '',
+    affiliationNote: record.affiliationNote ?? knownAffiliation?.note ?? '',
     bats: Array.isArray(record.bats) ? record.bats.map((bat) => normalizeBatVariation(bat)) : [],
   }
 }
@@ -2277,7 +2455,9 @@ function getLaterDate(first: string, second: string) {
 
 function formatSalesDashboardDate(value: string) {
   if (!value) return 'Not recorded'
-  const date = new Date(value)
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}T12:00:00`)
+    : new Date(value)
   if (Number.isNaN(date.getTime())) return value
 
   return date.toLocaleDateString([], {
@@ -2589,7 +2769,10 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
       productionStatus: job.productionStatus || existing?.productionStatus || 'new',
       assignedBilletId: job.assignedBilletId || existing?.assignedBilletId || '',
       linkedProducedBatId: job.linkedProducedBatId || existing?.linkedProducedBatId || '',
-      orderSubmittedAt: job.orderSubmittedAt || existing?.orderSubmittedAt || job.createdAt,
+      orderSubmittedAt: getEarlierDate(
+        job.orderSubmittedAt || job.createdAt,
+        existing?.orderSubmittedAt || existing?.createdAt || '',
+      ),
       internalNotes: job.internalNotes || existing?.internalNotes || '',
       salesRep: job.salesRep || existing?.salesRep || '',
       salesRepEmail: job.salesRepEmail || existing?.salesRepEmail || '',
@@ -2599,6 +2782,7 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
         '',
       salesRepPaidNotificationSentAt:
         job.salesRepPaidNotificationSentAt || existing?.salesRepPaidNotificationSentAt || '',
+      playerProfileId: job.playerProfileId || existing?.playerProfileId || '',
       playerName: job.playerName || existing?.playerName || '',
       playerEmail: job.playerEmail || existing?.playerEmail || '',
       billingDifferent: job.billingDifferent || existing?.billingDifferent || false,
@@ -3214,6 +3398,7 @@ type SalesPortalApiResponse = {
   session?: SalesPortalSession
   crmContacts?: CrmContact[]
   orderJobs?: OrderJob[]
+  players?: PlayerProfile[]
 }
 
 type PublicDraftInvoiceReview = {
@@ -4646,6 +4831,9 @@ function InternalApp() {
   const [build, setBuild] = useState(initialBuild)
   const [profileKindDraft, setProfileKindDraft] = useState<ProfileKind>('Player')
   const [playerNameDraft, setPlayerNameDraft] = useState('')
+  const [playerAffiliationDraft, setPlayerAffiliationDraft] = useState<PlayerAffiliationDraft>(() =>
+    emptyPlayerAffiliation(),
+  )
   const [batDraft, setBatDraft] = useState(emptyBat)
   const [variantTargetProfileId, setVariantTargetProfileId] = useState<string | null>(null)
   const [editingVariantTarget, setEditingVariantTarget] = useState<EditingVariantTarget | null>(null)
@@ -5090,6 +5278,10 @@ function InternalApp() {
     const searchable = [
       player.playerName,
       player.profileKind,
+      player.levelOfPlay,
+      player.currentClub,
+      player.mlbOrganization,
+      player.affiliationNote,
       ...player.bats.flatMap((bat) => [
         bat.modelNumber,
         bat.weight,
@@ -5357,6 +5549,7 @@ function InternalApp() {
             summary.contact.buyingContext,
             summary.contact.batPreferences,
             summary.contact.relationshipNotes,
+            summary.contact.personalNotes,
             summary.contact.objections,
             summary.contact.opportunities,
             ...summary.contact.playerNames,
@@ -5701,12 +5894,13 @@ function InternalApp() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ first: 50 }),
+        body: JSON.stringify({ first: 100 }),
       })
       const payload = (await response.json()) as {
         ok?: boolean
         message?: string
         importedOrders?: number
+        updatedPlayerAffiliations?: number
         orderJobs?: OrderJob[]
         players?: PlayerProfile[]
         billingContacts?: BillingContact[]
@@ -5719,7 +5913,9 @@ function InternalApp() {
       setOrderActionMessage(
         `Imported ${payload.importedOrders ?? 0} recent Shopify order${
           payload.importedOrders === 1 ? '' : 's'
-        }.`,
+        }. Updated ${payload.updatedPlayerAffiliations ?? 0} pro player affiliation${
+          payload.updatedPlayerAffiliations === 1 ? '' : 's'
+        } in Shopify.`,
       )
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not import orders.')
@@ -6059,6 +6255,7 @@ function InternalApp() {
             ? {
                 ...player,
                 playerName: profileName,
+                ...playerAffiliationDraft,
                 bats: player.bats.map((bat) =>
                   bat.id === editingVariantTarget.variantId ? savedBat : bat,
                 ),
@@ -6075,7 +6272,7 @@ function InternalApp() {
       if (variantTargetProfileId) {
         return current.map((player) =>
           player.id === variantTargetProfileId
-            ? { ...player, bats: [savedBat, ...player.bats] }
+            ? { ...player, ...playerAffiliationDraft, bats: [savedBat, ...player.bats] }
             : player,
         )
       }
@@ -6089,7 +6286,7 @@ function InternalApp() {
       if (existingProfile) {
         return current.map((player) =>
           player.id === existingProfile.id
-            ? { ...player, bats: [savedBat, ...player.bats] }
+            ? { ...player, ...playerAffiliationDraft, bats: [savedBat, ...player.bats] }
             : player,
         )
       }
@@ -6099,6 +6296,7 @@ function InternalApp() {
           id: createId('profile'),
           profileKind: profileKindDraft,
           playerName: profileName,
+          ...playerAffiliationDraft,
           bats: [savedBat],
         },
         ...current,
@@ -6110,6 +6308,7 @@ function InternalApp() {
 
   function resetProfileDraft() {
     setPlayerNameDraft('')
+    setPlayerAffiliationDraft(emptyPlayerAffiliation())
     setBatDraft(emptyBat)
     setVariantTargetProfileId(null)
     setEditingVariantTarget(null)
@@ -6119,6 +6318,7 @@ function InternalApp() {
     setActiveSection('players')
     setProfileKindDraft(profile.profileKind)
     setPlayerNameDraft(profile.playerName)
+    setPlayerAffiliationDraft(getPlayerAffiliationDraft(profile.playerName, profile))
     setBatDraft(emptyBat)
     setVariantTargetProfileId(profile.id)
     setEditingVariantTarget(null)
@@ -6129,6 +6329,7 @@ function InternalApp() {
     setActiveSection('players')
     setProfileKindDraft(profile.profileKind)
     setPlayerNameDraft(profile.playerName)
+    setPlayerAffiliationDraft(getPlayerAffiliationDraft(profile.playerName, profile))
     setBatDraft(createBatDraftFromVariation(bat))
     setVariantTargetProfileId(null)
     setEditingVariantTarget({ profileId: profile.id, variantId: bat.id })
@@ -6335,7 +6536,7 @@ function InternalApp() {
               className={activeSection === 'players' ? 'active' : ''}
               onClick={() => setActiveSection('players')}
             >
-              Player Profiles
+              Pro Player Profiles
             </button>
             <button
               type="button"
@@ -7793,6 +7994,20 @@ function InternalApp() {
                   />
                 </label>
 
+                <label className="notes-field">
+                  Personal notes
+                  <textarea
+                    value={newCrmContactDraft.personalNotes}
+                    placeholder="Personal details, preferences, family context, or reminders"
+                    onChange={(event) =>
+                      setNewCrmContactDraft((current) => ({
+                        ...current,
+                        personalNotes: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+
                 <button type="submit">Save contact</button>
               </form>
 
@@ -8325,6 +8540,17 @@ function InternalApp() {
                         />
                       </label>
 
+                      <label className="notes-field">
+                        Additional personal notes
+                        <textarea
+                          value={selectedCrmSummary.contact.personalNotes}
+                          placeholder="Personal details, preferences, family context, or reminders"
+                          onChange={(event) =>
+                            updateSelectedCrmContact({ personalNotes: event.target.value })
+                          }
+                        />
+                      </label>
+
                       <div className="form-row">
                         <label className="notes-field">
                           Objections or concerns
@@ -8489,30 +8715,34 @@ function InternalApp() {
                         <h2>Past orders and invoices</h2>
                       </div>
                       <div className="crm-order-history">
-                        {selectedCrmSummary.orders.length === 0 ? (
+                        {selectedCrmSummary.orderHistory.length === 0 ? (
                           <p className="empty-state">No linked Trinity orders yet.</p>
                         ) : (
-                          selectedCrmSummary.orders.map((job) => (
-                            <article className="sales-dashboard-card" key={job.id}>
+                          selectedCrmSummary.orderHistory.map((order) => (
+                            <article className="sales-dashboard-card" key={order.key}>
                               <div>
-                                <span className={`pill ${isSalesDashboardPaid(job) ? 'yes' : ''}`}>
-                                  {isSalesDashboardPaid(job)
-                                    ? 'Paid'
-                                    : invoiceStatusLabels[job.invoiceStatus]}
+                                <span className={`pill ${order.isPaid ? 'yes' : ''}`}>
+                                  {order.isPaid ? 'Paid' : 'Open'}
                                 </span>
                                 <h3>
-                                  {job.shopifyOrderName ||
-                                    job.shopifyDraftOrderName ||
+                                  {order.shopifyOrderName ||
+                                    order.shopifyDraftOrderName ||
                                     'Unnumbered order'}
                                 </h3>
-                                <p>
-                                  {job.productTitle || 'Custom bat'} · {job.specs.model || 'No model'} ·{' '}
-                                  {job.specs.wood || 'No wood saved'}
-                                </p>
+                                {order.playerName ? <p>Player: {order.playerName}</p> : null}
+                                {order.lineSummaries.map((line) => (
+                                  <p key={line}>{line}</p>
+                                ))}
                               </div>
                               <div className="sales-card-values">
-                                <strong>{formatSalesOrderMoney(getSalesDashboardLineValue(job))}</strong>
-                                <span>{formatSalesDashboardDate(job.orderSubmittedAt || job.createdAt)}</span>
+                                <strong>{formatSalesOrderMoney(order.totalValue)}</strong>
+                                <span>{order.totalQuantity} bats</span>
+                                <span>
+                                  Submitted to Shopify{' '}
+                                  {formatSalesDashboardDate(
+                                    order.submittedAt || order.shopifyCreatedAt,
+                                  )}
+                                </span>
                               </div>
                             </article>
                           ))
@@ -8537,6 +8767,17 @@ function InternalApp() {
             </div>
 
             <form className="bat-form profile-entry-form" onSubmit={addProfileBat}>
+              <datalist id="level-of-play-options">
+                <option value="MLB" />
+                <option value="MILB" />
+                <option value="Indy Ball" />
+                <option value="Mexican League" />
+                <option value="Honkbal Hoofdklasse" />
+                <option value="International" />
+                <option value="Free Agent" />
+                <option value="Drafted - unsigned" />
+                <option value="Amateur" />
+              </datalist>
               <div className="form-instructions">
                 <strong>
                   {editingVariantTarget
@@ -8570,7 +8811,12 @@ function InternalApp() {
                     value={playerNameDraft}
                     placeholder="Example: Corey Seager"
                     onChange={(event) => {
-                      setPlayerNameDraft(event.target.value)
+                      const playerName = event.target.value
+                      setPlayerNameDraft(playerName)
+                      const knownAffiliation = getKnownProPlayerAffiliation(playerName)
+                      if (knownAffiliation) {
+                        setPlayerAffiliationDraft(getPlayerAffiliationDraft(playerName))
+                      }
                       if (!editingVariantTarget) {
                         setVariantTargetProfileId(null)
                       }
@@ -8578,6 +8824,79 @@ function InternalApp() {
                   />
                 </label>
               </div>
+
+              <div className="form-row">
+                <label>
+                  Level of play
+                  <input
+                    list="level-of-play-options"
+                    value={playerAffiliationDraft.levelOfPlay}
+                    placeholder="MLB, MILB, Indy Ball, or league"
+                    onChange={(event) =>
+                      setPlayerAffiliationDraft((current) => ({
+                        ...current,
+                        levelOfPlay: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  MLB organization
+                  <input
+                    value={playerAffiliationDraft.mlbOrganization}
+                    placeholder="Example: Texas Rangers"
+                    onChange={(event) =>
+                      setPlayerAffiliationDraft((current) => ({
+                        ...current,
+                        mlbOrganization: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
+                  Current club or team
+                  <input
+                    value={playerAffiliationDraft.currentClub}
+                    placeholder="Example: Louisville Bats"
+                    onChange={(event) =>
+                      setPlayerAffiliationDraft((current) => ({
+                        ...current,
+                        currentClub: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  Affiliation verified
+                  <input
+                    type="date"
+                    value={playerAffiliationDraft.affiliationVerifiedAt}
+                    onChange={(event) =>
+                      setPlayerAffiliationDraft((current) => ({
+                        ...current,
+                        affiliationVerifiedAt: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+
+              <label className="notes-field">
+                Affiliation note
+                <textarea
+                  value={playerAffiliationDraft.affiliationNote}
+                  placeholder="Free-agent, draft, international, or roster context"
+                  onChange={(event) =>
+                    setPlayerAffiliationDraft((current) => ({
+                      ...current,
+                      affiliationNote: event.target.value,
+                    }))
+                  }
+                />
+              </label>
 
               <div className="form-row">
                 <label>
@@ -8720,7 +9039,7 @@ function InternalApp() {
             <div className="inventory-toolbar profile-toolbar">
               <div className="section-heading">
                 <p className="eyebrow">Search database</p>
-                <h2>Stored profiles</h2>
+                <h2>Pro Player Profiles</h2>
               </div>
               <input
                 aria-label="Search pro player profiles"
@@ -8734,7 +9053,12 @@ function InternalApp() {
               {filteredPlayers.length === 0 ? (
                 <p className="empty-state">No pro player profiles match that search yet.</p>
               ) : (
-                filteredPlayers.map((profile) => (
+                filteredPlayers.map((profile) => {
+                  const playerOrderHistory = buildPlayerOrderHistory(
+                    getOrderJobsForPlayerProfile(profile, orderJobs),
+                  )
+
+                  return (
                   <article className="profile-result-card" key={profile.id}>
                     <div className="split-heading">
                       <div>
@@ -8742,7 +9066,9 @@ function InternalApp() {
                         <h3>{profile.playerName}</h3>
                       </div>
                       <div className="profile-actions">
-                        <span className="profile-count">{profile.bats.length} bats</span>
+                        <span className="profile-count">
+                          {profile.bats.length} bat{profile.bats.length === 1 ? '' : 's'}
+                        </span>
                         <button
                           type="button"
                           className="secondary-button"
@@ -8751,6 +9077,22 @@ function InternalApp() {
                           Add variant
                         </button>
                       </div>
+                    </div>
+
+                    <div className="profile-affiliation-summary">
+                      <span className="profile-type-pill">
+                        {profile.levelOfPlay || 'Level not verified'}
+                      </span>
+                      <strong>{profile.currentClub || 'No current club saved'}</strong>
+                      {profile.mlbOrganization ? (
+                        <span>MLB organization: {profile.mlbOrganization}</span>
+                      ) : null}
+                      {profile.affiliationVerifiedAt ? (
+                        <span>
+                          Verified {formatSalesDashboardDate(profile.affiliationVerifiedAt)}
+                        </span>
+                      ) : null}
+                      {profile.affiliationNote ? <p>{profile.affiliationNote}</p> : null}
                     </div>
 
                     <div className="bat-list">
@@ -8803,8 +9145,52 @@ function InternalApp() {
                         )
                       })}
                     </div>
+
+                    <section className="profile-order-section">
+                      <div className="section-heading">
+                        <p className="eyebrow">Shopify order history</p>
+                        <h3>
+                          {playerOrderHistory.length} order
+                          {playerOrderHistory.length === 1 ? '' : 's'} linked
+                        </h3>
+                      </div>
+                      <div className="crm-order-history profile-order-history">
+                        {playerOrderHistory.length === 0 ? (
+                          <p className="empty-state">No Shopify orders linked to this player yet.</p>
+                        ) : (
+                          playerOrderHistory.map((order) => (
+                            <article className="sales-dashboard-card" key={order.key}>
+                              <div>
+                                <span className={`pill ${order.isPaid ? 'yes' : ''}`}>
+                                  {order.isPaid ? 'Paid' : 'Open'}
+                                </span>
+                                <h3>
+                                  {order.shopifyOrderName ||
+                                    order.shopifyDraftOrderName ||
+                                    'Shopify order'}
+                                </h3>
+                                {order.lineSummaries.map((line) => (
+                                  <p key={line}>{line}</p>
+                                ))}
+                              </div>
+                              <div className="sales-card-values">
+                                <strong>{order.totalQuantity} bats</strong>
+                                <span>{formatSalesOrderMoney(order.totalValue)}</span>
+                                <span>
+                                  Submitted to Shopify{' '}
+                                  {formatSalesDashboardDate(
+                                    order.submittedAt || order.shopifyCreatedAt,
+                                  )}
+                                </span>
+                              </div>
+                            </article>
+                          ))
+                        )}
+                      </div>
+                    </section>
                   </article>
-                ))
+                  )
+                })
               )}
             </div>
           </section>
@@ -9319,6 +9705,9 @@ function SalesPortalApp() {
   const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
     return []
   })
+  const [portalPlayers, setPortalPlayers] = useState<PlayerProfile[]>(() =>
+    isDemoSession ? seedPlayers.map((player) => normalizePlayerProfile(player)) : [],
+  )
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
   const [orderDraft, setOrderDraft] = useState<SalesOrderDraft>(() => emptySalesOrderDraft())
   const [orderAttachmentFile, setOrderAttachmentFile] = useState<File | null>(null)
@@ -9666,6 +10055,11 @@ function SalesPortalApp() {
             ? statePayload.orderJobs.map((job) => normalizeOrderJob(job))
             : [],
         )
+        setPortalPlayers(
+          Array.isArray(statePayload.players)
+            ? statePayload.players.map((player) => normalizePlayerProfile(player))
+            : [],
+        )
         setShopifyCatalog(Array.isArray(catalogPayload.products) ? catalogPayload.products : [])
       } catch (error) {
         if (!cancelled) {
@@ -9788,6 +10182,7 @@ function SalesPortalApp() {
     setSession(null)
     setCrmContacts([])
     setOrderJobs([])
+    setPortalPlayers([])
     setPortalOrders([])
     setShopifyCatalog([])
     setLoginCode('')
@@ -9815,6 +10210,16 @@ function SalesPortalApp() {
     }
   }
 
+  function updatePortalCrmContactDraft(contactId: string, patch: Partial<CrmContact>) {
+    setCrmContacts((current) =>
+      current.map((contact) =>
+        contact.id === contactId
+          ? normalizeCrmContact({ ...contact, ...patch, updatedAt: new Date().toISOString() })
+          : contact,
+      ),
+    )
+  }
+
   async function savePortalCrmContact(contact: CrmContact) {
     const merged = mergePortalCrmContactIntoList(crmContacts, contact)
 
@@ -9835,6 +10240,15 @@ function SalesPortalApp() {
     setCrmContacts(merged.contacts)
     setSelectedContactId(merged.contact.id)
     return merged.contact
+  }
+
+  async function persistPortalCrmContactPatch(contact: CrmContact, patch: Partial<CrmContact>) {
+    try {
+      await savePortalCrmContact({ ...contact, ...patch })
+      setPortalMessage('CRM profile updated.')
+    } catch (error) {
+      setPortalMessage(error instanceof Error ? error.message : 'Could not update the CRM profile.')
+    }
   }
 
   async function savePortalNewContact(event: React.FormEvent<HTMLFormElement>) {
@@ -10205,6 +10619,19 @@ function SalesPortalApp() {
                   }
                 />
               </label>
+              <label className="notes-field">
+                Personal notes
+                <textarea
+                  value={newContactDraft.personalNotes}
+                  placeholder="Personal details, preferences, family context, or reminders"
+                  onChange={(event) =>
+                    setNewContactDraft((current) => ({
+                      ...current,
+                      personalNotes: event.target.value,
+                    }))
+                  }
+                />
+              </label>
               <button type="submit">Save contact</button>
             </form>
 
@@ -10282,6 +10709,90 @@ function SalesPortalApp() {
                     Start order
                   </button>
                 </div>
+                <datalist id="portal-contact-player-names">
+                  {portalPlayers.map((player) => (
+                    <option key={player.id} value={player.playerName} />
+                  ))}
+                </datalist>
+                <section className="crm-profile-editor sales-portal-contact-editor">
+                  <label>
+                    Players tied to this contact
+                    <input
+                      list="portal-contact-player-names"
+                      value={selectedSummary.contact.playerNames.join(', ')}
+                      placeholder="Search or enter player names"
+                      onChange={(event) =>
+                        updatePortalCrmContactDraft(selectedSummary.contact.id, {
+                          playerNames: normalizeCrmList(event.target.value),
+                        })
+                      }
+                      onBlur={(event) =>
+                        void persistPortalCrmContactPatch(selectedSummary.contact, {
+                          playerNames: normalizeCrmList(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="notes-field">
+                    Additional personal notes
+                    <textarea
+                      value={selectedSummary.contact.personalNotes}
+                      placeholder="Personal details, preferences, family context, or reminders"
+                      onChange={(event) =>
+                        updatePortalCrmContactDraft(selectedSummary.contact.id, {
+                          personalNotes: event.target.value,
+                        })
+                      }
+                      onBlur={(event) =>
+                        void persistPortalCrmContactPatch(selectedSummary.contact, {
+                          personalNotes: event.target.value,
+                        })
+                      }
+                    />
+                  </label>
+                </section>
+                <section className="crm-contact-engagement-section">
+                  <div className="section-heading">
+                    <p className="eyebrow">Player order history</p>
+                    <h2>
+                      {selectedSummary.orderHistory.length} linked order
+                      {selectedSummary.orderHistory.length === 1 ? '' : 's'}
+                    </h2>
+                  </div>
+                  <div className="crm-order-history">
+                    {selectedSummary.orderHistory.length === 0 ? (
+                      <p className="empty-state">No linked Trinity orders yet.</p>
+                    ) : (
+                      selectedSummary.orderHistory.map((order) => (
+                        <article className="sales-dashboard-card" key={order.key}>
+                          <div>
+                            <span className={`pill ${order.isPaid ? 'yes' : ''}`}>
+                              {order.isPaid ? 'Paid' : 'Open'}
+                            </span>
+                            <h3>
+                              {order.shopifyOrderName ||
+                                order.shopifyDraftOrderName ||
+                                'Shopify order'}
+                            </h3>
+                            {order.lineSummaries.map((line) => (
+                              <p key={line}>{line}</p>
+                            ))}
+                          </div>
+                          <div className="sales-card-values">
+                            <strong>{order.totalQuantity} bats</strong>
+                            <span>{formatSalesOrderMoney(order.totalValue)}</span>
+                            <span>
+                              Submitted to Shopify{' '}
+                              {formatSalesDashboardDate(
+                                order.submittedAt || order.shopifyCreatedAt,
+                              )}
+                            </span>
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </section>
                 <form className="crm-touchpoint-form" onSubmit={savePortalEngagement}>
                   <div className="section-heading">
                     <p className="eyebrow">Engagement</p>
@@ -10367,6 +10878,11 @@ function SalesPortalApp() {
                 <option key={product.id} value={product.name} />
               ))}
             </datalist>
+            <datalist id="portal-pro-player-names">
+              {portalPlayers.map((player) => (
+                <option key={player.id} value={player.playerName} />
+              ))}
+            </datalist>
             <SalesOrderFormFields
               draft={orderDraft}
               setDraft={setOrderDraft}
@@ -10386,6 +10902,7 @@ function SalesPortalApp() {
               }
               shopifyCatalog={shopifyCatalog}
               productDatalistId="portal-shopify-bat-products"
+              playerNameDatalistId="portal-pro-player-names"
               attachmentFile={orderAttachmentFile}
               setAttachmentFile={setOrderAttachmentFile}
               isSubmitting={isSubmittingPortalOrder}

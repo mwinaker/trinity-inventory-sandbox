@@ -10,6 +10,7 @@ import {
   isAllowedShopifyAttachmentUrl,
   isFreshShopifyLaunchTimestamp,
   isManualCrmContactRecord,
+  isOrderJobLinkedToCrmContacts,
   isSalesPortalSessionCurrent,
 } from '../server/security-policy.mjs'
 
@@ -69,6 +70,31 @@ test('sales portal sessions respect disabled users, code rotation, and CRM owner
       sessionOwnerKey: 'shane@trinitybats.com',
     }),
     true,
+  )
+})
+
+test('a rep can see website orders tied to their own CRM players without seeing other contacts', () => {
+  const ownedContacts = [
+    {
+      name: 'Jack Freedman',
+      email: 'jack@example.com',
+      playerNames: ['Michael Chavis'],
+    },
+  ]
+
+  assert.equal(
+    isOrderJobLinkedToCrmContacts(
+      { playerName: 'Michael Chavis', customerEmail: 'different@example.com' },
+      ownedContacts,
+    ),
+    true,
+  )
+  assert.equal(
+    isOrderJobLinkedToCrmContacts(
+      { playerName: 'Corey Seager', customerEmail: 'another@example.com' },
+      ownedContacts,
+    ),
+    false,
   )
 })
 

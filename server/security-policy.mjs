@@ -92,6 +92,33 @@ export function canUpdateOwnedRecord({ isAdmin, existingOwnerKey, sessionOwnerKe
   return Boolean(existingOwnerKey && sessionOwnerKey && existingOwnerKey === sessionOwnerKey)
 }
 
+export function isOrderJobLinkedToCrmContacts(job, contacts) {
+  const jobPlayerName = normalizeCrmContactLabel(job?.playerName)
+  const jobEmails = new Set(
+    [job?.playerEmail, job?.billingEmail, job?.customerEmail]
+      .map((value) => cleanString(value).toLowerCase())
+      .filter(Boolean),
+  )
+  const jobPhones = new Set(
+    [job?.billingPhone, job?.customerPhone]
+      .map((value) => cleanString(value).replace(/\D/g, ''))
+      .filter(Boolean),
+  )
+
+  return (Array.isArray(contacts) ? contacts : []).some((contact) => {
+    const playerNames = [contact?.name, ...(Array.isArray(contact?.playerNames) ? contact.playerNames : [])]
+      .map(normalizeCrmContactLabel)
+      .filter(Boolean)
+    if (jobPlayerName && playerNames.includes(jobPlayerName)) return true
+
+    const contactEmail = cleanString(contact?.email).toLowerCase()
+    if (contactEmail && jobEmails.has(contactEmail)) return true
+
+    const contactPhone = cleanString(contact?.phone).replace(/\D/g, '')
+    return Boolean(contactPhone && jobPhones.has(contactPhone))
+  })
+}
+
 export function enforcePublicDraftOrderPolicy(payload, isAuthenticatedOperator) {
   const nextPayload = payload && typeof payload === 'object' ? { ...payload } : {}
   if (!isAuthenticatedOperator) {
