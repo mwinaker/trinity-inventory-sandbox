@@ -30,7 +30,10 @@ import {
   trinityTeamMembers,
 } from '../shared/team-directory.mjs'
 import { billetSpeciesOptions as billetSpeciesValues } from '../shared/species-options.mjs'
-import { billetSourceOptions as billetSourceValues } from '../shared/source-options.mjs'
+import {
+  billetSourceOptions as billetSourceValues,
+  isOversizedBilletSource,
+} from '../shared/source-options.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -159,7 +162,6 @@ const salesPortalVerifyRateLimiter = createFixedWindowRateLimiter({
   message: 'Too many sign-in attempts. Please wait and try again.',
 })
 const billetDiameterWeightCorrectionOz = 1.75
-const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
 const billetSourceOptions = new Set(billetSourceValues)
 const billetSpeciesOptions = new Set(billetSpeciesValues)
 const publicSalesOrderFormPaths = [
@@ -3686,8 +3688,8 @@ function getGameModelBilletMatches(billets, { source, species, idealBilletWeight
 }
 
 function getAdjustedTargetBilletWeight(referenceSource, idealWeight, candidateSource) {
-  const referenceIsOversized = oversizedBilletDiameterSources.has(referenceSource)
-  const candidateIsOversized = oversizedBilletDiameterSources.has(candidateSource)
+  const referenceIsOversized = isOversizedBilletSource(referenceSource)
+  const candidateIsOversized = isOversizedBilletSource(candidateSource)
 
   if (referenceIsOversized === candidateIsOversized) return idealWeight
   return referenceIsOversized

@@ -6,6 +6,25 @@ export const billetSourceOptions = [
   'Champeau',
 ]
 
+export const standardBilletLength = 37
+export const standardBilletDiameter = 2.75
+export const oversizedBilletDiameter = 2.79
+
+const oversizedBilletSources = new Set(["RJ's Tree Farms", 'Cahan'])
+
+export function isOversizedBilletSource(source) {
+  return oversizedBilletSources.has(String(source ?? ''))
+}
+
+export function getBilletDimensionsForSource(source) {
+  return {
+    length: standardBilletLength,
+    diameter: isOversizedBilletSource(source)
+      ? oversizedBilletDiameter
+      : standardBilletDiameter,
+  }
+}
+
 export function inferBilletSourceFromText(value) {
   const normalized = String(value ?? '').toLowerCase()
   if (normalized.includes('great lakes') || normalized.includes('glv')) {

@@ -27,7 +27,10 @@ import {
 import type { BilletSpecies } from '../shared/species-options.mjs'
 import {
   billetSourceOptions,
+  getBilletDimensionsForSource,
   inferBilletSourceFromText,
+  isOversizedBilletSource,
+  standardBilletLength,
 } from '../shared/source-options.mjs'
 import type { BilletSource } from '../shared/source-options.mjs'
 import {
@@ -636,9 +639,6 @@ const legacyLocalStateKeys = [
   crmActiveOwnerStorageKey,
 ]
 
-const standardBilletLength = 37
-const standardBilletDiameter = 2.75
-const rjBilletDiameter = 2.79
 const billetDiameterWeightCorrectionOz = 1.75
 const defaultMoisture = 8
 const speciesOptions: readonly Species[] = billetSpeciesOptions
@@ -652,7 +652,6 @@ const sourceGradeOptions: Record<Source, Grade[]> = {
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: readonly Source[] = billetSourceOptions
-const oversizedDiameterSources = new Set<Source>(["RJ's Tree Farms", 'Cahan'])
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
 const rushProductionSurchargeUnitAmount = 50
@@ -1254,8 +1253,8 @@ function getAdjustedTargetBilletWeight(
   idealWeight: number,
   candidateSource: Source,
 ) {
-  const referenceIsOversized = oversizedDiameterSources.has(referenceSource)
-  const candidateIsOversized = oversizedDiameterSources.has(candidateSource)
+  const referenceIsOversized = isOversizedBilletSource(referenceSource)
+  const candidateIsOversized = isOversizedBilletSource(candidateSource)
 
   if (referenceIsOversized === candidateIsOversized) return idealWeight
   return referenceIsOversized
@@ -1314,9 +1313,7 @@ function createId(prefix: string) {
 }
 
 function getBilletDiameter(source: Source) {
-  return source === "RJ's Tree Farms" || source === 'Cahan'
-    ? rjBilletDiameter
-    : standardBilletDiameter
+  return getBilletDimensionsForSource(source).diameter
 }
 
 function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
