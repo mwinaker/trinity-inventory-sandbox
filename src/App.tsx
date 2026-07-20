@@ -21,6 +21,11 @@ import {
 } from '../shared/team-directory.mjs'
 import type { TrinityTeamRole } from '../shared/team-directory.mjs'
 import {
+  billetSpeciesOptions,
+  inferBilletSpeciesFromText,
+} from '../shared/species-options.mjs'
+import type { BilletSpecies } from '../shared/species-options.mjs'
+import {
   billetSuitabilityOptions,
   isValidWorkableWeightRange,
   normalizeBilletWorkflowStatus,
@@ -98,7 +103,7 @@ type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'not_required'
 
-type Species = 'Maple' | 'Birch' | 'Ash'
+type Species = BilletSpecies
 type Grade = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
@@ -631,7 +636,7 @@ const standardBilletDiameter = 2.75
 const rjBilletDiameter = 2.79
 const billetDiameterWeightCorrectionOz = 1.75
 const defaultMoisture = 8
-const speciesOptions: Species[] = ['Maple', 'Birch', 'Ash']
+const speciesOptions: readonly Species[] = billetSpeciesOptions
 const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceGradeOptions: Record<Source, Grade[]> = {
   "RJ's Tree Farms": ['Prime', 'Select', 'Choice'],
@@ -2429,8 +2434,7 @@ function normalizeBatVariation(record: Partial<BatVariation> & Pick<BatVariation
 }
 
 function inferSpeciesFromText(value: string): Species | null {
-  const normalized = value.toLowerCase()
-  return speciesOptions.find((species) => normalized.includes(species.toLowerCase())) ?? null
+  return inferBilletSpeciesFromText(value)
 }
 
 function inferSourceFromText(value: string): Source | null {
@@ -3299,7 +3303,7 @@ function parseQuickEntry(
   const normalized = text.toLowerCase()
   const next = { ...current }
 
-  const species = speciesOptions.find((option) => normalized.includes(option.toLowerCase()))
+  const species = inferBilletSpeciesFromText(normalized)
   const grade = detectGrade(normalized)
   const deliveryDateMatch =
     text.match(/\b(20\d{2}-\d{2}-\d{2})\b/) ??
@@ -5897,7 +5901,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
       costSpeciesFilter === 'all' ||
       item.species === costSpeciesFilter ||
       (costSpeciesFilter === 'Maple' &&
-        (item.species === 'Hard Maple' || item.species === 'Soft Maple')) ||
+        item.species === 'Hard Maple') ||
       (costSpeciesFilter === 'Birch' && item.species === 'Yellow Birch')
 
     return matchesQuery && matchesSource && matchesSpecies
