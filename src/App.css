@@ -515,8 +515,7 @@ button:hover {
 
 .players-layout,
 .profiles-page,
-.models-page,
-.orders-layout {
+.models-page {
   display: grid;
   grid-template-columns: minmax(300px, 0.36fr) minmax(0, 1fr);
   gap: 24px;
@@ -549,8 +548,9 @@ button:hover {
   align-content: start;
 }
 
-.orders-layout {
-  grid-template-columns: minmax(380px, 0.9fr) minmax(0, 1.1fr);
+.submit-order-page .order-intake-panel {
+  width: min(100%, 1100px);
+  margin-inline: auto;
 }
 
 .sales-line-card,
@@ -2351,7 +2351,6 @@ td select {
   .players-layout,
   .profiles-page,
   .models-page,
-  .orders-layout,
   .order-job-grid,
   .order-actions,
   .cost-results,

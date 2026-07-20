@@ -68,7 +68,15 @@ declare global {
   }
 }
 
-type ActiveSection = 'inventory' | 'orders' | 'sales' | 'crm' | 'players' | 'models' | 'costs'
+type ActiveSection =
+  | 'inventory'
+  | 'orders'
+  | 'production'
+  | 'sales'
+  | 'crm'
+  | 'players'
+  | 'models'
+  | 'costs'
 type BilletStatus = BilletWorkflowStatus
 type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
@@ -6809,7 +6817,14 @@ function InternalApp() {
               className={activeSection === 'orders' ? 'active' : ''}
               onClick={() => setActiveSection('orders')}
             >
-              Orders
+              Submit New Order
+            </button>
+            <button
+              type="button"
+              className={activeSection === 'production' ? 'active' : ''}
+              onClick={() => setActiveSection('production')}
+            >
+              Production Queue
             </button>
             <button
               type="button"
@@ -7622,8 +7637,65 @@ function InternalApp() {
           </section>
         </>
       ) : activeSection === 'orders' ? (
-        <section className="orders-page">
-          <section className="metrics-grid" aria-label="Order flow summary">
+        <section className="orders-page submit-order-page">
+          <section className="panel order-intake-panel">
+            <div className="section-heading">
+              <p className="eyebrow">Sales intake</p>
+              <h2>Create a Shopify invoice order</h2>
+            </div>
+
+            <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
+              <div className="form-instructions">
+                <strong>Internal sales orders create payment-pending Shopify orders</strong>
+                <p>
+                  Sales reps can enter phone, team, or custom orders here. The app creates
+                  the Shopify order, triggers the same staff order notifications as the site,
+                  sends the invoice when selected, and drops each line into the production queue.
+                </p>
+              </div>
+
+              <datalist id="player-name-options">
+                {players.map((player) => (
+                  <option key={player.id} value={player.playerName} />
+                ))}
+              </datalist>
+
+              <datalist id="shopify-bat-products">
+                {shopifyCatalog.map((product) => (
+                  <option key={product.id} value={product.name} />
+                ))}
+              </datalist>
+
+              <datalist id="billing-contact-options">
+                {billingContactSearchOptions.map((option) => (
+                  <option key={option.id} value={option.value} label={option.label} />
+                ))}
+              </datalist>
+
+              <SalesOrderFormFields
+                draft={salesOrderDraft}
+                setDraft={setSalesOrderDraft}
+                updateField={updateSalesDraftField}
+                updateLine={updateSalesLine}
+                addLine={addSalesLine}
+                removeLine={removeSalesLine}
+                shopifyCatalog={shopifyCatalog}
+                productDatalistId="shopify-bat-products"
+                playerNameDatalistId="player-name-options"
+                billingContactDatalistId="billing-contact-options"
+                updateBillingName={updateBillingName}
+                billingContacts={billingContacts}
+                applyBillingContact={applyBillingContact}
+                attachmentFile={salesOrderAttachmentFile}
+                setAttachmentFile={setSalesOrderAttachmentFile}
+                isSubmitting={isCreatingDraftOrder}
+              />
+            </form>
+          </section>
+        </section>
+      ) : activeSection === 'production' ? (
+        <section className="orders-page production-queue-page">
+          <section className="metrics-grid" aria-label="Production queue summary">
             <article>
               <span>Open jobs</span>
               <strong>{openOrderJobs.length}</strong>
@@ -7642,326 +7714,269 @@ function InternalApp() {
             </article>
           </section>
 
-          <section className="orders-layout">
-            <section className="panel order-intake-panel">
+          <section className="panel order-queue-panel">
+            <div className="inventory-toolbar profile-toolbar">
               <div className="section-heading">
-                <p className="eyebrow">Sales intake</p>
-                <h2>Create a Shopify invoice order</h2>
+                <p className="eyebrow">Order flow</p>
+                <h2>Production queue</h2>
               </div>
-
-              <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
-                <div className="form-instructions">
-                  <strong>Internal sales orders create payment-pending Shopify orders</strong>
-                  <p>
-                    Sales reps can enter phone, team, or custom orders here. The app creates
-                    the Shopify order, triggers the same staff order notifications as the site,
-                    sends the invoice when selected, and drops each line into the production queue.
-                  </p>
-                </div>
-
-                <datalist id="player-name-options">
-                  {players.map((player) => (
-                    <option key={player.id} value={player.playerName} />
-                  ))}
-                </datalist>
-
-                <datalist id="shopify-bat-products">
-                  {shopifyCatalog.map((product) => (
-                    <option key={product.id} value={product.name} />
-                  ))}
-                </datalist>
-
-                <datalist id="billing-contact-options">
-                  {billingContactSearchOptions.map((option) => (
-                    <option key={option.id} value={option.value} label={option.label} />
-                  ))}
-                </datalist>
-
-                <SalesOrderFormFields
-                  draft={salesOrderDraft}
-                  setDraft={setSalesOrderDraft}
-                  updateField={updateSalesDraftField}
-                  updateLine={updateSalesLine}
-                  addLine={addSalesLine}
-                  removeLine={removeSalesLine}
-                  shopifyCatalog={shopifyCatalog}
-                  productDatalistId="shopify-bat-products"
-                  playerNameDatalistId="player-name-options"
-                  billingContactDatalistId="billing-contact-options"
-                  updateBillingName={updateBillingName}
-                  billingContacts={billingContacts}
-                  applyBillingContact={applyBillingContact}
-                  attachmentFile={salesOrderAttachmentFile}
-                  setAttachmentFile={setSalesOrderAttachmentFile}
-                  isSubmitting={isCreatingDraftOrder}
+              <div className="filters">
+                <input
+                  aria-label="Search order jobs"
+                  placeholder="Search customer, model, order, billet..."
+                  value={orderQuery}
+                  onChange={(event) => setOrderQuery(event.target.value)}
                 />
-              </form>
-            </section>
-
-            <section className="panel order-queue-panel">
-              <div className="inventory-toolbar profile-toolbar">
-                <div className="section-heading">
-                  <p className="eyebrow">Order flow</p>
-                  <h2>Production queue</h2>
-                </div>
-                <div className="filters">
-                  <input
-                    aria-label="Search order jobs"
-                    placeholder="Search customer, model, order, billet..."
-                    value={orderQuery}
-                    onChange={(event) => setOrderQuery(event.target.value)}
-                  />
-                  <select
-                    aria-label="Filter production status"
-                    value={orderStatusFilter}
-                    onChange={(event) =>
-                      setOrderStatusFilter(event.target.value as 'all' | ProductionStatus)
-                    }
-                  >
-                    <option value="all">All statuses</option>
-                    {Object.entries(productionStatusLabels).map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="order-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={importRecentOrders}
-                  disabled={isImportingOrders}
+                <select
+                  aria-label="Filter production status"
+                  value={orderStatusFilter}
+                  onChange={(event) =>
+                    setOrderStatusFilter(event.target.value as 'all' | ProductionStatus)
+                  }
                 >
-                  {isImportingOrders ? 'Importing...' : 'Import recent website orders'}
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={registerOrderWebhooks}
-                  disabled={isRegisteringWebhooks}
-                >
-                  {isRegisteringWebhooks ? 'Connecting...' : 'Connect website webhooks'}
-                </button>
+                  <option value="all">All statuses</option>
+                  {Object.entries(productionStatusLabels).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
               </div>
+            </div>
 
-              {orderActionMessage ? <p className="helper-text">{orderActionMessage}</p> : null}
+            <div className="order-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={importRecentOrders}
+                disabled={isImportingOrders}
+              >
+                {isImportingOrders ? 'Importing...' : 'Import recent website orders'}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={registerOrderWebhooks}
+                disabled={isRegisteringWebhooks}
+              >
+                {isRegisteringWebhooks ? 'Connecting...' : 'Connect website webhooks'}
+              </button>
+            </div>
 
-              <div className="order-job-list">
-                {filteredOrderJobs.length === 0 ? (
-                  <p className="empty-state">No order jobs match this view yet.</p>
-                ) : (
-                  filteredOrderJobs.map((job) => {
-                    const assignedBillet = billets.find((billet) => billet.id === job.assignedBilletId)
-                    const availableBilletsForJob = billets.filter(
-                      (billet) => billet.status === 'storage' || billet.id === job.assignedBilletId,
-                    )
-                    const displayPlayerName = job.playerName || job.customerName || 'No player saved'
-                    const displayPayerName = job.billingName || job.customerName || 'No payer saved'
-                    const displayPayerEmail = job.billingEmail || job.customerEmail
+            {orderActionMessage ? <p className="helper-text">{orderActionMessage}</p> : null}
 
-                    return (
-                      <article className="order-job-card" key={job.id}>
-                        <div className="split-heading">
-                          <div>
-                            <span className="profile-type-pill">
-                              {job.origin === 'website' ? 'Website' : 'Sales intake'}
-                            </span>
-                            <h3>
-                              {job.shopifyOrderName ||
-                                job.shopifyDraftOrderName ||
-                                'Unnumbered Shopify order'}
-                            </h3>
+            <div className="order-job-list">
+              {filteredOrderJobs.length === 0 ? (
+                <p className="empty-state">No order jobs match this view yet.</p>
+              ) : (
+                filteredOrderJobs.map((job) => {
+                  const assignedBillet = billets.find((billet) => billet.id === job.assignedBilletId)
+                  const availableBilletsForJob = billets.filter(
+                    (billet) => billet.status === 'storage' || billet.id === job.assignedBilletId,
+                  )
+                  const displayPlayerName = job.playerName || job.customerName || 'No player saved'
+                  const displayPayerName = job.billingName || job.customerName || 'No payer saved'
+                  const displayPayerEmail = job.billingEmail || job.customerEmail
+
+                  return (
+                    <article className="order-job-card" key={job.id}>
+                      <div className="split-heading">
+                        <div>
+                          <span className="profile-type-pill">
+                            {job.origin === 'website' ? 'Website' : 'Sales intake'}
+                          </span>
+                          <h3>
+                            {job.shopifyOrderName ||
+                              job.shopifyDraftOrderName ||
+                              'Unnumbered Shopify order'}
+                          </h3>
+                          <p>
+                            {displayPlayerName} ·{' '}
+                            {job.productTitle}
+                            {job.variantTitle ? ` / ${job.variantTitle}` : ''}
+                          </p>
+                        </div>
+                        <div className="profile-actions">
+                          <span className={`pill ${job.invoiceStatus === 'paid' ? 'yes' : ''}`}>
+                            {invoiceStatusLabels[job.invoiceStatus]}
+                          </span>
+                          <span className="profile-count">Qty {job.quantity}</span>
+                        </div>
+                      </div>
+
+                      <div className="order-job-grid">
+                        <div className="compatible-list">
+                          <span>Player and billing</span>
+                          <p>Order placed: {formatOrderDateTime(job.orderSubmittedAt || job.createdAt)}</p>
+                          <p>Player: {displayPlayerName}</p>
+                          {job.playerEmail ? <p>Player email: {job.playerEmail}</p> : null}
+                          <p>Bill to: {displayPayerName}</p>
+                          {displayPayerEmail ? <p>Billing email: {displayPayerEmail}</p> : null}
+                          {job.billingPhone ? <p>Billing phone: {job.billingPhone}</p> : null}
+                          {job.billingCompany ? <p>Team/agency: {job.billingCompany}</p> : null}
+                          {job.billingRelationship ? (
+                            <p>Relationship: {job.billingRelationship}</p>
+                          ) : null}
+                          {job.salesRep ? <p>Sales rep: {job.salesRep}</p> : null}
+                          {job.salesRepEmail ? <p>Sales rep email: {job.salesRepEmail}</p> : null}
+                          {job.internalAttachment?.downloadUrl ? (
                             <p>
-                              {displayPlayerName} ·{' '}
-                              {job.productTitle}
-                              {job.variantTitle ? ` / ${job.variantTitle}` : ''}
+                              Attachment:{' '}
+                              <a
+                                href={job.internalAttachment.downloadUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {job.internalAttachment.filename}
+                              </a>
                             </p>
-                          </div>
-                          <div className="profile-actions">
-                            <span className={`pill ${job.invoiceStatus === 'paid' ? 'yes' : ''}`}>
-                              {invoiceStatusLabels[job.invoiceStatus]}
-                            </span>
-                            <span className="profile-count">Qty {job.quantity}</span>
-                          </div>
+                          ) : null}
                         </div>
 
-                        <div className="order-job-grid">
-                          <div className="compatible-list">
-                            <span>Player and billing</span>
-                            <p>Order placed: {formatOrderDateTime(job.orderSubmittedAt || job.createdAt)}</p>
-                            <p>Player: {displayPlayerName}</p>
-                            {job.playerEmail ? <p>Player email: {job.playerEmail}</p> : null}
-                            <p>Bill to: {displayPayerName}</p>
-                            {displayPayerEmail ? <p>Billing email: {displayPayerEmail}</p> : null}
-                            {job.billingPhone ? <p>Billing phone: {job.billingPhone}</p> : null}
-                            {job.billingCompany ? <p>Team/agency: {job.billingCompany}</p> : null}
-                            {job.billingRelationship ? (
-                              <p>Relationship: {job.billingRelationship}</p>
-                            ) : null}
-                            {job.salesRep ? <p>Sales rep: {job.salesRep}</p> : null}
-                            {job.salesRepEmail ? <p>Sales rep email: {job.salesRepEmail}</p> : null}
-                            {job.internalAttachment?.downloadUrl ? (
-                              <p>
-                                Attachment:{' '}
+                        <div className="compatible-list">
+                          <span>Build specs</span>
+                          <p>Model: {job.specs.model || 'Not specified'}</p>
+                          <p>Length: {job.specs.length || 'N/A'}</p>
+                          <p>Weight: {job.specs.targetWeight || 'N/A'}</p>
+                          <p>Wood species: {job.specs.wood || 'N/A'}</p>
+                          <p>Handle color: {job.specs.handleColor || 'N/A'}</p>
+                          <p>Barrel color: {job.specs.barrelColor || 'N/A'}</p>
+                          <p>Band color: {job.specs.bandColor || 'N/A'}</p>
+                          <p>Logo color: {job.specs.logoColor || 'N/A'}</p>
+                          <p>Engraving: {job.specs.engraving || 'N/A'}</p>
+                          <p>Cup: {job.specs.cupped || 'N/A'}</p>
+                          {job.specs.notes ? <p>{job.specs.notes}</p> : null}
+                        </div>
+
+                        <div className="job-controls">
+                          <label>
+                            Production status
+                            <select
+                              value={job.productionStatus}
+                              onChange={(event) =>
+                                updateOrderJob(job.id, {
+                                  productionStatus: event.target.value as ProductionStatus,
+                                })
+                              }
+                            >
+                              {Object.entries(productionStatusLabels).map(([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <label>
+                            Assigned billet
+                            <select
+                              value={job.assignedBilletId}
+                              onChange={(event) =>
+                                assignBilletToOrderJob(job.id, event.target.value)
+                              }
+                            >
+                              <option value="">No billet assigned</option>
+                              {availableBilletsForJob.map((billet) => (
+                                <option key={billet.id} value={billet.id}>
+                                  {getBilletLabel(billet)}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <div className="form-row">
+                            <label>
+                              Player
+                              <input
+                                value={job.playerName}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { playerName: event.target.value })
+                                }
+                              />
+                            </label>
+                            <label>
+                              Bill to
+                              <input
+                                value={job.billingName}
+                                onChange={(event) =>
+                                  updateOrderJob(job.id, { billingName: event.target.value })
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          <label>
+                            Sales rep
+                            <input
+                              value={job.salesRep}
+                              onChange={(event) =>
+                                updateOrderJob(job.id, { salesRep: event.target.value })
+                              }
+                            />
+                          </label>
+
+                          <label>
+                            Sales rep email
+                            <input
+                              type="email"
+                              value={job.salesRepEmail}
+                              onChange={(event) =>
+                                updateOrderJob(job.id, { salesRepEmail: event.target.value })
+                              }
+                            />
+                          </label>
+
+                          <label className="notes-field">
+                            Internal notes
+                            <textarea
+                              value={job.internalNotes}
+                              placeholder="Production, invoicing, or customer communication notes"
+                              onChange={(event) =>
+                                updateOrderJob(job.id, { internalNotes: event.target.value })
+                              }
+                            />
+                          </label>
+
+                          {job.shopifyDraftOrderId && job.invoiceStatus === 'draft' ? (
+                            <>
+                              {job.shopifyDraftInvoiceUrl ? (
                                 <a
-                                  href={job.internalAttachment.downloadUrl}
+                                  className="secondary-button"
+                                  href={job.shopifyDraftInvoiceUrl}
                                   target="_blank"
                                   rel="noreferrer"
                                 >
-                                  {job.internalAttachment.filename}
+                                  Review draft invoice
                                 </a>
-                              </p>
-                            ) : null}
-                          </div>
-
-                          <div className="compatible-list">
-                            <span>Build specs</span>
-                            <p>Model: {job.specs.model || 'Not specified'}</p>
-                            <p>Length: {job.specs.length || 'N/A'}</p>
-                            <p>Weight: {job.specs.targetWeight || 'N/A'}</p>
-                            <p>Wood species: {job.specs.wood || 'N/A'}</p>
-                            <p>Handle color: {job.specs.handleColor || 'N/A'}</p>
-                            <p>Barrel color: {job.specs.barrelColor || 'N/A'}</p>
-                            <p>Band color: {job.specs.bandColor || 'N/A'}</p>
-                            <p>Logo color: {job.specs.logoColor || 'N/A'}</p>
-                            <p>Engraving: {job.specs.engraving || 'N/A'}</p>
-                            <p>Cup: {job.specs.cupped || 'N/A'}</p>
-                            {job.specs.notes ? <p>{job.specs.notes}</p> : null}
-                          </div>
-
-                          <div className="job-controls">
-                            <label>
-                              Production status
-                              <select
-                                value={job.productionStatus}
-                                onChange={(event) =>
-                                  updateOrderJob(job.id, {
-                                    productionStatus: event.target.value as ProductionStatus,
-                                  })
-                                }
+                              ) : null}
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => sendInvoiceForJob(job)}
                               >
-                                {Object.entries(productionStatusLabels).map(([value, label]) => (
-                                  <option key={value} value={value}>
-                                    {label}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <label>
-                              Assigned billet
-                              <select
-                                value={job.assignedBilletId}
-                                onChange={(event) =>
-                                  assignBilletToOrderJob(job.id, event.target.value)
-                                }
-                              >
-                                <option value="">No billet assigned</option>
-                                {availableBilletsForJob.map((billet) => (
-                                  <option key={billet.id} value={billet.id}>
-                                    {getBilletLabel(billet)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
-                            <div className="form-row">
-                              <label>
-                                Player
-                                <input
-                                  value={job.playerName}
-                                  onChange={(event) =>
-                                    updateOrderJob(job.id, { playerName: event.target.value })
-                                  }
-                                />
-                              </label>
-                              <label>
-                                Bill to
-                                <input
-                                  value={job.billingName}
-                                  onChange={(event) =>
-                                    updateOrderJob(job.id, { billingName: event.target.value })
-                                  }
-                                />
-                              </label>
-                            </div>
-
-                            <label>
-                              Sales rep
-                              <input
-                                value={job.salesRep}
-                                onChange={(event) =>
-                                  updateOrderJob(job.id, { salesRep: event.target.value })
-                                }
-                              />
-                            </label>
-
-                            <label>
-                              Sales rep email
-                              <input
-                                type="email"
-                                value={job.salesRepEmail}
-                                onChange={(event) =>
-                                  updateOrderJob(job.id, { salesRepEmail: event.target.value })
-                                }
-                              />
-                            </label>
-
-                            <label className="notes-field">
-                              Internal notes
-                              <textarea
-                                value={job.internalNotes}
-                                placeholder="Production, invoicing, or customer communication notes"
-                                onChange={(event) =>
-                                  updateOrderJob(job.id, { internalNotes: event.target.value })
-                                }
-                              />
-                            </label>
-
-                            {job.shopifyDraftOrderId && job.invoiceStatus === 'draft' ? (
-                              <>
-                                {job.shopifyDraftInvoiceUrl ? (
-                                  <a
-                                    className="secondary-button"
-                                    href={job.shopifyDraftInvoiceUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                  >
-                                    Review draft invoice
-                                  </a>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={() => sendInvoiceForJob(job)}
-                                >
-                                  Send Shopify invoice
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
+                                Send Shopify invoice
+                              </button>
+                            </>
+                          ) : null}
                         </div>
+                      </div>
 
-                        <div className="order-job-footer">
-                          <p>
-                            Payment: {job.financialStatus || 'unknown'} · Fulfillment:{' '}
-                            {job.fulfillmentStatus || 'unknown'}
-                          </p>
-                          <p>
-                            {assignedBillet
-                              ? `Billet ${assignedBillet.barcode} assigned`
-                              : 'No billet assigned yet'}
-                          </p>
-                        </div>
-                      </article>
-                    )
-                  })
-                )}
-              </div>
-            </section>
+                      <div className="order-job-footer">
+                        <p>
+                          Payment: {job.financialStatus || 'unknown'} · Fulfillment:{' '}
+                          {job.fulfillmentStatus || 'unknown'}
+                        </p>
+                        <p>
+                          {assignedBillet
+                            ? `Billet ${assignedBillet.barcode} assigned`
+                            : 'No billet assigned yet'}
+                        </p>
+                      </div>
+                    </article>
+                  )
+                })
+              )}
+            </div>
           </section>
         </section>
       ) : activeSection === 'sales' ? (
