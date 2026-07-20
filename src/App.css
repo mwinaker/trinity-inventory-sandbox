@@ -167,6 +167,52 @@ td span {
   text-transform: none;
 }
 
+.billet-suitability-picker {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid rgba(72, 50, 31, 0.16);
+  border-radius: 18px;
+  padding: 14px;
+}
+
+.billet-suitability-picker legend {
+  padding: 0 8px;
+  color: #55402f;
+  font-size: 0.85rem;
+  font-weight: 900;
+}
+
+.billet-suitability-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.billet-suitability-cell {
+  min-width: 230px;
+}
+
+.compact-checkbox {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin-bottom: 7px;
+  color: #4d3928;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.compact-checkbox input {
+  width: 15px;
+  min-height: 15px;
+  margin: 1px 0 0;
+  accent-color: #2f4c32;
+}
+
+.compact-checkbox input:disabled + span {
+  opacity: 0.5;
+}
+
 .metrics-grid strong {
   display: block;
   margin-top: 8px;
@@ -1989,6 +2035,15 @@ button:hover {
 .optional-link-panel strong {
   display: block;
   color: #2c1b11;
+}
+
+.model-fit-data-panel strong {
+  display: block;
+  color: #2c1b11;
+}
+
+.model-weight-range-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .nested-form {

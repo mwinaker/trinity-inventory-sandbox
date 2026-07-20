@@ -12,6 +12,13 @@ import {
   normalizePlayerNameKey,
   parseManualBatOrderSegments,
 } from '../shared/pro-player-affiliations.mjs'
+import {
+  billetSuitabilityOptions,
+  isValidWorkableWeightRange,
+  normalizeBilletSuitability,
+  updateBilletSuitability,
+} from './inventory-policy.ts'
+import type { BilletSuitability } from './inventory-policy.ts'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -71,6 +78,7 @@ type Billet = {
   barcode: string
   species: Species
   grade: Grade
+  suitabilityCategories: BilletSuitability[]
   trophyEligible: boolean
   mlbEligible: boolean
   hasBarrelKnot: KnotStatus
@@ -96,9 +104,6 @@ type InventorySort =
   | 'delivery_asc'
 
 type SortDirection = 'asc' | 'desc'
-type InventoryMlbFilter = 'yes' | 'no'
-type InventoryTrophyFilter = 'yes' | 'no'
-
 type CustomBuild = {
   model: string
   length: number
@@ -147,11 +152,23 @@ type PlayerProfile = {
   bats: BatVariation[]
 }
 
+type ModelWeightRange = {
+  minOz?: number
+  maxOz?: number
+}
+
+type ModelCompatibility = {
+  billetWeightRange?: ModelWeightRange
+  species: Species[] | 'Any'
+  speciesDependent: boolean
+}
+
 type BatModelProduct = {
   id: string
   name: string
   category: string
   url: string
+  compatibility?: ModelCompatibility
   source?: 'seed' | 'shopify' | 'custom'
   status?: string
   handle?: string
@@ -184,14 +201,14 @@ type ProducedBatRecord = {
   batType: 'Game' | 'Trainer' | 'Trophy'
   customModelName: string
   sourceModelId: string
-  sourceBilletStatuses: Record<string, BilletStatus>
   shopifyProductId: string
   shopifyVariantId: string
   length: string
   weight: string
   billetWeight: string
+  billetWeightMin: string
+  billetWeightMax: string
   billetGrade: Grade
-  billetIds: string[]
   cupped: 'Yes' | 'No'
   modifications: string
   createdAt: string
@@ -798,6 +815,25 @@ const logoColorOptions = [
 const batTypeOptions: ProducedBatRecord['batType'][] = ['Game', 'Trainer', 'Trophy']
 const autoNonMlbGrades = new Set<Grade>(['Choice', 'Semi-Pro', 'Promo', 'Blem'])
 
+function createTrainerModel(
+  id: string,
+  name: string,
+  billetWeightRange?: ModelWeightRange,
+  url = '',
+): BatModelProduct {
+  return {
+    id,
+    name,
+    category: 'Training Series',
+    url,
+    compatibility: {
+      billetWeightRange,
+      species: 'Any',
+      speciesDependent: false,
+    },
+  }
+}
+
 const billetCostReferences: BilletCostReference[] = [
   { id: 'glv-prime-light-mid', source: 'Great Lakes Veneer', species: 'Maple', tier: 'Prime', weightRange: 'Light/Midweight 50/50 mix', price: '$59.95', priceValue: 59.95, notes: 'GLV 2026 Maple Standard Pricing.' },
   { id: 'glv-prime-mid', source: 'Great Lakes Veneer', species: 'Maple', tier: 'Prime', weightRange: '89-96 oz', price: '$45.00', priceValue: 45, notes: 'Sale listed at $35.' },
@@ -840,7 +876,7 @@ const seedBatModels: BatModelProduct[] = [
   { id: 'boom-stick', name: 'BOOM Stick', category: 'Youth Series', url: 'https://www.trinitybatco.com/boom-stick-1/' },
   { id: 'el-titan-select-youth', name: 'El Titán (Select Youth)', category: 'Youth Series', url: 'https://www.trinitybatco.com/el-titan-select-youth/' },
   { id: 'on-deck-bat', name: 'On-Deck bat', category: 'Training Series', url: 'https://www.trinitybatco.com/on-deck-bat/' },
-  { id: 'overload-trainer', name: 'Overload Trainer', category: 'Training Series', url: 'https://www.trinitybatco.com/products/Heavy-Trainer.html' },
+  createTrainerModel('overload-trainer', 'Overload Trainer', { minOz: 93, maxOz: 98 }, 'https://www.trinitybatco.com/products/Heavy-Trainer.html'),
   { id: 'platinum-xx', name: 'Platinum XX', category: 'Platinum Series', url: 'https://www.trinitybatco.com/platinum-xx-1/' },
   { id: 'pro-fungo-fs3000', name: 'Pro Fungo - FS3000', category: 'Training Series', url: 'https://www.trinitybatco.com/pro-fungo-fs3000/' },
   { id: 'pro-fungo-fs7000', name: 'Pro Fungo - FS7000', category: 'Training Series', url: 'https://www.trinitybatco.com/pro-fungo-fs7000/' },
@@ -861,6 +897,12 @@ const seedBatModels: BatModelProduct[] = [
   { id: 'pro-select-jm14', name: 'Pro Select JM14', category: 'Pro Series', url: 'https://www.trinitybatco.com/pro-select-jm14/' },
   { id: 'pro-select-mc37', name: 'Pro Select MC37', category: 'Pro Series', url: 'https://www.trinitybatco.com/pro-select-mc37/' },
   { id: 'pro-select-ps-27-1', name: 'Pro Select PS 27:1', category: 'Pro Series', url: 'https://www.trinitybatco.com/pro-select-ps-27-1/' },
+  createTrainerModel('long-heavy-trainer', 'Long Heavy Trainer', { minOz: 92, maxOz: 97 }),
+  createTrainerModel('short-heavy-trainer', 'Short Heavy Trainer', { minOz: 95, maxOz: 101 }),
+  createTrainerModel('weighted-skinny-trainer', 'Weighted Skinny Trainer', { minOz: 102 }),
+  createTrainerModel('blade-barrel-trainer', 'Blade Barrel Trainer', { minOz: 87, maxOz: 90 }),
+  createTrainerModel('sledge-trainer', 'Sledge Trainer', { minOz: 100 }),
+  createTrainerModel('one-hand-trainer', 'One-Hand Trainer'),
   { id: 'short-one-hand-trainer', name: 'Short One-Hand Trainer', category: 'Training Series', url: 'https://www.trinitybatco.com/tdb1-short-one-hand-trainer/' },
   { id: 'skinny-bat', name: 'Skinny Bat', category: 'Training Series', url: 'https://www.trinitybatco.com/hand-eye-coordination-bat/' },
   { id: 'torpedo', name: 'TORPEDO', category: 'Pro Series', url: 'https://www.trinitybatco.com/torpedo/' },
@@ -873,7 +915,7 @@ const seedBatModels: BatModelProduct[] = [
   { id: 'trinity-model-t318', name: 'Trinity Model T318', category: 'Trinity Series', url: 'https://www.trinitybatco.com/trinity-model-t318/' },
   { id: 'trinity-model-t331', name: 'Trinity Model T331', category: 'Trinity Series', url: 'https://www.trinitybatco.com/trinity-model-t331/' },
   { id: 'trinity-model-ti13', name: 'Trinity Model Ti13', category: 'Trinity Series', url: 'https://www.trinitybatco.com/trinity-model-ti13/' },
-  { id: 'underload-trainer', name: 'Underload Trainer', category: 'Training Series', url: 'https://www.trinitybatco.com/t1ht-long-one-hand-trainer/' },
+  createTrainerModel('underload-trainer', 'Underload Trainer', { maxOz: 82 }, 'https://www.trinitybatco.com/t1ht-long-one-hand-trainer/'),
   { id: 'youth-pro-model-ps-27-1', name: 'Youth Pro Model PS 27:1', category: 'Youth Series', url: 'https://www.trinitybatco.com/youth-pro-model-ps-27-1/' },
 ]
 
@@ -905,6 +947,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0001',
     species: 'Birch',
     grade: 'Prime',
+    suitabilityCategories: ['MLB capable'],
     trophyEligible: false,
     mlbEligible: true,
     hasBarrelKnot: 'No',
@@ -922,6 +965,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0002',
     species: 'Birch',
     grade: 'Select',
+    suitabilityCategories: ['MLB capable'],
     trophyEligible: false,
     mlbEligible: true,
     hasBarrelKnot: 'No',
@@ -939,6 +983,7 @@ const seedBillets: Billet[] = [
     barcode: 'TBC-BLT-0003',
     species: 'Maple',
     grade: 'Pro',
+    suitabilityCategories: ['Trainer only'],
     trophyEligible: false,
     mlbEligible: false,
     hasBarrelKnot: 'No',
@@ -1006,6 +1051,7 @@ const emptyBillet: Omit<Billet, 'id'> = {
   barcode: '',
   species: 'Maple',
   grade: 'Prime',
+  suitabilityCategories: ['MLB capable'],
   trophyEligible: false,
   mlbEligible: true,
   hasBarrelKnot: 'No',
@@ -1081,14 +1127,14 @@ const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   batType: 'Game',
   customModelName: '',
   sourceModelId: '',
-  sourceBilletStatuses: {},
   shopifyProductId: '',
   shopifyVariantId: '',
   length: '',
   weight: '',
   billetWeight: '',
+  billetWeightMin: '',
+  billetWeightMax: '',
   billetGrade: 'Prime',
-  billetIds: [],
   cupped: 'No',
   modifications: '',
 }
@@ -1291,9 +1337,17 @@ function normalizeKnotStatus(value: KnotStatus | boolean | null | undefined) {
   return 'No'
 }
 
-function normalizeTrophyEligible(billet: Partial<Billet> & { grade?: string }) {
-  if (typeof billet.trophyEligible === 'boolean') return billet.trophyEligible
-  return String(billet.grade ?? '').toLowerCase() === 'trophy'
+function withBilletSuitability<T extends Pick<Billet, 'mlbEligible' | 'trophyEligible'>>(
+  billet: T,
+  suitabilityCategories: BilletSuitability[],
+) {
+  const normalizedCategories = normalizeBilletSuitability(suitabilityCategories)
+  return {
+    ...billet,
+    suitabilityCategories: normalizedCategories,
+    mlbEligible: normalizedCategories.includes('MLB capable'),
+    trophyEligible: normalizedCategories.includes('Trophy'),
+  }
 }
 
 function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)): Billet {
@@ -1301,18 +1355,22 @@ function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)
     ? (billet.source as Source)
     : "RJ's Tree Farms"
   const weight = normalizeBilletWeight(billet.weight)
+  const suitabilityCategories = normalizeBilletSuitability(billet.suitabilityCategories, {
+    mlbEligible: billet.mlbEligible,
+    trophyEligible:
+      billet.trophyEligible || String(billet.grade ?? '').toLowerCase() === 'trophy',
+  })
 
-  return {
+  return withBilletSuitability({
     ...emptyBillet,
     ...billet,
     source,
     weight,
     grade: normalizeGradeForSource(source, billet.grade),
-    trophyEligible: normalizeTrophyEligible(billet),
     hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
     deliveryDate: billet.deliveryDate ?? '',
     status: normalizeBilletStatus(billet.status),
-  }
+  }, suitabilityCategories)
 }
 
 function normalizeBilletWeight(value: Billet['weight'] | string | null | undefined): Billet['weight'] {
@@ -1349,21 +1407,19 @@ function normalizeGradeForSource(source: Source, grade: Grade | string | null | 
 function normalizeProducedBatRecord(
   record: Partial<ProducedBatRecord> & Pick<ProducedBatRecord, 'id' | 'modelId'>,
 ): ProducedBatRecord {
-  const sourceBilletStatuses = Object.fromEntries(
-    Object.entries(record.sourceBilletStatuses ?? {}).map(([billetId, status]) => [
-      billetId,
-      normalizeBilletStatus(status),
-    ]),
-  ) as Record<string, BilletStatus>
-
   return {
-    ...emptyProducedBat,
-    ...record,
+    id: record.id,
+    modelId: record.modelId,
     batType: record.batType ?? 'Game',
     customModelName: record.customModelName ?? '',
     sourceModelId: record.sourceModelId ?? '',
-    sourceBilletStatuses,
+    shopifyProductId: record.shopifyProductId ?? '',
+    shopifyVariantId: record.shopifyVariantId ?? '',
+    length: record.length ?? '',
+    weight: record.weight ?? '',
     billetWeight: record.billetWeight ?? '',
+    billetWeightMin: record.billetWeightMin ?? '',
+    billetWeightMax: record.billetWeightMax ?? '',
     billetGrade: allGradeOptions.includes(record.billetGrade as Grade)
       ? (record.billetGrade as Grade)
       : 'Prime',
@@ -3129,17 +3185,17 @@ function getSortDirection(sort: InventorySort, prefix: string): SortDirection | 
 
 function applyBilletGradeRules(billet: Omit<Billet, 'id'>): Omit<Billet, 'id'> {
   const normalizedGrade = normalizeGradeForSource(billet.source, billet.grade)
-  const nextBillet = {
+  let nextBillet = withBilletSuitability({
     ...billet,
     grade: normalizedGrade,
-  }
+  }, billet.suitabilityCategories)
 
   if (autoNonMlbGrades.has(nextBillet.grade)) {
-    return {
+    nextBillet = withBilletSuitability({
       ...nextBillet,
-      mlbEligible: false,
       hasBarrelKnot: 'N/A',
-    }
+    }, nextBillet.suitabilityCategories.filter((category) => category !== 'MLB capable'))
+    return nextBillet
   }
 
   return {
@@ -3272,12 +3328,53 @@ function parseQuickEntry(
     /\bbarrel\b.*\b(has|with|contains|shows)\b.*\b(knot|not)\b/,
   ]
 
-  if (hasAnyPhrase(normalized, mlbYesPhrases)) next.mlbEligible = true
-  if (hasAnyPhrase(normalized, mlbNoPhrases)) next.mlbEligible = false
+  if (hasAnyPhrase(normalized, mlbYesPhrases)) {
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'MLB capable',
+      true,
+    )
+  }
+  if (hasAnyPhrase(normalized, mlbNoPhrases)) {
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'MLB capable',
+      false,
+    )
+  }
+  if (/\b(indy(?:\s+ball)?|independent\s+(?:ball|baseball|league)|international)\b/.test(normalized)) {
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'Indy ball/International',
+      true,
+    )
+  }
+  if (/\b(high\s+school|hs)\b/.test(normalized)) {
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'High school',
+      true,
+    )
+  }
+  if (/\b(trainer(?:\s+only)?|training\s+only)\b/.test(normalized)) {
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'Trainer only',
+      true,
+    )
+  }
   if (/\b(no|not|non)\b[^.\n]{0,20}\btrophy\b/.test(normalized)) {
-    next.trophyEligible = false
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'Trophy',
+      false,
+    )
   } else if (/\btrophy\b/.test(normalized)) {
-    next.trophyEligible = true
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'Trophy',
+      true,
+    )
   }
   const describesNoBarrelKnot = hasAnyPhrase(normalized, noBarrelKnotPhrases)
   const describesYesBarrelKnot = hasAnyPhrase(normalized, yesBarrelKnotPhrases)
@@ -3305,8 +3402,41 @@ function parseQuickEntry(
 }
 
 function getBilletLabel(billet: Billet) {
-  const trophyText = billet.trophyEligible ? ', trophy capable' : ''
-  return `${billet.barcode} - ${billet.source}, ${billet.species} ${billet.grade}${trophyText}, ${billet.weight || 'no weight'} oz`
+  const suitability = billet.suitabilityCategories.join(', ') || 'Suitability not graded'
+  return `${billet.barcode} - ${billet.source}, ${billet.species} ${billet.grade}, ${suitability}, ${billet.weight || 'no weight'} oz`
+}
+
+function formatWeightRange(range?: ModelWeightRange) {
+  if (!range) return 'Any billet weight'
+  if (typeof range.minOz === 'number' && typeof range.maxOz === 'number') {
+    return `${range.minOz}-${range.maxOz} oz`
+  }
+  if (typeof range.minOz === 'number') return `${range.minOz}+ oz`
+  if (typeof range.maxOz === 'number') return `${range.maxOz} oz and under`
+  return 'Any billet weight'
+}
+
+function formatModelCompatibility(model: BatModelProduct) {
+  if (!model.compatibility) return ''
+
+  const speciesLabel =
+    model.compatibility.species === 'Any'
+      ? 'Any species'
+      : model.compatibility.species.join(', ')
+  const speciesDependency = model.compatibility.speciesDependent
+    ? 'species dependent'
+    : 'species independent'
+
+  return `${formatWeightRange(model.compatibility.billetWeightRange)} / ${speciesLabel} / ${speciesDependency}`
+}
+
+function formatWorkableBilletRange(record: ProducedBatRecord) {
+  if (!record.billetWeightMin && !record.billetWeightMax) return 'Range not recorded'
+  if (record.billetWeightMin && record.billetWeightMax) {
+    return `${record.billetWeightMin}-${record.billetWeightMax} oz`
+  }
+  if (record.billetWeightMin) return `${record.billetWeightMin}+ oz`
+  return `${record.billetWeightMax} oz and under`
 }
 
 function getBatModelName(modelId: string, models: BatModelProduct[]) {
@@ -4856,8 +4986,7 @@ function InternalApp() {
   const [speciesFilters, setSpeciesFilters] = useState<Species[]>([])
   const [sourceFilters, setSourceFilters] = useState<Source[]>([])
   const [gradeFilters, setGradeFilters] = useState<Grade[]>([])
-  const [mlbFilters, setMlbFilters] = useState<InventoryMlbFilter[]>([])
-  const [trophyFilters, setTrophyFilters] = useState<InventoryTrophyFilter[]>([])
+  const [suitabilityFilters, setSuitabilityFilters] = useState<BilletSuitability[]>([])
   const [knotFilters, setKnotFilters] = useState<KnotStatus[]>([])
   const [deliveryDateFilters, setDeliveryDateFilters] = useState<string[]>([])
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
@@ -5225,8 +5354,7 @@ function InternalApp() {
     setSpeciesFilters([])
     setSourceFilters([])
     setGradeFilters([])
-    setMlbFilters([])
-    setTrophyFilters([])
+    setSuitabilityFilters([])
     setKnotFilters([])
     setDeliveryDateFilters([])
     setMinWeightFilter('')
@@ -5239,8 +5367,7 @@ function InternalApp() {
       billet.barcode,
       billet.species,
       billet.grade,
-      billet.trophyEligible ? 'trophy capable' : 'not trophy capable',
-      billet.mlbEligible ? 'MLB eligible' : 'not MLB eligible',
+      ...billet.suitabilityCategories,
       billet.hasBarrelKnot === 'Yes'
         ? 'barrel knot'
         : billet.hasBarrelKnot === 'N/A'
@@ -5257,14 +5384,9 @@ function InternalApp() {
     const matchesSpecies = speciesFilters.length === 0 || speciesFilters.includes(billet.species)
     const matchesSource = sourceFilters.length === 0 || sourceFilters.includes(billet.source)
     const matchesGrade = gradeFilters.length === 0 || gradeFilters.includes(billet.grade)
-    const matchesMlb =
-      mlbFilters.length === 0 ||
-      mlbFilters.some((filter) => (filter === 'yes' ? billet.mlbEligible : !billet.mlbEligible))
-    const matchesTrophy =
-      trophyFilters.length === 0 ||
-      trophyFilters.some((filter) =>
-        filter === 'yes' ? billet.trophyEligible : !billet.trophyEligible,
-      )
+    const matchesSuitability =
+      suitabilityFilters.length === 0 ||
+      suitabilityFilters.some((category) => billet.suitabilityCategories.includes(category))
     const matchesKnot = knotFilters.length === 0 || knotFilters.includes(billet.hasBarrelKnot)
     const matchesDelivery =
       deliveryDateFilters.length === 0 || deliveryDateFilters.includes(billet.deliveryDate)
@@ -5282,8 +5404,7 @@ function InternalApp() {
       matchesSpecies &&
       matchesSource &&
       matchesGrade &&
-      matchesMlb &&
-      matchesTrophy &&
+      matchesSuitability &&
       matchesKnot &&
       matchesDelivery &&
       matchesVisibility &&
@@ -5380,12 +5501,13 @@ function InternalApp() {
     () => new Map(billets.map((billet) => [billet.id, billet])),
     [billets],
   )
-  const selectableBillets = useMemo(() => {
-    const selectedBilletIds = new Set(producedBatDraft.billetIds)
-    return billets.filter(
-      (billet) => billet.status === 'storage' || selectedBilletIds.has(billet.id),
-    )
-  }, [billets, producedBatDraft.billetIds])
+  const selectedProducedBatModel = useMemo(
+    () => allBatModels.find((model) => model.id === producedBatDraft.modelId) ?? null,
+    [allBatModels, producedBatDraft.modelId],
+  )
+  const selectedModelCompatibility = selectedProducedBatModel
+    ? formatModelCompatibility(selectedProducedBatModel)
+    : ''
   const selectedShopifyProduct = useMemo(
     () =>
       shopifyCatalog.find((product) => product.id === producedBatDraft.shopifyProductId) ?? null,
@@ -5657,6 +5779,7 @@ function InternalApp() {
     const modelText = [
       model.name,
       model.category,
+      formatModelCompatibility(model),
       ...producedBats
         .filter((record) => record.modelId === model.id)
         .flatMap((record) => [
@@ -5664,6 +5787,8 @@ function InternalApp() {
           record.length,
           record.weight,
           record.billetWeight,
+          record.billetWeightMin,
+          record.billetWeightMax,
           record.billetGrade,
           record.cupped,
           record.modifications,
@@ -5742,6 +5867,36 @@ function InternalApp() {
     setBillets((current) =>
       current.map((billet) =>
         billet.id === id ? { ...billet, weight: normalizeBilletWeight(weight) } : billet,
+      ),
+    )
+  }
+
+  function updateBilletGrade(id: string, grade: Grade) {
+    setBillets((current) =>
+      current.map((billet) =>
+        billet.id === id
+          ? {
+              ...applyBilletGradeRules({ ...billet, grade }),
+              id: billet.id,
+            }
+          : billet,
+      ),
+    )
+  }
+
+  function updateStoredBilletSuitability(
+    id: string,
+    category: BilletSuitability,
+    selected: boolean,
+  ) {
+    setBillets((current) =>
+      current.map((billet) =>
+        billet.id === id
+          ? withBilletSuitability(
+              billet,
+              updateBilletSuitability(billet.suitabilityCategories, category, selected),
+            )
+          : billet,
       ),
     )
   }
@@ -6381,7 +6536,10 @@ function InternalApp() {
       !producedBatDraft.length.trim() ||
       !producedBatDraft.weight.trim() ||
       !producedBatDraft.billetWeight.trim() ||
-      producedBatDraft.billetIds.length === 0 ||
+      !isValidWorkableWeightRange(
+        producedBatDraft.billetWeightMin,
+        producedBatDraft.billetWeightMax,
+      ) ||
       (producedBatDraft.batType === 'Trainer' && !producedBatDraft.modelId) ||
       (producedBatDraft.batType === 'Trainer' && !producedBatDraft.sourceModelId) ||
       (requiresTypedModel && !typedModelName)
@@ -6415,6 +6573,15 @@ function InternalApp() {
           name: typedModelName,
           category: producedBatDraft.batType === 'Trophy' ? 'Trophy Run' : 'Internal Game Run',
           url: '',
+          source: 'custom',
+          compatibility: {
+            billetWeightRange: {
+              minOz: Number(producedBatDraft.billetWeightMin),
+              maxOz: Number(producedBatDraft.billetWeightMax),
+            },
+            species: 'Any',
+            speciesDependent: false,
+          },
         }
         resolvedModelId = nextCustomModel.id
       }
@@ -6424,21 +6591,16 @@ function InternalApp() {
       setCustomBatModels((current) => [nextCustomModel!, ...current])
     }
 
-    const sourceBilletStatuses = Object.fromEntries(
-      billets
-        .filter((billet) => producedBatDraft.billetIds.includes(billet.id))
-        .map((billet) => [billet.id, billet.status]),
-    ) as Record<string, BilletStatus>
-
     setProducedBats((current) => [
       {
         ...producedBatDraft,
         modelId: resolvedModelId,
-        sourceBilletStatuses,
         id: createId('produced-bat'),
         length: producedBatDraft.length.trim(),
         weight: producedBatDraft.weight.trim(),
         billetWeight: producedBatDraft.billetWeight.trim(),
+        billetWeightMin: producedBatDraft.billetWeightMin.trim(),
+        billetWeightMax: producedBatDraft.billetWeightMax.trim(),
         shopifyProductId: producedBatDraft.shopifyProductId,
         shopifyVariantId: producedBatDraft.shopifyVariantId,
         modifications: producedBatDraft.modifications.trim(),
@@ -6446,36 +6608,11 @@ function InternalApp() {
       },
       ...current,
     ])
-    setBillets((current) =>
-      current.map((billet) =>
-        producedBatDraft.billetIds.includes(billet.id)
-          ? { ...billet, status: 'production' }
-          : billet,
-      ),
-    )
     setProducedBatDraft(emptyProducedBat)
   }
 
   function deleteProducedBatRecord(id: string) {
-    const record = producedBats.find((item) => item.id === id)
-    if (!record) return
-
-    const remainingRecords = producedBats.filter((item) => item.id !== id)
-
-    setProducedBats(remainingRecords)
-    setBillets((current) =>
-      current.map((billet) => {
-        if (!record.billetIds.includes(billet.id)) return billet
-
-        const stillUsed = remainingRecords.some((item) => item.billetIds.includes(billet.id))
-        if (stillUsed) return billet
-
-        return {
-          ...billet,
-          status: normalizeBilletStatus(record.sourceBilletStatuses[billet.id] ?? 'storage'),
-        }
-      }),
-    )
+    setProducedBats((current) => current.filter((item) => item.id !== id))
   }
 
   function stopBarcodeScan() {
@@ -6646,7 +6783,7 @@ function InternalApp() {
                   Quick entry by typing or dictation
                   <textarea
                     value={quickEntry}
-                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB yes, trophy no, no barrel knot, 48.5 ounces, rack A2"
+                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB capable and Indy ball/International, no barrel knot, 48.5 ounces, rack A2"
                     onChange={(event) => setQuickEntry(event.target.value)}
                   />
                 </label>
@@ -6789,30 +6926,39 @@ function InternalApp() {
                 </label>
               </div>
 
-              <div className="form-row">
-                <label>
-                  MLB bat capable?
-                  <select
-                    value={draft.mlbEligible ? 'yes' : 'no'}
-                    disabled={autoNonMlbGrades.has(draft.grade)}
-                    onChange={(event) =>
-                      setDraft({ ...draft, mlbEligible: event.target.value === 'yes' })
-                    }
-                  >
-                    <option value="yes">Yes</option>
-                    <option value="no">No</option>
-                  </select>
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={draft.trophyEligible}
-                    onChange={(event) =>
-                      setDraft({ ...draft, trophyEligible: event.target.checked })
-                    }
-                  />
-                  <span>Trophy billet?</span>
-                </label>
+              <fieldset className="billet-suitability-picker">
+                <legend>Suitable level of play</legend>
+                <div className="billet-suitability-options">
+                  {billetSuitabilityOptions.map((category) => (
+                    <label className="checkbox-row" key={category}>
+                      <input
+                        type="checkbox"
+                        checked={draft.suitabilityCategories.includes(category)}
+                        disabled={category === 'MLB capable' && autoNonMlbGrades.has(draft.grade)}
+                        onChange={(event) =>
+                          setDraft((current) =>
+                            withBilletSuitability(
+                              current,
+                              updateBilletSuitability(
+                                current.suitabilityCategories,
+                                category,
+                                event.target.checked,
+                              ),
+                            ),
+                          )
+                        }
+                      />
+                      <span>{category}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="form-hint">
+                  Select every level this billet can serve. Trophy is exclusive and clears all
+                  playable categories.
+                </p>
+              </fieldset>
+
+              <div className="form-row single-field-row">
                 <label>
                   Knot in barrel?
                   <select
@@ -7094,51 +7240,23 @@ function InternalApp() {
                   </div>
                 </div>
                 <div className="filter-group">
-                  <p className="filter-group-label">MLB capability</p>
+                  <p className="filter-group-label">Suitability</p>
                   <div className="filter-chip-row">
-                    {[
-                      ['yes', 'MLB capable'],
-                      ['no', 'Not MLB capable'],
-                    ].map(([value, label]) => (
+                    {billetSuitabilityOptions.map((category) => (
                       <label
-                        key={value}
-                        className={`filter-chip ${mlbFilters.includes(value as InventoryMlbFilter) ? 'selected' : ''}`}
+                        key={category}
+                        className={`filter-chip ${suitabilityFilters.includes(category) ? 'selected' : ''}`}
                       >
                         <input
                           type="checkbox"
-                          checked={mlbFilters.includes(value as InventoryMlbFilter)}
+                          checked={suitabilityFilters.includes(category)}
                           onChange={() =>
-                            setMlbFilters((current) =>
-                              toggleSelectedValue(current, value as InventoryMlbFilter),
+                            setSuitabilityFilters((current) =>
+                              toggleSelectedValue(current, category),
                             )
                           }
                         />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-                <div className="filter-group">
-                  <p className="filter-group-label">Trophy</p>
-                  <div className="filter-chip-row">
-                    {[
-                      ['yes', 'Trophy capable'],
-                      ['no', 'Not trophy capable'],
-                    ].map(([value, label]) => (
-                      <label
-                        key={value}
-                        className={`filter-chip ${trophyFilters.includes(value as InventoryTrophyFilter) ? 'selected' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={trophyFilters.includes(value as InventoryTrophyFilter)}
-                          onChange={() =>
-                            setTrophyFilters((current) =>
-                              toggleSelectedValue(current, value as InventoryTrophyFilter),
-                            )
-                          }
-                        />
-                        <span>{label}</span>
+                        <span>{category}</span>
                       </label>
                     ))}
                   </div>
@@ -7225,6 +7343,15 @@ function InternalApp() {
                       <button
                         type="button"
                         className="sort-header"
+                        onClick={() => toggleInventorySort('grade')}
+                      >
+                        Grade {sortIndicator('grade')}
+                      </button>
+                    </th>
+                    <th>
+                      <button
+                        type="button"
+                        className="sort-header"
                         onClick={() => toggleInventorySort('source')}
                       >
                         Source {sortIndicator('source')}
@@ -7239,8 +7366,7 @@ function InternalApp() {
                         Delivery {sortIndicator('delivery')}
                       </button>
                     </th>
-                    <th>MLB</th>
-                    <th>Trophy</th>
+                    <th>Suitable level of play</th>
                     <th>Barrel knot</th>
                     <th>
                       <button
@@ -7262,21 +7388,44 @@ function InternalApp() {
                       <td>
                         <strong>{billet.barcode}</strong>
                       </td>
+                      <td>{billet.species}</td>
                       <td>
-                        {billet.species}
-                        <span>{billet.grade}</span>
+                        <select
+                          aria-label={`Grade for billet ${billet.barcode}`}
+                          value={billet.grade}
+                          onChange={(event) =>
+                            updateBilletGrade(billet.id, event.target.value as Grade)
+                          }
+                        >
+                          {getGradeOptionsForSource(billet.source).map((grade) => (
+                            <option key={grade} value={grade}>
+                              {grade}
+                            </option>
+                          ))}
+                        </select>
                       </td>
                       <td>{billet.source}</td>
                       <td>{billet.deliveryDate || 'No date yet'}</td>
-                      <td>
-                        <span className={billet.mlbEligible ? 'pill yes' : 'pill no'}>
-                          {billet.mlbEligible ? 'Yes' : 'No'}
-                        </span>
-                      </td>
-                      <td>
-                        <span className={billet.trophyEligible ? 'pill yes' : 'pill no'}>
-                          {billet.trophyEligible ? 'Yes' : 'No'}
-                        </span>
+                      <td className="billet-suitability-cell">
+                        {billetSuitabilityOptions.map((category) => (
+                          <label className="compact-checkbox" key={category}>
+                            <input
+                              type="checkbox"
+                              checked={billet.suitabilityCategories.includes(category)}
+                              disabled={
+                                category === 'MLB capable' && autoNonMlbGrades.has(billet.grade)
+                              }
+                              onChange={(event) =>
+                                updateStoredBilletSuitability(
+                                  billet.id,
+                                  category,
+                                  event.target.checked,
+                                )
+                              }
+                            />
+                            <span>{category}</span>
+                          </label>
+                        ))}
                       </td>
                       <td>
                         <span
@@ -9235,16 +9384,16 @@ function InternalApp() {
           <section className="panel model-entry-panel">
             <div className="section-heading">
               <p className="eyebrow">Bat Model Repository</p>
-              <h2>Record a produced bat or one-off run</h2>
+              <h2>Record model fit data</h2>
             </div>
 
             <form className="bat-form model-record-form" onSubmit={addProducedBatRecord}>
               <div className="form-instructions">
-                <strong>Use this as the first stop after a bat is made</strong>
+                <strong>Build a reusable fit history for each model</strong>
                 <p>
-                  Save exact production specs here whenever a bat is made, especially for a
-                  one-off pro run, a new trainer variation, or any model that is not yet part
-                  of the public website catalog.
+                  Save successful production data points and the workable billet-weight range.
+                  These records describe a model and never reserve or reference a specific billet
+                  in inventory.
                 </p>
                 <p>
                   {shopifyCatalog.length > 0
@@ -9307,9 +9456,15 @@ function InternalApp() {
                       {trainerBatModels.map((model) => (
                         <option key={model.id} value={model.id}>
                           {model.name}
+                          {formatModelCompatibility(model)
+                            ? ` - ${formatModelCompatibility(model)}`
+                            : ''}
                         </option>
                       ))}
                     </select>
+                    {selectedModelCompatibility ? (
+                      <span className="helper-text">{selectedModelCompatibility}</span>
+                    ) : null}
                   </label>
                 ) : (
                   <label>
@@ -9371,42 +9526,63 @@ function InternalApp() {
                 </div>
               ) : null}
 
-              <div className="form-row">
+              <div className="nested-form model-fit-data-panel">
+                <div>
+                  <strong>Billet fit data</strong>
+                  <p className="helper-text">
+                    Store the observed weight and workable range only. This repository does not
+                    reserve or link an individual inventory billet.
+                  </p>
+                </div>
+                <div className="form-row model-weight-range-row">
                 <label>
-                  Billet barcode/serial used
-                  <select
-                    value={producedBatDraft.billetIds[0] ?? ''}
-                    onChange={(event) => {
-                      const selectedBillet = billets.find((billet) => billet.id === event.target.value)
-                      setProducedBatDraft({
-                        ...producedBatDraft,
-                        billetIds: event.target.value ? [event.target.value] : [],
-                        billetWeight:
-                          selectedBillet && typeof selectedBillet.weight === 'number'
-                            ? String(selectedBillet.weight)
-                            : producedBatDraft.billetWeight,
-                        billetGrade: selectedBillet?.grade ?? producedBatDraft.billetGrade,
-                      })
-                    }}
-                  >
-                    <option value="">Select billet barcode/serial</option>
-                    {selectableBillets.map((billet) => (
-                      <option key={billet.id} value={billet.id}>
-                        {billet.barcode} - {billet.species} {billet.grade}
-                        {typeof billet.weight === 'number' ? ` - ${billet.weight} oz` : ''}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Billet weight
+                  Observed billet weight
                   <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    required
                     value={producedBatDraft.billetWeight}
                     placeholder="Example: 91"
                     onChange={(event) =>
                       setProducedBatDraft({
                         ...producedBatDraft,
                         billetWeight: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Workable minimum
+                  <input
+                    type="number"
+                    min="0"
+                    max={producedBatDraft.billetWeightMax || undefined}
+                    step="0.1"
+                    required
+                    value={producedBatDraft.billetWeightMin}
+                    placeholder="Example: 89"
+                    onChange={(event) =>
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        billetWeightMin: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Workable maximum
+                  <input
+                    type="number"
+                    min={producedBatDraft.billetWeightMin || '0'}
+                    step="0.1"
+                    required
+                    value={producedBatDraft.billetWeightMax}
+                    placeholder="Example: 94"
+                    onChange={(event) =>
+                      setProducedBatDraft({
+                        ...producedBatDraft,
+                        billetWeightMax: event.target.value,
                       })
                     }
                   />
@@ -9427,6 +9603,10 @@ function InternalApp() {
                     ))}
                   </select>
                 </label>
+                </div>
+              </div>
+
+              <div className="form-row single-field-row">
                 <label>
                   Cupped?
                   <select
@@ -9518,7 +9698,7 @@ function InternalApp() {
                 ) : null}
               </div>
 
-              <button type="submit">Save production record</button>
+              <button type="submit">Save model data point</button>
             </form>
           </section>
 
@@ -9539,6 +9719,7 @@ function InternalApp() {
             <div className="model-results">
               {filteredBatModels.map((model) => {
                 const records = producedBats.filter((record) => record.modelId === model.id)
+                const compatibility = formatModelCompatibility(model)
 
                 return (
                   <article className="profile-result-card" key={model.id}>
@@ -9553,12 +9734,13 @@ function InternalApp() {
                               ? 'Internal custom model'
                               : 'Seed catalog model'}
                         </p>
+                        {compatibility ? <p>{compatibility}</p> : null}
                       </div>
                       <span className="profile-count">{records.length} records</span>
                     </div>
 
-                        {records.length === 0 ? (
-                      <p className="empty-state">No production records stored for this model yet.</p>
+                    {records.length === 0 ? (
+                      <p className="empty-state">No fit data points stored for this model yet.</p>
                     ) : (
                       <div className="bat-list">
                         {records.map((record) => (
@@ -9577,8 +9759,9 @@ function InternalApp() {
                                 </p>
                               )}
                               <p>
-                                Billet: {record.billetWeight} oz / {record.billetGrade}
+                                Observed billet: {record.billetWeight} oz / {record.billetGrade}
                               </p>
+                              <p>Workable range: {formatWorkableBilletRange(record)}</p>
                               <p>Cup: {record.cupped}</p>
                               {record.shopifyProductId ? (
                                 <p>
@@ -9598,15 +9781,9 @@ function InternalApp() {
                               {record.modifications ? <p>{record.modifications}</p> : null}
                             </div>
                             <div className="compatible-list">
-                              <span>Billets used</span>
-                              {record.billetIds.length === 0 ? (
-                                <p>No billets selected.</p>
-                              ) : (
-                                record.billetIds.map((id) => {
-                                  const billet = billets.find((item) => item.id === id)
-                                  return <p key={id}>{billet ? getBilletLabel(billet) : id}</p>
-                                })
-                              )}
+                              <span>Reusable model data</span>
+                              <p>{formatWorkableBilletRange(record)}</p>
+                              <p>No inventory billet linked.</p>
                               <button
                                 type="button"
                                 className="secondary-button destructive-button"
@@ -9772,6 +9949,15 @@ function SalesPortalApp() {
     () => [...seedCrmOwnerOptions].sort((a, b) => compareText(a.label, b.label)),
     [],
   )
+  const draftContactOwnerKey = getCrmOwnerKey(
+    newContactDraft.salesOwner,
+    newContactDraft.ownerEmail,
+  )
+  const newContactOwnerKey = portalOwnerOptions.some(
+    (owner) => owner.key === draftContactOwnerKey,
+  )
+    ? draftContactOwnerKey
+    : portalOwner?.key || ''
   const resolvedAdminOwnerFilter =
     adminOwnerFilter === 'all' ||
     adminOwnerFilter === 'unassigned' ||
@@ -10338,11 +10524,17 @@ function SalesPortalApp() {
       return
     }
     const now = new Date().toISOString()
+    const requestedOwnerKey = getCrmOwnerKey(
+      newContactDraft.salesOwner,
+      newContactDraft.ownerEmail,
+    )
+    const contactOwner =
+      portalOwnerOptions.find((owner) => owner.key === requestedOwnerKey) ?? portalOwner
     try {
       const contact = await savePortalCrmContact({
         ...newContactDraft,
-        salesOwner: portalOwner.name,
-        ownerEmail: portalOwner.email,
+        salesOwner: contactOwner.name,
+        ownerEmail: contactOwner.email,
         source: 'Manual CRM entry',
         tags: normalizeCrmList([...newContactDraft.tags, 'Manual entry', 'Sales portal']),
         createdAt: newContactDraft.createdAt || now,
@@ -10353,8 +10545,14 @@ function SalesPortalApp() {
         salesOwner: portalOwner.name,
         ownerEmail: portalOwner.email,
       })
-      setSelectedContactId(contact.id)
-      setPortalMessage('Contact saved.')
+      const assignedToCurrentRep = contactOwner.key === portalOwner.key
+      if (!isAdmin && !assignedToCurrentRep) {
+        setCrmContacts((current) => current.filter((item) => item.id !== contact.id))
+        setSelectedContactId('')
+      } else {
+        setSelectedContactId(contact.id)
+      }
+      setPortalMessage(`Contact saved for ${contactOwner.label}.`)
     } catch (error) {
       setPortalMessage(error instanceof Error ? error.message : 'Could not save the contact.')
     }
@@ -10668,6 +10866,33 @@ function SalesPortalApp() {
                   />
                 </label>
               </div>
+              <label>
+                Contact owner
+                <select
+                  value={newContactOwnerKey}
+                  onChange={(event) => {
+                    const owner = portalOwnerOptions.find(
+                      (option) => option.key === event.target.value,
+                    )
+                    if (!owner) return
+                    setNewContactDraft((current) => ({
+                      ...current,
+                      salesOwner: owner.name,
+                      ownerEmail: owner.email,
+                    }))
+                  }}
+                >
+                  {portalOwnerOptions.map((owner) => (
+                    <option key={owner.key} value={owner.key}>
+                      {owner.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="helper-text">
+                  Defaults to the logged-in account. Change it when entering a contact for another
+                  sales rep.
+                </span>
+              </label>
               <div className="form-row">
                 <label>
                   Phone

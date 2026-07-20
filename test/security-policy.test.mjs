@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  canAssignCrmContactOwner,
   canUpdateOwnedRecord,
   enforcePublicDraftOrderPolicy,
   getAllowedOrderAttachmentContentType,
@@ -70,6 +71,18 @@ test('sales portal sessions respect disabled users, code rotation, and CRM owner
       existingOwnerKey: 'daniel@trinitybats.com',
       sessionOwnerKey: 'shane@trinitybats.com',
     }),
+    true,
+  )
+  assert.equal(
+    canAssignCrmContactOwner({ isAdmin: false, hasExistingContact: false }),
+    true,
+  )
+  assert.equal(
+    canAssignCrmContactOwner({ isAdmin: false, hasExistingContact: true }),
+    false,
+  )
+  assert.equal(
+    canAssignCrmContactOwner({ isAdmin: true, hasExistingContact: true }),
     true,
   )
 })

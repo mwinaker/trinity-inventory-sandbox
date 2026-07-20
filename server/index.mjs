@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import crypto from 'node:crypto'
 import dotenv from 'dotenv'
 import {
+  canAssignCrmContactOwner,
   canUpdateOwnedRecord,
   createFixedWindowRateLimiter,
   enforcePublicDraftOrderPolicy,
@@ -233,6 +234,10 @@ const resourceConfigs = {
         fieldValue('barcode', item.barcode),
         fieldValue('species', item.species),
         fieldValue('grade', item.grade),
+        fieldValue(
+          'suitability_categories_json',
+          JSON.stringify(item.suitabilityCategories ?? []),
+        ),
         fieldValue('trophy_eligible', toBooleanValue(item.trophyEligible)),
         fieldValue('mlb_eligible', toBooleanValue(item.mlbEligible)),
         fieldValue('has_barrel_knot', toLegacyBarrelKnotValue(item.hasBarrelKnot)),
@@ -251,6 +256,7 @@ const resourceConfigs = {
       definitionField('barcode', 'Barcode', 'single_line_text_field'),
       definitionField('species', 'Species', 'single_line_text_field'),
       definitionField('grade', 'Grade', 'single_line_text_field'),
+      definitionField('suitability_categories_json', 'Suitability Categories JSON', 'json'),
       definitionField('trophy_eligible', 'Trophy Eligible', 'boolean'),
       definitionField('mlb_eligible', 'MLB Eligible', 'boolean'),
       definitionField('has_barrel_knot', 'Barrel Knot', 'boolean'),
@@ -308,14 +314,14 @@ const resourceConfigs = {
         fieldValue('bat_type', item.batType),
         fieldValue('custom_model_name', item.customModelName),
         fieldValue('source_model_id', item.sourceModelId),
-        fieldValue('source_billet_statuses_json', JSON.stringify(item.sourceBilletStatuses ?? {})),
         fieldValue('shopify_product_id', item.shopifyProductId),
         fieldValue('shopify_variant_id', item.shopifyVariantId),
         fieldValue('length', item.length),
         fieldValue('weight', item.weight),
         fieldValue('billet_weight', item.billetWeight),
+        fieldValue('billet_weight_min', item.billetWeightMin),
+        fieldValue('billet_weight_max', item.billetWeightMax),
         fieldValue('billet_grade', item.billetGrade),
-        fieldValue('billet_ids_json', JSON.stringify(item.billetIds ?? [])),
         fieldValue('cupped', item.cupped),
         fieldValue('modifications', item.modifications),
         fieldValue('created_at', item.createdAt),
@@ -326,14 +332,14 @@ const resourceConfigs = {
       definitionField('bat_type', 'Bat Type', 'single_line_text_field'),
       definitionField('custom_model_name', 'Custom Model Name', 'single_line_text_field'),
       definitionField('source_model_id', 'Source Model ID', 'single_line_text_field'),
-      definitionField('source_billet_statuses_json', 'Source Billet Statuses JSON', 'json'),
       definitionField('shopify_product_id', 'Shopify Product ID', 'single_line_text_field'),
       definitionField('shopify_variant_id', 'Shopify Variant ID', 'single_line_text_field'),
       definitionField('length', 'Length', 'single_line_text_field'),
       definitionField('weight', 'Weight', 'single_line_text_field'),
       definitionField('billet_weight', 'Billet Weight', 'single_line_text_field'),
+      definitionField('billet_weight_min', 'Billet Weight Minimum', 'single_line_text_field'),
+      definitionField('billet_weight_max', 'Billet Weight Maximum', 'single_line_text_field'),
       definitionField('billet_grade', 'Billet Grade', 'single_line_text_field'),
-      definitionField('billet_ids_json', 'Billet IDs JSON', 'json'),
       definitionField('cupped', 'Cupped', 'single_line_text_field'),
       definitionField('modifications', 'Modifications', 'multi_line_text_field'),
       definitionField('created_at', 'Created At', 'single_line_text_field'),
@@ -343,6 +349,8 @@ const resourceConfigs = {
     type: '$app:trinity_order_job',
     name: 'Trinity Order Job',
     deleteMissing: false,
+    // Shopify's existing order-job definition already uses all 40 fields.
+    // playerProfileId remains in the canonical payload JSON instead of a direct field.
     labelFor(item) {
       return `${item.shopifyOrderName || item.shopifyDraftOrderName || item.id} ${
         item.productTitle || ''
@@ -351,7 +359,6 @@ const resourceConfigs = {
     fieldsFor(item) {
       return [
         fieldValue('origin', item.origin),
-        fieldValue('player_profile_id', item.playerProfileId),
         fieldValue('shopify_order_id', item.shopifyOrderId),
         fieldValue('shopify_order_name', item.shopifyOrderName),
         fieldValue('shopify_draft_order_id', item.shopifyDraftOrderId),
@@ -395,7 +402,6 @@ const resourceConfigs = {
     },
     fieldDefinitions: [
       definitionField('origin', 'Origin', 'single_line_text_field'),
-      definitionField('player_profile_id', 'Player Profile ID', 'single_line_text_field'),
       definitionField('shopify_order_id', 'Shopify Order ID', 'single_line_text_field'),
       definitionField('shopify_order_name', 'Shopify Order Name', 'single_line_text_field'),
       definitionField('shopify_draft_order_id', 'Shopify Draft Order ID', 'single_line_text_field'),
@@ -454,16 +460,40 @@ const resourceConfigs = {
       return `${item.name || item.id}`.trim()
     },
     fieldsFor(item) {
+      const compatibility = item.compatibility ?? {}
+      const weightRange = compatibility.billetWeightRange ?? {}
+      const species =
+        compatibility.species === 'Any'
+          ? 'Any'
+          : Array.isArray(compatibility.species)
+            ? compatibility.species.join(', ')
+            : ''
+
       return [
         fieldValue('name', item.name),
         fieldValue('category', item.category),
         fieldValue('url', item.url),
+        fieldValue('billet_weight_min_oz', weightRange.minOz),
+        fieldValue('billet_weight_max_oz', weightRange.maxOz),
+        fieldValue('species', species),
+        fieldValue(
+          'species_dependent',
+          typeof compatibility.speciesDependent === 'boolean'
+            ? compatibility.speciesDependent
+              ? 'true'
+              : 'false'
+            : '',
+        ),
       ].filter(Boolean)
     },
     fieldDefinitions: [
       definitionField('name', 'Name', 'single_line_text_field'),
       definitionField('category', 'Category', 'single_line_text_field'),
       definitionField('url', 'URL', 'single_line_text_field'),
+      definitionField('billet_weight_min_oz', 'Billet Weight Minimum Oz', 'number_decimal'),
+      definitionField('billet_weight_max_oz', 'Billet Weight Maximum Oz', 'number_decimal'),
+      definitionField('species', 'Species', 'single_line_text_field'),
+      definitionField('species_dependent', 'Species Dependent', 'boolean'),
     ],
   },
   billingContacts: {
@@ -1274,7 +1304,7 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
       )
       const nextProducedBats = mergeRecordsByKey(
         currentState.producedBats,
-        arrayFromPayload(payload.producedBats),
+        arrayFromPayload(payload.producedBats).map(sanitizeBatModelDataPoint),
         (item) => item.id || item.createdAt,
       )
       const nextCustomBatModels = mergeRecordsByKey(
@@ -1297,13 +1327,10 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
         getManualCrmContactRecords(payload.crmContacts),
         (item) => item.id,
       )
-      const nextBillets = reconcileBilletProductionStatuses(
-        mergeRecordsByKey(
-          currentState.billets,
-          arrayFromPayload(payload.billets),
-          (item) => item.barcode || item.id,
-        ),
-        nextProducedBats,
+      const nextBillets = mergeRecordsByKey(
+        currentState.billets,
+        arrayFromPayload(payload.billets),
+        (item) => item.barcode || item.id,
       )
       const nextState = {
         ok: true,
@@ -2408,17 +2435,19 @@ function prepareSalesPortalCrmContactForSession(contact, session, existingContac
   if (!sessionOwner) return null
   const mergedContact = existingContact ? { ...existingContact, ...contact } : contact
   const requestedOwner =
-    session?.isAdmin
-      ? getSalesPortalOwnerForEmail(mergedContact.ownerEmail) ??
-        getSalesPortalOwnerForName(mergedContact.salesOwner)
-      : sessionOwner
-  const owner = requestedOwner || sessionOwner
+    getSalesPortalOwnerForEmail(mergedContact.ownerEmail) ??
+    getSalesPortalOwnerForName(mergedContact.salesOwner)
+  const canAssignRequestedOwner = canAssignCrmContactOwner({
+    isAdmin: session?.isAdmin,
+    hasExistingContact: Boolean(existingContact),
+  })
+  const owner = (canAssignRequestedOwner ? requestedOwner : null) || sessionOwner
   const now = new Date().toISOString()
   const touchpoints = arrayFromPayload(mergedContact.touchpoints).map((touchpoint) => {
     const touchpointOwner = getSalesPortalOwnerForName(touchpoint?.salesRep)
     return {
       ...touchpoint,
-      salesRep: session?.isAdmin
+      salesRep: canAssignRequestedOwner
         ? touchpointOwner?.name || cleanString(touchpoint?.salesRep) || owner.name
         : owner.name,
     }
@@ -2428,15 +2457,8 @@ function prepareSalesPortalCrmContactForSession(contact, session, existingContac
   return {
     ...mergedContact,
     id: cleanString(mergedContact.id) || createPlainId('crm-contact'),
-    salesOwner:
-      session?.isAdmin && !requestedOwner
-        ? cleanString(mergedContact.salesOwner) || owner.name
-        : owner.name,
-    ownerEmail: session?.isAdmin
-      ? requestedOwner
-        ? owner.email
-        : normalizeSalesPortalEmail(mergedContact.ownerEmail)
-      : owner.email,
+    salesOwner: owner.name,
+    ownerEmail: owner.email,
     source: 'Manual CRM entry',
     tags,
     touchpoints,
@@ -3086,6 +3108,18 @@ function arrayFromPayload(value) {
   return Array.isArray(value) ? value : []
 }
 
+function sanitizeBatModelDataPoint(record) {
+  if (!record || typeof record !== 'object') return record
+  const { billetIds, sourceBilletStatuses, ...modelData } = record
+  void billetIds
+  void sourceBilletStatuses
+  return {
+    ...modelData,
+    billetWeightMin: cleanString(modelData.billetWeightMin),
+    billetWeightMax: cleanString(modelData.billetWeightMax),
+  }
+}
+
 function normalizeStateSnapshot(value) {
   if (!value || typeof value !== 'object') return null
 
@@ -3093,7 +3127,7 @@ function normalizeStateSnapshot(value) {
     ok: true,
     billets: arrayFromPayload(value.billets),
     players: arrayFromPayload(value.players),
-    producedBats: arrayFromPayload(value.producedBats),
+    producedBats: arrayFromPayload(value.producedBats).map(sanitizeBatModelDataPoint),
     customBatModels: arrayFromPayload(value.customBatModels),
     orderJobs: arrayFromPayload(value.orderJobs),
     billingContacts: arrayFromPayload(value.billingContacts),
@@ -3206,6 +3240,7 @@ function normalizeStatePatch(payload) {
       arrayFromPayload(payload?.[entry.key]).filter(Boolean),
     ]),
   )
+  patch.producedBats = patch.producedBats.map(sanitizeBatModelDataPoint)
   patch.crmContacts = getManualCrmContactRecords(patch.crmContacts)
   patch.deletes = Object.fromEntries(
     getStateResourcePatchConfigs().map((entry) => [
@@ -3359,23 +3394,6 @@ function mergeRecordsByKey(base, overrides, getKey) {
   return Array.from(merged.values())
 }
 
-function reconcileBilletProductionStatuses(billets, producedBats) {
-  const productionBilletIds = new Set(
-    producedBats.flatMap((record) => (Array.isArray(record.billetIds) ? record.billetIds : [])),
-  )
-
-  if (productionBilletIds.size === 0) return billets
-
-  return billets.map((billet) =>
-    productionBilletIds.has(billet.id)
-      ? {
-          ...billet,
-          status: 'production',
-        }
-      : billet,
-  )
-}
-
 function getGameModelBilletMatches(billets, { source, species, idealBilletWeight }) {
   const normalizedSource = cleanString(source)
   const normalizedSpecies = cleanString(species)
@@ -3466,7 +3484,9 @@ async function loadSharedState() {
   const players = (await listRecords(resourceConfigs.players)).map((player) =>
     hydrateKnownProPlayerAffiliation(player),
   )
-  const producedBats = await listRecords(resourceConfigs.producedBats)
+  const producedBats = (await listRecords(resourceConfigs.producedBats)).map(
+    sanitizeBatModelDataPoint,
+  )
   const customBatModels = await listRecords(resourceConfigs.customBatModels)
   const orderJobs = await listRecords(resourceConfigs.orderJobs)
   const billingContacts = await listRecords(resourceConfigs.billingContacts)
@@ -3520,7 +3540,9 @@ async function loadShoplyKnowledgeState() {
   const [billets, players, producedBats, customBatModels] = await Promise.all([
     listRecords(resourceConfigs.billets),
     listRecords(resourceConfigs.players),
-    listRecords(resourceConfigs.producedBats),
+    listRecords(resourceConfigs.producedBats).then((records) =>
+      records.map(sanitizeBatModelDataPoint),
+    ),
     listRecords(resourceConfigs.customBatModels),
   ])
 
@@ -3578,14 +3600,34 @@ function buildProducedBatGuidance(producedBats, customBatModels, products) {
     const length = cleanString(record.length)
     const finishedWeight = cleanString(record.weight)
     const billetWeight = cleanString(record.billetWeight)
+    const billetWeightMin = cleanString(record.billetWeightMin)
+    const billetWeightMax = cleanString(record.billetWeightMax)
     const billetGrade = cleanString(record.billetGrade)
     const cupped = cleanString(record.cupped)
 
-    if (!modelName || (!length && !finishedWeight && !billetWeight && !billetGrade)) continue
+    if (
+      !modelName ||
+      (!length &&
+        !finishedWeight &&
+        !billetWeight &&
+        !billetWeightMin &&
+        !billetWeightMax &&
+        !billetGrade)
+    ) {
+      continue
+    }
 
-    const key = [modelName, batType, length, finishedWeight, billetWeight, billetGrade, cupped].join(
-      '|',
-    )
+    const key = [
+      modelName,
+      batType,
+      length,
+      finishedWeight,
+      billetWeight,
+      billetWeightMin,
+      billetWeightMax,
+      billetGrade,
+      cupped,
+    ].join('|')
     const existing = guidanceByKey.get(key)
     guidanceByKey.set(key, {
       model: modelName,
@@ -3593,6 +3635,8 @@ function buildProducedBatGuidance(producedBats, customBatModels, products) {
       length,
       finishedWeight,
       billetWeight,
+      billetWeightMin,
+      billetWeightMax,
       billetGrade,
       cupped,
       examples: (existing?.examples ?? 0) + 1,
@@ -3660,14 +3704,24 @@ function buildMaterialCapacitySummary(billets) {
 
     const species = cleanString(billet.species) || 'Unknown species'
     const grade = cleanString(billet.grade) || 'Unknown grade'
-    const mlbCapable = billet.mlbEligible ? 'MLB-capable' : 'non-MLB'
+    const suitabilityCategories = arrayFromPayload(billet.suitabilityCategories)
+      .map(cleanString)
+      .filter(Boolean)
+    const suitability =
+      suitabilityCategories.length > 0
+        ? suitabilityCategories.join(', ')
+        : billet.trophyEligible
+          ? 'Trophy'
+          : billet.mlbEligible
+            ? 'MLB capable'
+            : 'Suitability not graded'
     const weight = Number(billet.weight)
     const weightBucket = getBilletWeightBucket(weight)
-    const key = [species, grade, mlbCapable, weightBucket].join('|')
+    const key = [species, grade, suitability, weightBucket].join('|')
     const existing = groups.get(key) ?? {
       species,
       grade,
-      mlbCapable,
+      suitability,
       weightBucket,
       count: 0,
       minWeight: null,
@@ -3814,14 +3868,17 @@ function renderCustomModelGuidance(models) {
 }
 
 function renderProducedBatGuidance(records) {
-  if (records.length === 0) return ['No produced-bat fit examples are available.']
+  if (records.length === 0) return ['No model fit data points are available.']
 
   return records.map((record) => {
     const details = [
       record.batType,
       record.length ? `${record.length} in` : '',
       record.finishedWeight ? `${record.finishedWeight} oz finished` : '',
-      record.billetWeight ? `${record.billetWeight} oz billet` : '',
+      record.billetWeight ? `${record.billetWeight} oz observed billet` : '',
+      record.billetWeightMin && record.billetWeightMax
+        ? `${record.billetWeightMin}-${record.billetWeightMax} oz workable billet range`
+        : '',
       record.billetGrade ? `${record.billetGrade} billet grade` : '',
       record.cupped ? `cupped: ${record.cupped}` : '',
       record.examples > 1 ? `${record.examples} examples` : '',
@@ -3863,7 +3920,7 @@ function renderMaterialCapacity(capacity) {
         : `${item.weightBucket}; observed ${item.minWeight}-${item.maxWeight} oz`
 
     return `- ${singleLine(item.species)} / ${singleLine(item.grade)} / ${singleLine(
-      item.mlbCapable,
+      item.suitability,
     )} / ${singleLine(range)}: ${item.count} available material record${item.count === 1 ? '' : 's'}`
   })
 }

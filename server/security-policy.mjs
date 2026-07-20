@@ -92,6 +92,10 @@ export function canUpdateOwnedRecord({ isAdmin, existingOwnerKey, sessionOwnerKe
   return Boolean(existingOwnerKey && sessionOwnerKey && existingOwnerKey === sessionOwnerKey)
 }
 
+export function canAssignCrmContactOwner({ isAdmin, hasExistingContact }) {
+  return Boolean(isAdmin || !hasExistingContact)
+}
+
 export function isOrderJobLinkedToCrmContacts(job, contacts) {
   const jobPlayerName = normalizeCrmContactLabel(job?.playerName)
   const jobEmails = new Set(
