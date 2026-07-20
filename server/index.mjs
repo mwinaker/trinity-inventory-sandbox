@@ -34,6 +34,12 @@ import {
   billetSourceOptions as billetSourceValues,
   isOversizedBilletSource,
 } from '../shared/source-options.mjs'
+import {
+  buildOrderPrinterProDraftPdfUrl,
+  buildOrderPrinterProPdfFilename,
+  createOrderPrinterProDraftPdfConfig,
+  downloadOrderPrinterProPdfAttachment,
+} from './order-printer-pro.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -219,6 +225,22 @@ const internalEmailProviderUrl =
 const internalEmailFrom =
   cleanString(process.env.TRINITY_INTERNAL_EMAIL_FROM) || cleanString(process.env.RESEND_FROM_EMAIL)
 const internalEmailReplyTo = normalizeEmail(process.env.TRINITY_INTERNAL_EMAIL_REPLY_TO)
+const orderPrinterProDraftPdfConfig = createOrderPrinterProDraftPdfConfig({
+  origin: cleanString(process.env.TRINITY_ORDER_PRINTER_PDF_ORIGIN) || 'https://trinitybatco.com',
+  pathToken:
+    cleanString(process.env.TRINITY_ORDER_PRINTER_DRAFT_PATH_TOKEN) ||
+    'd373b096caf265a4ab9f',
+  idMultiplier:
+    cleanString(process.env.TRINITY_ORDER_PRINTER_DRAFT_ID_MULTIPLIER) || '9689',
+})
+const orderPrinterProPdfMaxBytes = readPositiveIntegerEnv(
+  'TRINITY_ORDER_PRINTER_PDF_MAX_BYTES',
+  10 * 1024 * 1024,
+)
+const orderPrinterProPdfTimeoutMs = readPositiveIntegerEnv(
+  'TRINITY_ORDER_PRINTER_PDF_TIMEOUT_MS',
+  15_000,
+)
 
 const resourceConfigs = {
   billets: {
@@ -1541,6 +1563,7 @@ app.post('/api/sales-orders', async (request, response) => {
         internalNotificationRecipients: internalOrderNotification.recipients,
         internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
         internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
+        internalOrderPdfAttached: Boolean(internalOrderNotification.pdfAttached),
         internalOrderNotificationError: internalOrderNotification.error,
         payerNotificationSent: Boolean(payerInvoiceNotification.sentAt),
         payerNotificationRecipient: payerInvoiceNotification.recipient,
@@ -1603,6 +1626,7 @@ app.post('/api/sales-orders', async (request, response) => {
       internalNotificationRecipients: internalOrderNotification.recipients,
       internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
       internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
+      internalOrderPdfAttached: Boolean(internalOrderNotification.pdfAttached),
       internalOrderNotificationError: internalOrderNotification.error,
       payerNotificationRecipient: payerEmail,
       salesRepSubmissionNotificationSent: Boolean(
@@ -2873,10 +2897,16 @@ async function trySendInternalOrderCopyNotification({
   invoiceError = '',
 }) {
   const recipients = buildInternalOrderCopyRecipients(payload)
-  if (recipients.length === 0) return { sentAt: '', recipients: [], error: '' }
+  if (recipients.length === 0) {
+    return { sentAt: '', recipients: [], deliveryMethod: '', pdfAttached: false, error: '' }
+  }
 
   try {
     const subject = buildInternalOrderCopySubject({ draftOrder, order })
+    const orderPrinterPdfUrl = buildOrderPrinterProDraftPdfUrl(
+      draftOrder,
+      orderPrinterProDraftPdfConfig,
+    )
     const text = buildInternalOrderCopyMessage({
       payload,
       draftOrder,
@@ -2885,19 +2915,22 @@ async function trySendInternalOrderCopyNotification({
       invoiceSent,
       invoiceRecipient,
       invoiceError,
+      orderPrinterPdfUrl,
     })
-    const deliveryMethod = await sendInternalOrderCopyEmail({
+    const delivery = await sendInternalOrderCopyEmail({
       draftOrder,
       order,
       recipients,
       subject,
       text,
+      orderPrinterPdfUrl,
     })
 
     return {
       sentAt: new Date().toISOString(),
       recipients,
-      deliveryMethod,
+      deliveryMethod: delivery.method,
+      pdfAttached: delivery.pdfAttached,
       error: '',
     }
   } catch (error) {
@@ -2907,6 +2940,7 @@ async function trySendInternalOrderCopyNotification({
       sentAt: '',
       recipients,
       deliveryMethod: '',
+      pdfAttached: false,
       error: message,
     }
   }
@@ -2929,6 +2963,7 @@ function buildInternalOrderCopyMessage({
   invoiceSent = false,
   invoiceRecipient = '',
   invoiceError = '',
+  orderPrinterPdfUrl = '',
 }) {
   const payer = resolvePayer(payload)
   const lines = Array.isArray(payload.lines) ? payload.lines : []
@@ -2956,6 +2991,7 @@ function buildInternalOrderCopyMessage({
     !invoiceSent && invoiceError ? `Customer invoice error: ${invoiceError}` : '',
     !invoiceSent && !invoiceError ? 'Customer invoice was not sent automatically.' : '',
     invoiceUrl ? `Draft invoice link: ${invoiceUrl}` : '',
+    orderPrinterPdfUrl ? `Order PDF: ${orderPrinterPdfUrl}` : '',
     salesRepLine,
     playerName ? `Player: ${playerName}` : '',
     purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
@@ -3001,7 +3037,7 @@ function formatInternalOrderLine(line, index) {
   return `${Number.isFinite(index) ? `${index + 1}. ` : '- '}${quantity} x ${title}${price}${suffix}`
 }
 
-async function sendInternalEmail({ to, subject, text }) {
+async function sendInternalEmail({ to, subject, text, attachments = [] }) {
   const recipients = uniqueEmails(to)
   if (recipients.length === 0) return
   if (!internalEmailProviderApiKey) {
@@ -3017,6 +3053,7 @@ async function sendInternalEmail({ to, subject, text }) {
     subject,
     text,
     ...(internalEmailReplyTo ? { reply_to: internalEmailReplyTo } : {}),
+    ...(attachments.length > 0 ? { attachments } : {}),
   }
 
   const response = await fetch(internalEmailProviderUrl, {
@@ -3042,10 +3079,23 @@ async function sendInternalOrderCopyEmail({
   recipients,
   subject,
   text,
+  orderPrinterPdfUrl = '',
 }) {
   if (internalEmailProviderApiKey && internalEmailFrom) {
-    await sendInternalEmail({ to: recipients, subject, text })
-    return 'internal_email_provider'
+    const pdfAttachment = await tryDownloadOrderPrinterProPdfAttachment({
+      draftOrder,
+      orderPrinterPdfUrl,
+    })
+    await sendInternalEmail({
+      to: recipients,
+      subject,
+      text,
+      attachments: pdfAttachment ? [pdfAttachment] : [],
+    })
+    return {
+      method: 'internal_email_provider',
+      pdfAttached: Boolean(pdfAttachment),
+    }
   }
 
   if (draftOrder?.id) {
@@ -3055,7 +3105,7 @@ async function sendInternalOrderCopyEmail({
       subject,
       text,
     })
-    return 'shopify_draft_order_email'
+    return { method: 'shopify_draft_order_email', pdfAttached: false }
   }
 
   if (order?.id) {
@@ -3065,10 +3115,27 @@ async function sendInternalOrderCopyEmail({
       subject,
       text,
     })
-    return 'shopify_order_email'
+    return { method: 'shopify_order_email', pdfAttached: false }
   }
 
   throw new Error('No order was available for internal order-copy email.')
+}
+
+async function tryDownloadOrderPrinterProPdfAttachment({ draftOrder, orderPrinterPdfUrl }) {
+  if (!draftOrder?.id || !orderPrinterPdfUrl) return null
+
+  try {
+    return await downloadOrderPrinterProPdfAttachment({
+      url: orderPrinterPdfUrl,
+      filename: buildOrderPrinterProPdfFilename(draftOrder),
+      maxBytes: orderPrinterProPdfMaxBytes,
+      timeoutMs: orderPrinterProPdfTimeoutMs,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown PDF download error.'
+    console.warn(`Order Printer Pro attachment skipped: ${message}`)
+    return null
+  }
 }
 
 async function sendShopifyInternalOrderCopies({ sendInvoice, recipients, subject, text }) {
