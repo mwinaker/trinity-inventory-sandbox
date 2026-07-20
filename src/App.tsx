@@ -1671,6 +1671,17 @@ function getSalesPortalOwnerForEmail(email: string) {
   return getCrmOwnerByEmail(email) ?? createCrmOwnerFromEmail(email)
 }
 
+function getSalesPortalOwnerOptions(email: string) {
+  const options = [...seedCrmOwnerOptions]
+  if (isTrinityEmail(email)) {
+    const sessionOwner = getSalesPortalOwnerForEmail(email)
+    if (!options.some((owner) => owner.key === sessionOwner.key)) {
+      options.push(sessionOwner)
+    }
+  }
+  return options.sort((a, b) => compareText(a.label, b.label))
+}
+
 function createCrmOwnerOption(name: string, email: string): CrmOwnerOption | null {
   const canonicalOwner = getCanonicalCrmOwnerOption(name, email)
   if (canonicalOwner) return canonicalOwner
@@ -9946,8 +9957,8 @@ function SalesPortalApp() {
     session?.isAdmin ?? (session && salesPortalAdminEmails.has(normalizeTrinityEmail(session.email))),
   )
   const portalOwnerOptions = useMemo(
-    () => [...seedCrmOwnerOptions].sort((a, b) => compareText(a.label, b.label)),
-    [],
+    () => getSalesPortalOwnerOptions(session?.email ?? ''),
+    [session?.email],
   )
   const draftContactOwnerKey = getCrmOwnerKey(
     newContactDraft.salesOwner,
