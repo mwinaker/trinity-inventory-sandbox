@@ -13,6 +13,12 @@ import {
   parseManualBatOrderSegments,
 } from '../shared/pro-player-affiliations.mjs'
 import {
+  isAdminTeamMember,
+  isSalesTeamMember,
+  trinityTeamMembers,
+} from '../shared/team-directory.mjs'
+import type { TrinityTeamRole } from '../shared/team-directory.mjs'
+import {
   billetSuitabilityOptions,
   isValidWorkableWeightRange,
   normalizeBilletWorkflowStatus,
@@ -564,12 +570,14 @@ type CrmOwnerOption = {
   name: string
   email: string
   aliases?: string[]
+  role: TrinityTeamRole
 }
 
 type SalesPortalSession = {
   email: string
   name?: string
   label?: string
+  role?: TrinityTeamRole
   isAdmin?: boolean
   loggedInAt: string
 }
@@ -681,73 +689,19 @@ const crmWorkspaceViews: Array<{ value: CrmWorkspaceView; label: string }> = [
   { value: 'engagements', label: 'Engagements' },
   { value: 'assistant', label: 'CRM assistant' },
 ]
-const seedCrmOwnerOptions: CrmOwnerOption[] = [
-  {
-    key: 'keith@trinitybats.com',
-    label: 'Keith Frye',
-    name: 'Keith Frye',
-    email: 'keith@trinitybats.com',
-    aliases: ['Keith'],
-  },
-  {
-    key: 'daniel@trinitybats.com',
-    label: 'Daniel Cope',
-    name: 'Daniel Cope',
-    email: 'daniel@trinitybats.com',
-    aliases: ['Daniel'],
-  },
-  {
-    key: 'shane@trinitybats.com',
-    label: 'Shane Telfer',
-    name: 'Shane Telfer',
-    email: 'shane@trinitybats.com',
-    aliases: ['Shane'],
-  },
-  {
-    key: 'steve@trinitybats.com',
-    label: 'Steve Panayiotou',
-    name: 'Steve Panayiotou',
-    email: 'steve@trinitybats.com',
-    aliases: ['Steve', 'Steve P.', 'Steve P'],
-  },
-  { key: 'jeremy-maddox', label: 'Jeremy Maddox', name: 'Jeremy Maddox', email: '' },
-  {
-    key: 'jeremy@trinitybats.com',
-    label: 'Jeremy McKee',
-    name: 'Jeremy McKee',
-    email: 'jeremy@trinitybats.com',
-  },
-  {
-    key: 'matt@trinitybats.com',
-    label: 'Matt Winaker',
-    name: 'Matt Winaker',
-    email: 'matt@trinitybats.com',
-    aliases: ['Matt'],
-  },
-  { key: 'stefan@trinitybats.com', label: 'Stefan', name: 'Stefan', email: 'stefan@trinitybats.com' },
-  { key: 'henry@trinitybats.com', label: 'Henry', name: 'Henry', email: 'henry@trinitybats.com' },
-  { key: 'nick@trinitybats.com', label: 'Nick', name: 'Nick', email: 'nick@trinitybats.com' },
-  {
-    key: 'scott@trinitybats.com',
-    label: 'Scott Tubbs',
-    name: 'Scott Tubbs',
-    email: 'scott@trinitybats.com',
-    aliases: ['Scott'],
-  },
-  {
-    key: 'brandon@trinitybats.com',
-    label: 'Brandon McIlwain',
-    name: 'Brandon McIlwain',
-    email: 'brandon@trinitybats.com',
-    aliases: ['Brandon'],
-  },
-]
-const salesPortalAdminEmails = new Set([
-  'matt@trinitybats.com',
-  'stefan@trinitybats.com',
-  'jeremy@trinitybats.com',
-  'keith@trinitybats.com',
-])
+const seedCrmOwnerOptions: CrmOwnerOption[] = trinityTeamMembers
+  .filter(isSalesTeamMember)
+  .map((member) => ({
+    key: member.key ?? member.email,
+    label: member.name,
+    name: member.name,
+    email: member.email,
+    aliases: member.aliases,
+    role: member.role,
+  }))
+const salesPortalAdminEmails = new Set(
+  trinityTeamMembers.filter(isAdminTeamMember).map((member) => member.email),
+)
 const salesPortalViews: Array<{ value: SalesPortalView; label: string; adminOnly?: boolean }> = [
   { value: 'crm', label: 'CRM' },
   { value: 'order_form', label: 'Order form' },
@@ -1685,6 +1639,7 @@ function createCrmOwnerFromEmail(email: string): CrmOwnerOption {
     label: name,
     name,
     email: normalizedEmail,
+    role: 'sales',
   }
 }
 
@@ -1715,6 +1670,7 @@ function createCrmOwnerOption(name: string, email: string): CrmOwnerOption | nul
     label,
     name: name.trim() || label,
     email: email.trim(),
+    role: 'sales',
   }
 }
 
@@ -3641,6 +3597,7 @@ function createDemoSalesPortalSession(email: string): SalesPortalSession {
     email,
     name: owner.name,
     label: owner.label,
+    role: owner.role,
     isAdmin: salesPortalAdminEmails.has(normalizeTrinityEmail(email)),
     loggedInAt: new Date().toISOString(),
   }

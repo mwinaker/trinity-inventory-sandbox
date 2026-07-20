@@ -22,6 +22,11 @@ import {
   getKnownProPlayerAffiliation,
   normalizePlayerNameKey,
 } from '../shared/pro-player-affiliations.mjs'
+import {
+  isAdminTeamMember,
+  isSalesTeamMember,
+  trinityTeamMembers,
+} from '../shared/team-directory.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -181,24 +186,7 @@ const internalOrderNotificationEmails = parseEmailList(
   defaultInternalOrderNotificationEmails,
   requiredInternalOrderNotificationEmails,
 )
-const salesPortalTeamMembers = [
-  { name: 'Keith Frye', email: 'keith@trinitybats.com', aliases: ['Keith'] },
-  { name: 'Daniel Cope', email: 'daniel@trinitybats.com', aliases: ['Daniel'] },
-  { name: 'Shane Telfer', email: 'shane@trinitybats.com', aliases: ['Shane'] },
-  {
-    name: 'Steve Panayiotou',
-    email: 'steve@trinitybats.com',
-    aliases: ['Steve', 'Steve P.', 'Steve P'],
-  },
-  { name: 'Jeremy Maddox', email: '', key: 'jeremy-maddox', aliases: [] },
-  { name: 'Jeremy McKee', email: 'jeremy@trinitybats.com', aliases: [] },
-  { name: 'Matt Winaker', email: 'matt@trinitybats.com', aliases: ['Matt'] },
-  { name: 'Stefan', email: 'stefan@trinitybats.com', aliases: [] },
-  { name: 'Henry', email: 'henry@trinitybats.com', aliases: [] },
-  { name: 'Nick', email: 'nick@trinitybats.com', aliases: [] },
-  { name: 'Scott Tubbs', email: 'scott@trinitybats.com', aliases: ['Scott'] },
-  { name: 'Brandon McIlwain', email: 'brandon@trinitybats.com', aliases: ['Brandon'] },
-].map((member) => ({
+const salesPortalTeamMembers = trinityTeamMembers.filter(isSalesTeamMember).map((member) => ({
   ...member,
   label: member.name,
   key: member.key ?? member.email,
@@ -206,12 +194,9 @@ const salesPortalTeamMembers = [
 const salesPortalTeamByEmail = new Map(
   salesPortalTeamMembers.filter((member) => member.email).map((member) => [member.email, member]),
 )
-const salesPortalAdminEmails = new Set([
-  'matt@trinitybats.com',
-  'stefan@trinitybats.com',
-  'jeremy@trinitybats.com',
-  'keith@trinitybats.com',
-])
+const salesPortalAdminEmails = new Set(
+  trinityTeamMembers.filter(isAdminTeamMember).map((member) => member.email),
+)
 const salesPortalLoginCodes = new Map()
 const internalEmailProviderApiKey =
   cleanString(process.env.TRINITY_RESEND_API_KEY) || cleanString(process.env.RESEND_API_KEY)
@@ -2050,6 +2035,7 @@ function buildSalesPortalSession(email, loggedInAt = new Date().toISOString()) {
     email: owner.email,
     name: owner.name,
     label: owner.label,
+    role: owner.role,
     isAdmin: salesPortalAdminEmails.has(owner.email),
     loggedInAt,
   }
@@ -2216,7 +2202,7 @@ async function issueSalesPortalAccessCode(email) {
     id: owner.email,
     email: owner.email,
     name: owner.name,
-    role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+    role: owner.role,
     status: 'active',
     accessCodeHash: hashSalesPortalAccessCode(owner.email, accessCode),
     accessCodeRotatedAt: now,
@@ -2256,7 +2242,7 @@ async function getOrCreateActiveSalesPortalUser(email) {
     id: owner.email,
     email: owner.email,
     name: owner.name,
-    role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+    role: owner.role,
     status: 'active',
     accessCodeHash: '',
     accessCodeRotatedAt: '',
@@ -2283,7 +2269,7 @@ async function recordSalesPortalLogin(email) {
       id: owner.email,
       email: owner.email,
       name: owner.name,
-      role: salesPortalAdminEmails.has(owner.email) ? 'admin' : 'sales',
+      role: owner.role,
       status: cleanString(existing.status) || 'active',
       lastLoginAt: now,
       updatedAt: now,
