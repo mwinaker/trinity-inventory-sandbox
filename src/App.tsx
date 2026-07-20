@@ -15,10 +15,12 @@ import {
 import {
   billetSuitabilityOptions,
   isValidWorkableWeightRange,
+  normalizeBilletWorkflowStatus,
   normalizeBilletSuitability,
+  reconcileBilletStatusForOrderAssignment,
   updateBilletSuitability,
 } from './inventory-policy.ts'
-import type { BilletSuitability } from './inventory-policy.ts'
+import type { BilletSuitability, BilletWorkflowStatus } from './inventory-policy.ts'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -61,7 +63,7 @@ declare global {
 }
 
 type ActiveSection = 'inventory' | 'orders' | 'sales' | 'crm' | 'players' | 'models' | 'costs'
-type BilletStatus = 'storage' | 'production'
+type BilletStatus = BilletWorkflowStatus
 type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
 type InvoiceStatus = 'draft' | 'sent' | 'paid' | 'not_required'
@@ -88,7 +90,6 @@ type Billet = {
   weight: number | ''
   moisture: number
   status: BilletStatus
-  location: string
   notes: string
 }
 
@@ -924,7 +925,6 @@ const statusLabels: Record<BilletStatus, string> = {
   production: 'Production',
 }
 
-const availableBilletStatuses: BilletStatus[] = ['storage']
 const productionStatusLabels: Record<ProductionStatus, string> = {
   new: 'New',
   waiting_payment: 'Waiting payment',
@@ -957,7 +957,6 @@ const seedBillets: Billet[] = [
     weight: 91,
     moisture: 7.8,
     status: 'storage',
-    location: 'Rack A1',
     notes: 'Corey Seager CS271 candidate billet. Prime birch, MLB capable.',
   },
   {
@@ -975,7 +974,6 @@ const seedBillets: Billet[] = [
     weight: 82,
     moisture: 8.2,
     status: 'storage',
-    location: 'Pallet 24-03',
     notes: 'Needs final grading before release.',
   },
   {
@@ -993,7 +991,6 @@ const seedBillets: Billet[] = [
     weight: 104,
     moisture: 7.1,
     status: 'production',
-    location: 'Rack B4',
     notes: 'Reserved for end-loaded 34 in model test.',
   },
 ]
@@ -1061,7 +1058,6 @@ const emptyBillet: Omit<Billet, 'id'> = {
   weight: '',
   moisture: defaultMoisture,
   status: 'storage',
-  location: 'Receiving',
   notes: '',
 }
 
@@ -1232,20 +1228,6 @@ const emptyCrmContact = (): CrmContact => {
   }
 }
 
-function normalizeBilletStatus(status: BilletStatus | string | null | undefined): BilletStatus {
-  if (status === 'storage' || status === 'production') return status
-  if (
-    status === 'received' ||
-    status === 'measured' ||
-    status === 'reserved' ||
-    status === 'rejected'
-  ) {
-    return 'storage'
-  }
-  if (status === 'in_production' || status === 'consumed') return 'production'
-  return 'storage'
-}
-
 function getFitScore(billet: Billet, build: CustomBuild) {
   if (billet.status === 'production') return 0
   if (build.species !== 'Any' && billet.species !== build.species) return 0
@@ -1351,6 +1333,10 @@ function withBilletSuitability<T extends Pick<Billet, 'mlbEligible' | 'trophyEli
 }
 
 function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)): Billet {
+  const { location: _legacyLocation, ...billetWithoutLocation } = billet as typeof billet & {
+    location?: string
+  }
+  void _legacyLocation
   const source = sourceOptions.includes(billet.source as Source)
     ? (billet.source as Source)
     : "RJ's Tree Farms"
@@ -1363,13 +1349,13 @@ function normalizeBillet(billet: Billet | (Partial<Billet> & Pick<Billet, 'id'>)
 
   return withBilletSuitability({
     ...emptyBillet,
-    ...billet,
+    ...billetWithoutLocation,
     source,
     weight,
     grade: normalizeGradeForSource(source, billet.grade),
     hasBarrelKnot: normalizeKnotStatus(billet.hasBarrelKnot),
     deliveryDate: billet.deliveryDate ?? '',
-    status: normalizeBilletStatus(billet.status),
+    status: normalizeBilletWorkflowStatus(billet.status),
   }, suitabilityCategories)
 }
 
@@ -3399,13 +3385,11 @@ function parseQuickEntry(
     /(\d+(?:\.\d+)?)\s*(?:%|percent)\s*moisture/,
     /moisture\s*(?:is|of|:)?\s*(\d+(?:\.\d+)?)/,
   ])
-  const location = text.match(/\b(?:rack|pallet|bin|receiving)\s*[A-Z0-9-]*/i)
 
   next.length = standardBilletLength
   if (weight !== null) next.weight = weight
   if (moisture !== null) next.moisture = moisture
   next.barcode = barcode ?? (current.barcode || getNextBilletBarcode(billets))
-  if (location?.[0]) next.location = location[0].trim()
   if (deliveryDateMatch?.[1]) next.deliveryDate = deliveryDateMatch[1]
   next.notes = text.trim()
 
@@ -5000,6 +4984,9 @@ function InternalApp() {
   const [suitabilityFilters, setSuitabilityFilters] = useState<BilletSuitability[]>([])
   const [knotFilters, setKnotFilters] = useState<KnotStatus[]>([])
   const [deliveryDateFilters, setDeliveryDateFilters] = useState<string[]>([])
+  const [inventoryStatusFilter, setInventoryStatusFilter] = useState<'all' | BilletStatus>(
+    'storage',
+  )
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
   const [minWeightFilter, setMinWeightFilter] = useState('')
   const [maxWeightFilter, setMaxWeightFilter] = useState('')
@@ -5368,6 +5355,7 @@ function InternalApp() {
     setSuitabilityFilters([])
     setKnotFilters([])
     setDeliveryDateFilters([])
+    setInventoryStatusFilter('storage')
     setMinWeightFilter('')
     setMaxWeightFilter('')
     setInventorySort('barcode_asc')
@@ -5386,7 +5374,7 @@ function InternalApp() {
           : 'no barrel knot',
       billet.source,
       billet.deliveryDate,
-      billet.location,
+      statusLabels[billet.status],
       billet.notes,
     ]
       .join(' ')
@@ -5401,7 +5389,8 @@ function InternalApp() {
     const matchesKnot = knotFilters.length === 0 || knotFilters.includes(billet.hasBarrelKnot)
     const matchesDelivery =
       deliveryDateFilters.length === 0 || deliveryDateFilters.includes(billet.deliveryDate)
-    const matchesVisibility = availableBilletStatuses.includes(billet.status)
+    const matchesStatus =
+      inventoryStatusFilter === 'all' || billet.status === inventoryStatusFilter
     const minWeight = Number(minWeightFilter)
     const maxWeight = Number(maxWeightFilter)
     const billetWeight = typeof billet.weight === 'number' ? billet.weight : null
@@ -5418,12 +5407,16 @@ function InternalApp() {
       matchesSuitability &&
       matchesKnot &&
       matchesDelivery &&
-      matchesVisibility &&
+      matchesStatus &&
       matchesMinWeight &&
       matchesMaxWeight
     )
   })
   const filteredBilletCount = filteredBillets.length
+  const inventoryStatusMatchLabel =
+    inventoryStatusFilter === 'all'
+      ? 'billet'
+      : `${statusLabels[inventoryStatusFilter].toLowerCase()} billet`
 
   function toggleInventorySort(prefix: 'barcode' | 'weight' | 'species' | 'grade' | 'source' | 'delivery') {
     setInventorySort((current) => {
@@ -5511,6 +5504,10 @@ function InternalApp() {
   const billetById = useMemo(
     () => new Map(billets.map((billet) => [billet.id, billet])),
     [billets],
+  )
+  const assignedBilletIds = useMemo(
+    () => new Set(orderJobs.map((job) => job.assignedBilletId).filter(Boolean)),
+    [orderJobs],
   )
   const selectedProducedBatModel = useMemo(
     () => allBatModels.find((model) => model.id === producedBatDraft.modelId) ?? null,
@@ -5860,6 +5857,7 @@ function InternalApp() {
       barcode: draft.barcode.trim().toUpperCase(),
       length: standardBilletLength,
       moisture: defaultMoisture,
+      status: 'storage' as BilletStatus,
     }
     const nextBillets = [savedBillet, ...billets]
 
@@ -5869,6 +5867,7 @@ function InternalApp() {
   }
 
   function updateStatus(id: string, status: BilletStatus) {
+    if (status === 'storage' && assignedBilletIds.has(id)) return
     setBillets((current) =>
       current.map((billet) => (billet.id === id ? { ...billet, status } : billet)),
     )
@@ -6186,6 +6185,31 @@ function InternalApp() {
             }
           : job,
       ),
+    )
+  }
+
+  function assignBilletToOrderJob(id: string, nextBilletId: string) {
+    const previousBilletId = orderJobs.find((job) => job.id === id)?.assignedBilletId ?? ''
+    if (previousBilletId === nextBilletId) return
+
+    const updatedAt = new Date().toISOString()
+    const nextOrderJobs = orderJobs.map((job) =>
+      job.id === id ? { ...job, assignedBilletId: nextBilletId, updatedAt } : job,
+    )
+    const nextAssignedBilletIds = nextOrderJobs
+      .map((job) => job.assignedBilletId)
+      .filter(Boolean)
+
+    setOrderJobs(nextOrderJobs)
+    setBillets((current) =>
+      current.map((billet) => ({
+        ...billet,
+        status: reconcileBilletStatusForOrderAssignment(billet.id, billet.status, {
+          previousBilletId,
+          nextBilletId,
+          assignedBilletIds: nextAssignedBilletIds,
+        }),
+      })),
     )
   }
 
@@ -6785,7 +6809,7 @@ function InternalApp() {
           <section className="intake-first">
             <form className="panel intake-panel intake-panel-primary" onSubmit={addBillet}>
               <div className="section-heading">
-                <p className="eyebrow">Receiving</p>
+                <p className="eyebrow">Storage intake</p>
                 <h2>Add a billet</h2>
               </div>
 
@@ -6794,7 +6818,7 @@ function InternalApp() {
                   Quick entry by typing or dictation
                   <textarea
                     value={quickEntry}
-                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB capable and Indy ball/International, no barrel knot, 48.5 ounces, rack A2"
+                    placeholder="Example: TBC-BLT-0004 maple prime, RJ's, MLB capable and Indy ball/International, no barrel knot, 48.5 ounces"
                     onChange={(event) => setQuickEntry(event.target.value)}
                   />
                 </label>
@@ -6929,11 +6953,12 @@ function InternalApp() {
                   </div>
                 </label>
                 <label>
-                  Location
-                  <input
-                    value={draft.location}
-                    onChange={(event) => setDraft({ ...draft, location: event.target.value })}
-                  />
+                  Status on intake
+                  <input value={statusLabels.storage} readOnly />
+                  <span className="helper-text">
+                    New billets enter Storage. Change the status to Production when a billet is
+                    selected for an order.
+                  </span>
                 </label>
               </div>
 
@@ -7152,7 +7177,7 @@ function InternalApp() {
               <div className="filters inventory-top-filters">
                 <input
                   aria-label="Search billets"
-                  placeholder="Search barcode, source, delivery date, location..."
+                  placeholder="Search barcode, source, delivery date, status..."
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
                 />
@@ -7170,6 +7195,17 @@ function InternalApp() {
                   value={maxWeightFilter}
                   onChange={(event) => setMaxWeightFilter(event.target.value)}
                 />
+                <select
+                  aria-label="Filter billets by status"
+                  value={inventoryStatusFilter}
+                  onChange={(event) =>
+                    setInventoryStatusFilter(event.target.value as 'all' | BilletStatus)
+                  }
+                >
+                  <option value="storage">Status: Storage</option>
+                  <option value="production">Status: Production</option>
+                  <option value="all">Status: All billets</option>
+                </select>
                 <select
                   aria-label="Sort billets"
                   value={inventorySort}
@@ -7322,8 +7358,8 @@ function InternalApp() {
             </div>
             <div className="inventory-summary-row">
               <p className="inventory-match-count">
-                {filteredBilletCount} storage billet{filteredBilletCount === 1 ? '' : 's'} match
-                these filters.
+                {filteredBilletCount} {inventoryStatusMatchLabel}
+                {filteredBilletCount === 1 ? '' : 's'} match these filters.
               </p>
               <p className="inventory-sort-hint">Tap a column header or use the sort dropdown.</p>
             </div>
@@ -7388,7 +7424,6 @@ function InternalApp() {
                         Specs {sortIndicator('weight')}
                       </button>
                     </th>
-                    <th>Location</th>
                     <th>Status</th>
                     <th>Notes</th>
                   </tr>
@@ -7472,16 +7507,20 @@ function InternalApp() {
                           />
                         </label>
                       </td>
-                      <td>{billet.location}</td>
                       <td>
                         <select
+                          aria-label={`Status for billet ${billet.barcode}`}
                           value={billet.status}
                           onChange={(event) =>
                             updateStatus(billet.id, event.target.value as BilletStatus)
                           }
                         >
                           {Object.entries(statusLabels).map(([value, label]) => (
-                            <option value={value} key={value}>
+                            <option
+                              value={value}
+                              key={value}
+                              disabled={value === 'storage' && assignedBilletIds.has(billet.id)}
+                            >
                               {label}
                             </option>
                           ))}
@@ -7730,7 +7769,7 @@ function InternalApp() {
                               <select
                                 value={job.assignedBilletId}
                                 onChange={(event) =>
-                                  updateOrderJob(job.id, { assignedBilletId: event.target.value })
+                                  assignBilletToOrderJob(job.id, event.target.value)
                                 }
                               >
                                 <option value="">No billet assigned</option>

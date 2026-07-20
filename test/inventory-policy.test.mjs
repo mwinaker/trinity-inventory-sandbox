@@ -3,7 +3,9 @@ import test from 'node:test'
 
 import {
   isValidWorkableWeightRange,
+  normalizeBilletWorkflowStatus,
   normalizeBilletSuitability,
+  reconcileBilletStatusForOrderAssignment,
   updateBilletSuitability,
 } from '../src/inventory-policy.ts'
 
@@ -34,4 +36,38 @@ test('model data points require an ordered workable weight range', () => {
   assert.equal(isValidWorkableWeightRange('94', '89'), false)
   assert.equal(isValidWorkableWeightRange('', '94'), false)
   assert.equal(isValidWorkableWeightRange('89', ''), false)
+})
+
+test('billets enter storage and legacy production states normalize to production', () => {
+  assert.equal(normalizeBilletWorkflowStatus(undefined), 'storage')
+  assert.equal(normalizeBilletWorkflowStatus('received'), 'storage')
+  assert.equal(normalizeBilletWorkflowStatus('production'), 'production')
+  assert.equal(normalizeBilletWorkflowStatus('in_production'), 'production')
+})
+
+test('order assignment moves the selected billet into production and releases an unused billet', () => {
+  assert.equal(
+    reconcileBilletStatusForOrderAssignment('billet-new', 'storage', {
+      previousBilletId: 'billet-old',
+      nextBilletId: 'billet-new',
+      assignedBilletIds: ['billet-new'],
+    }),
+    'production',
+  )
+  assert.equal(
+    reconcileBilletStatusForOrderAssignment('billet-old', 'production', {
+      previousBilletId: 'billet-old',
+      nextBilletId: '',
+      assignedBilletIds: [],
+    }),
+    'storage',
+  )
+  assert.equal(
+    reconcileBilletStatusForOrderAssignment('billet-old', 'production', {
+      previousBilletId: 'billet-old',
+      nextBilletId: '',
+      assignedBilletIds: ['billet-old'],
+    }),
+    'production',
+  )
 })

@@ -7,6 +7,34 @@ export const billetSuitabilityOptions = [
 ] as const
 
 export type BilletSuitability = (typeof billetSuitabilityOptions)[number]
+export type BilletWorkflowStatus = 'storage' | 'production'
+
+export function normalizeBilletWorkflowStatus(value: unknown): BilletWorkflowStatus {
+  if (value === 'production' || value === 'in_production' || value === 'consumed') {
+    return 'production'
+  }
+  return 'storage'
+}
+
+export function reconcileBilletStatusForOrderAssignment(
+  billetId: string,
+  currentStatus: BilletWorkflowStatus,
+  assignment: {
+    previousBilletId: string
+    nextBilletId: string
+    assignedBilletIds: string[]
+  },
+): BilletWorkflowStatus {
+  if (assignment.nextBilletId && billetId === assignment.nextBilletId) return 'production'
+  if (
+    assignment.previousBilletId &&
+    billetId === assignment.previousBilletId &&
+    !assignment.assignedBilletIds.includes(billetId)
+  ) {
+    return 'storage'
+  }
+  return currentStatus
+}
 
 export function normalizeBilletSuitability(
   value: unknown,

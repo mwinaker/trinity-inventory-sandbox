@@ -248,7 +248,6 @@ const resourceConfigs = {
         fieldValue('weight', item.weight === '' ? null : toNumericValue(item.weight)),
         fieldValue('moisture', toNumericValue(item.moisture)),
         fieldValue('status', item.status),
-        fieldValue('location', item.location),
         fieldValue('notes', item.notes),
       ].filter(Boolean)
     },
@@ -267,7 +266,6 @@ const resourceConfigs = {
       definitionField('weight', 'Weight', 'number_decimal'),
       definitionField('moisture', 'Moisture', 'number_decimal'),
       definitionField('status', 'Status', 'single_line_text_field'),
-      definitionField('location', 'Location', 'single_line_text_field'),
       definitionField('notes', 'Notes', 'multi_line_text_field'),
     ],
   },
@@ -1329,7 +1327,7 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
       )
       const nextBillets = mergeRecordsByKey(
         currentState.billets,
-        arrayFromPayload(payload.billets),
+        arrayFromPayload(payload.billets).map(sanitizeBilletWorkflowRecord),
         (item) => item.barcode || item.id,
       )
       const nextState = {
@@ -3108,6 +3106,18 @@ function arrayFromPayload(value) {
   return Array.isArray(value) ? value : []
 }
 
+function sanitizeBilletWorkflowRecord(record) {
+  if (!record || typeof record !== 'object') return record
+  const { location, ...billet } = record
+  void location
+  const status = ['production', 'in_production', 'consumed'].includes(
+    cleanString(billet.status).toLowerCase(),
+  )
+    ? 'production'
+    : 'storage'
+  return { ...billet, status }
+}
+
 function sanitizeBatModelDataPoint(record) {
   if (!record || typeof record !== 'object') return record
   const { billetIds, sourceBilletStatuses, ...modelData } = record
@@ -3125,7 +3135,7 @@ function normalizeStateSnapshot(value) {
 
   return {
     ok: true,
-    billets: arrayFromPayload(value.billets),
+    billets: arrayFromPayload(value.billets).map(sanitizeBilletWorkflowRecord),
     players: arrayFromPayload(value.players),
     producedBats: arrayFromPayload(value.producedBats).map(sanitizeBatModelDataPoint),
     customBatModels: arrayFromPayload(value.customBatModels),
@@ -3240,6 +3250,7 @@ function normalizeStatePatch(payload) {
       arrayFromPayload(payload?.[entry.key]).filter(Boolean),
     ]),
   )
+  patch.billets = patch.billets.map(sanitizeBilletWorkflowRecord)
   patch.producedBats = patch.producedBats.map(sanitizeBatModelDataPoint)
   patch.crmContacts = getManualCrmContactRecords(patch.crmContacts)
   patch.deletes = Object.fromEntries(
@@ -3480,7 +3491,7 @@ async function getCatalogProducts() {
 
 async function loadSharedState() {
   await ensureDefinitions()
-  const billets = await listRecords(resourceConfigs.billets)
+  const billets = (await listRecords(resourceConfigs.billets)).map(sanitizeBilletWorkflowRecord)
   const players = (await listRecords(resourceConfigs.players)).map((player) =>
     hydrateKnownProPlayerAffiliation(player),
   )
@@ -3520,7 +3531,7 @@ async function getShoplyBatKnowledge() {
       'Ask concise qualifying questions before recommending a bat when player size, level, current bat, or intended use is missing.',
       'Give one primary recommendation and one alternate when enough information is available.',
       'Do not quote internal counts as guaranteed live stock, and route final custom-build decisions to a Trinity team member.',
-      'Do not mention customer names, orders, billet barcodes, billet locations, billing contacts, or internal sales details.',
+      'Do not mention customer names, orders, billet barcodes, billing contacts, or internal sales details.',
       'Do not publish this export to a public page or any unauthenticated crawler URL.',
     ],
     products: sanitizeShoplyProducts(catalog.products),
@@ -3538,7 +3549,9 @@ async function getShoplyBatKnowledge() {
 async function loadShoplyKnowledgeState() {
   await ensureDefinitions()
   const [billets, players, producedBats, customBatModels] = await Promise.all([
-    listRecords(resourceConfigs.billets),
+    listRecords(resourceConfigs.billets).then((records) =>
+      records.map(sanitizeBilletWorkflowRecord),
+    ),
     listRecords(resourceConfigs.players),
     listRecords(resourceConfigs.producedBats).then((records) =>
       records.map(sanitizeBatModelDataPoint),
@@ -3787,7 +3800,7 @@ function renderShoplyBatKnowledgeMarkdown(knowledge) {
     `Access: ${knowledge.source.access}`,
     '',
     'This is a private sanitized export from the Trinity Billet Inventory system for an approved AI agent.',
-    'It intentionally excludes customer records, billing contacts, order details, billet barcodes, billet locations, and raw internal notes.',
+    'It intentionally excludes customer records, billing contacts, order details, billet barcodes, and raw internal notes.',
     'Do not publish this export to a public web page, storefront page, or unauthenticated crawler URL.',
     '',
     '## How The Agent Should Use This',
