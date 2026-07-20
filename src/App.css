@@ -206,7 +206,16 @@ td span {
   padding: 14px;
 }
 
-.billet-suitability-picker legend {
+.billet-knot-picker {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid rgba(72, 50, 31, 0.16);
+  border-radius: 18px;
+  padding: 14px;
+}
+
+.billet-suitability-picker legend,
+.billet-knot-picker legend {
   padding: 0 8px;
   color: #55402f;
   font-size: 0.85rem;
@@ -354,7 +363,7 @@ textarea:focus {
 .intake-panel-primary > label,
 .intake-panel-primary .form-row,
 .intake-panel-primary .billet-suitability-picker,
-.intake-panel-primary .billet-measurement-group {
+.intake-panel-primary .billet-knot-picker {
   min-width: 0;
 }
 
@@ -382,23 +391,17 @@ textarea:focus {
 
 .billet-classification-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
   gap: 18px;
   align-items: start;
 }
 
-.billet-measurement-group {
-  display: grid;
-  gap: 14px;
-  align-content: start;
-  border: 1px solid rgba(72, 50, 31, 0.16);
-  border-radius: 18px;
-  padding: 16px;
-  background: rgba(255, 253, 248, 0.48);
+.billet-knot-picker select {
+  width: 100%;
 }
 
-.billet-measurement-group .form-hint {
-  margin: 0;
+.billet-size-hint {
+  margin-top: -8px;
 }
 
 .quick-entry {

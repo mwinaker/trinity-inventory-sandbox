@@ -30,6 +30,7 @@ import {
   trinityTeamMembers,
 } from '../shared/team-directory.mjs'
 import { billetSpeciesOptions as billetSpeciesValues } from '../shared/species-options.mjs'
+import { billetSourceOptions as billetSourceValues } from '../shared/source-options.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -159,7 +160,7 @@ const salesPortalVerifyRateLimiter = createFixedWindowRateLimiter({
 })
 const billetDiameterWeightCorrectionOz = 1.75
 const oversizedBilletDiameterSources = new Set(["RJ's Tree Farms", 'Cahan'])
-const billetSourceOptions = new Set(["RJ's Tree Farms", 'Great Lakes Veneer', 'Champeau', 'Cahan'])
+const billetSourceOptions = new Set(billetSourceValues)
 const billetSpeciesOptions = new Set(billetSpeciesValues)
 const publicSalesOrderFormPaths = [
   '/order-submission',

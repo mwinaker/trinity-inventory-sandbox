@@ -26,6 +26,11 @@ import {
 } from '../shared/species-options.mjs'
 import type { BilletSpecies } from '../shared/species-options.mjs'
 import {
+  billetSourceOptions,
+  inferBilletSourceFromText,
+} from '../shared/source-options.mjs'
+import type { BilletSource } from '../shared/source-options.mjs'
+import {
   billetSuitabilityOptions,
   isValidWorkableWeightRange,
   normalizeBilletWorkflowStatus,
@@ -107,7 +112,7 @@ type Species = BilletSpecies
 type Grade = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
 type KnotStatus = 'Yes' | 'No' | 'N/A'
 type WoodTier = 'Prime' | 'Select' | 'Choice' | 'Pro' | 'Semi-Pro' | 'Promo' | 'Blem'
-type Source = "RJ's Tree Farms" | 'Great Lakes Veneer' | 'Champeau' | 'Cahan'
+type Source = BilletSource
 type ProfileKind = 'Player' | 'Trainer'
 
 type Billet = {
@@ -641,11 +646,12 @@ const allGradeOptions: Grade[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro'
 const sourceGradeOptions: Record<Source, Grade[]> = {
   "RJ's Tree Farms": ['Prime', 'Select', 'Choice'],
   'Great Lakes Veneer': ['Prime', 'Select', 'Choice'],
+  'Maine Billets': ['Prime', 'Select', 'Choice'],
   Cahan: ['Prime', 'Select', 'Choice'],
   Champeau: ['Pro', 'Semi-Pro', 'Promo', 'Blem'],
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
-const sourceOptions: Source[] = ["RJ's Tree Farms", 'Great Lakes Veneer', 'Cahan', 'Champeau']
+const sourceOptions: readonly Source[] = billetSourceOptions
 const oversizedDiameterSources = new Set<Source>(["RJ's Tree Farms", 'Cahan'])
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
@@ -2438,15 +2444,7 @@ function inferSpeciesFromText(value: string): Species | null {
 }
 
 function inferSourceFromText(value: string): Source | null {
-  const normalized = value.toLowerCase()
-  if (normalized.includes('great lakes') || normalized.includes('glv')) return 'Great Lakes Veneer'
-  if (normalized.includes('champeau')) return 'Champeau'
-  if (normalized.includes('cahan')) return 'Cahan'
-  if (normalized.includes('rj') || normalized.includes("rj's") || normalized.includes('tree farm')) {
-    return "RJ's Tree Farms"
-  }
-
-  return null
+  return inferBilletSourceFromText(value)
 }
 
 function inferBilletWeightFromText(value: string) {
@@ -3312,12 +3310,8 @@ function parseQuickEntry(
   if (species) next.species = species
   if (grade) next.grade = grade
 
-  if (normalized.includes('great lakes')) next.source = 'Great Lakes Veneer'
-  if (normalized.includes('cahan')) next.source = 'Cahan'
-  if (normalized.includes('champeau')) next.source = 'Champeau'
-  if (normalized.includes('rj') || normalized.includes("rj's") || normalized.includes('tree farm')) {
-    next.source = "RJ's Tree Farms"
-  }
+  const source = inferBilletSourceFromText(normalized)
+  if (source) next.source = source
 
   const mlbYesPhrases = [
     /\bmlb\s*(grade|quality|caliber|worthy|ready|capable|eligible|approved)\b/,
@@ -7353,31 +7347,31 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                   </p>
                 </fieldset>
 
-                <div className="billet-measurement-group">
-                  <label>
-                    Knot in barrel?
-                    <select
-                      value={draft.hasBarrelKnot}
-                      onChange={(event) =>
-                        setDraft({ ...draft, hasBarrelKnot: event.target.value as KnotStatus })
-                      }
-                    >
-                      {getKnotOptions(draft.grade).map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <p className="form-hint">
-                    Standard billet size: {standardBilletLength} in x{' '}
-                    {getBilletDiameter(draft.source)} in round
-                    {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
-                      ? ` for ${draft.source} billets.`
-                      : '.'}
-                  </p>
-                </div>
+                <fieldset className="billet-knot-picker">
+                  <legend>Knot in barrel?</legend>
+                  <select
+                    aria-label="Knot in barrel?"
+                    value={draft.hasBarrelKnot}
+                    onChange={(event) =>
+                      setDraft({ ...draft, hasBarrelKnot: event.target.value as KnotStatus })
+                    }
+                  >
+                    {getKnotOptions(draft.grade).map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </fieldset>
               </div>
+
+              <p className="helper-text billet-size-hint">
+                Standard billet size: {standardBilletLength} in x{' '}
+                {getBilletDiameter(draft.source)} in round
+                {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
+                  ? ` for ${draft.source} billets.`
+                  : '.'}
+              </p>
 
               <label className="notes-field">
                 Notes
