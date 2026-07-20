@@ -22,10 +22,18 @@ import {
 } from './inventory-policy.ts'
 import type { BilletSuitability, BilletWorkflowStatus } from './inventory-policy.ts'
 import {
+  getOptionalWeightValue,
+  isValidEditableWeightRange,
+  mergeBatModelSources,
+  upsertBatModelOverride,
+} from './bat-model-repository.ts'
+import {
   buildCsvFile,
   getPlayerLevelFilterOptions,
   getPlayerLevelLabel,
   matchesPlayerLevelFilters,
+  normalizePlayerLevel,
+  playerLevelOptions,
 } from './player-profile-export.ts'
 import './App.css'
 
@@ -190,6 +198,14 @@ type BatModelProduct = {
   tags?: string[]
   variantCount?: number
   inventoryOnHand?: number
+}
+
+type BatModelEditDraft = {
+  name: string
+  category: string
+  url: string
+  billetWeightMin: string
+  billetWeightMax: string
 }
 
 type ShopifyCatalogProduct = {
@@ -1108,12 +1124,13 @@ const emptyPlayerAffiliation = (): PlayerAffiliationDraft => ({
 function getPlayerAffiliationDraft(playerName: string, profile?: PlayerProfile) {
   const known = getKnownProPlayerAffiliation(playerName)
   return {
-    levelOfPlay: profile?.levelOfPlay ?? known?.levelOfPlay ?? '',
-    currentClub: profile?.currentClub ?? known?.currentClub ?? '',
-    mlbOrganization: profile?.mlbOrganization ?? known?.mlbOrganization ?? '',
+    levelOfPlay:
+      normalizePlayerLevel(profile?.levelOfPlay) || normalizePlayerLevel(known?.levelOfPlay),
+    currentClub: profile?.currentClub?.trim() || known?.currentClub || '',
+    mlbOrganization: profile?.mlbOrganization?.trim() || known?.mlbOrganization || '',
     affiliationVerifiedAt:
-      profile?.affiliationVerifiedAt ?? known?.affiliationVerifiedAt ?? '',
-    affiliationNote: profile?.affiliationNote ?? known?.note ?? '',
+      profile?.affiliationVerifiedAt?.trim() || known?.affiliationVerifiedAt || '',
+    affiliationNote: profile?.affiliationNote?.trim() || known?.note || '',
   }
 }
 
@@ -1313,7 +1330,11 @@ function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
 }
 
 function isProPlayerProfile(profile: PlayerProfile) {
-  return profile.profileKind === 'Player' && profile.bats.length > 0
+  return (
+    profile.profileKind === 'Player' &&
+    profile.bats.length > 0 &&
+    Boolean(normalizePlayerLevel(profile.levelOfPlay))
+  )
 }
 
 function createId(prefix: string) {
@@ -2397,12 +2418,15 @@ function normalizePlayerProfile(
     id: record.id,
     profileKind: record.profileKind === 'Trainer' ? 'Trainer' : 'Player',
     playerName: record.playerName ?? '',
-    levelOfPlay: record.levelOfPlay ?? knownAffiliation?.levelOfPlay ?? '',
-    currentClub: record.currentClub ?? knownAffiliation?.currentClub ?? '',
-    mlbOrganization: record.mlbOrganization ?? knownAffiliation?.mlbOrganization ?? '',
+    levelOfPlay:
+      normalizePlayerLevel(record.levelOfPlay) ||
+      normalizePlayerLevel(knownAffiliation?.levelOfPlay),
+    currentClub: record.currentClub?.trim() || knownAffiliation?.currentClub || '',
+    mlbOrganization:
+      record.mlbOrganization?.trim() || knownAffiliation?.mlbOrganization || '',
     affiliationVerifiedAt:
-      record.affiliationVerifiedAt ?? knownAffiliation?.affiliationVerifiedAt ?? '',
-    affiliationNote: record.affiliationNote ?? knownAffiliation?.note ?? '',
+      record.affiliationVerifiedAt?.trim() || knownAffiliation?.affiliationVerifiedAt || '',
+    affiliationNote: record.affiliationNote?.trim() || knownAffiliation?.note || '',
     bats: Array.isArray(record.bats) ? record.bats.map((bat) => normalizeBatVariation(bat)) : [],
   }
 }
@@ -5018,6 +5042,9 @@ function InternalApp() {
   const [scannerMessage, setScannerMessage] = useState('')
   const [isScanning, setIsScanning] = useState(false)
   const [modelQuery, setModelQuery] = useState('')
+  const [editingBatModelId, setEditingBatModelId] = useState('')
+  const [batModelEditDraft, setBatModelEditDraft] = useState<BatModelEditDraft | null>(null)
+  const [batModelEditMessage, setBatModelEditMessage] = useState('')
   const [producedBatDraft, setProducedBatDraft] = useState(emptyProducedBat)
   const [costQuery, setCostQuery] = useState('')
   const [costSourceFilter, setCostSourceFilter] = useState<'all' | Source>('all')
@@ -5448,9 +5475,7 @@ function InternalApp() {
   }
 
   const proPlayerProfiles = players.filter(isProPlayerProfile)
-  const playerLevelFilterOptions = getPlayerLevelFilterOptions(
-    proPlayerProfiles.map((player) => player.levelOfPlay),
-  )
+  const playerLevelFilterOptions = getPlayerLevelFilterOptions()
   const filteredPlayers = proPlayerProfiles.filter((player) => {
     if (!matchesPlayerLevelFilters(player.levelOfPlay, playerLevelFilters)) return false
 
@@ -5503,14 +5528,7 @@ function InternalApp() {
   )
 
   const allBatModels = useMemo(() => {
-    const batModelMap = new Map<string, BatModelProduct>()
-    ;[...seedBatModels, ...shopifyBatModels, ...customBatModels].forEach((model) => {
-      const key = model.source === 'shopify' ? model.id : model.name.toLowerCase()
-      if (!batModelMap.has(key) || model.source === 'shopify' || model.source === 'custom') {
-        batModelMap.set(key, model)
-      }
-    })
-    return Array.from(batModelMap.values())
+    return mergeBatModelSources(seedBatModels, shopifyBatModels, customBatModels)
   }, [customBatModels, shopifyBatModels])
   const trainerBatModels = useMemo(
     () => allBatModels.filter((model) => isTrainerModel(model)),
@@ -6472,8 +6490,13 @@ function InternalApp() {
   function addProfileBat(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const profileName = playerNameDraft.trim()
+    const savedAffiliation = {
+      ...playerAffiliationDraft,
+      levelOfPlay: normalizePlayerLevel(playerAffiliationDraft.levelOfPlay),
+    }
     if (
       !profileName ||
+      !savedAffiliation.levelOfPlay ||
       !batDraft.modelNumber.trim() ||
       batDraft.length === '' ||
       !batDraft.weight.trim() ||
@@ -6499,7 +6522,7 @@ function InternalApp() {
             ? {
                 ...player,
                 playerName: profileName,
-                ...playerAffiliationDraft,
+                ...savedAffiliation,
                 bats: player.bats.map((bat) =>
                   bat.id === editingVariantTarget.variantId ? savedBat : bat,
                 ),
@@ -6516,7 +6539,7 @@ function InternalApp() {
       if (variantTargetProfileId) {
         return current.map((player) =>
           player.id === variantTargetProfileId
-            ? { ...player, ...playerAffiliationDraft, bats: [savedBat, ...player.bats] }
+            ? { ...player, ...savedAffiliation, bats: [savedBat, ...player.bats] }
             : player,
         )
       }
@@ -6530,7 +6553,7 @@ function InternalApp() {
       if (existingProfile) {
         return current.map((player) =>
           player.id === existingProfile.id
-            ? { ...player, ...playerAffiliationDraft, bats: [savedBat, ...player.bats] }
+            ? { ...player, ...savedAffiliation, bats: [savedBat, ...player.bats] }
             : player,
         )
       }
@@ -6540,7 +6563,7 @@ function InternalApp() {
           id: createId('profile'),
           profileKind: profileKindDraft,
           playerName: profileName,
-          ...playerAffiliationDraft,
+          ...savedAffiliation,
           bats: [savedBat],
         },
         ...current,
@@ -6654,6 +6677,79 @@ function InternalApp() {
     link.click()
     link.remove()
     window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  function startBatModelEdit(model: BatModelProduct) {
+    setEditingBatModelId(model.id)
+    setBatModelEditDraft({
+      name: model.name,
+      category: model.category,
+      url: model.url,
+      billetWeightMin:
+        typeof model.compatibility?.billetWeightRange?.minOz === 'number'
+          ? String(model.compatibility.billetWeightRange.minOz)
+          : '',
+      billetWeightMax:
+        typeof model.compatibility?.billetWeightRange?.maxOz === 'number'
+          ? String(model.compatibility.billetWeightRange.maxOz)
+          : '',
+    })
+    setBatModelEditMessage('')
+  }
+
+  function cancelBatModelEdit() {
+    setEditingBatModelId('')
+    setBatModelEditDraft(null)
+    setBatModelEditMessage('')
+  }
+
+  function saveBatModelEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!batModelEditDraft || !editingBatModelId) return
+
+    const model = allBatModels.find((item) => item.id === editingBatModelId)
+    const name = batModelEditDraft.name.trim()
+    const category = batModelEditDraft.category.trim()
+
+    if (!model || !name || !category) {
+      setBatModelEditMessage('Add both a model name and category before saving.')
+      return
+    }
+
+    if (
+      !isValidEditableWeightRange(
+        batModelEditDraft.billetWeightMin,
+        batModelEditDraft.billetWeightMax,
+      )
+    ) {
+      setBatModelEditMessage(
+        'Use valid billet weights, with the workable minimum no higher than the maximum.',
+      )
+      return
+    }
+
+    const minOz = getOptionalWeightValue(batModelEditDraft.billetWeightMin)
+    const maxOz = getOptionalWeightValue(batModelEditDraft.billetWeightMax)
+    const hasWeightRange = typeof minOz === 'number' || typeof maxOz === 'number'
+    const hasCompatibility = Boolean(model.compatibility) || hasWeightRange
+    const editedModel: BatModelProduct = {
+      ...model,
+      name,
+      category,
+      url: batModelEditDraft.url.trim(),
+      compatibility: hasCompatibility
+        ? {
+            billetWeightRange: hasWeightRange ? { minOz, maxOz } : undefined,
+            species: model.compatibility?.species ?? 'Any',
+            speciesDependent: model.compatibility?.speciesDependent ?? false,
+          }
+        : undefined,
+    }
+
+    setCustomBatModels((current) => upsertBatModelOverride(current, editedModel))
+    setEditingBatModelId('')
+    setBatModelEditDraft(null)
+    setBatModelEditMessage(`${name} was updated in the internal model repository.`)
   }
 
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
@@ -9103,17 +9199,6 @@ function InternalApp() {
             </div>
 
             <form className="bat-form profile-entry-form" onSubmit={addProfileBat}>
-              <datalist id="level-of-play-options">
-                <option value="MLB" />
-                <option value="MILB" />
-                <option value="Indy Ball" />
-                <option value="Mexican League" />
-                <option value="Honkbal Hoofdklasse" />
-                <option value="International" />
-                <option value="Free Agent" />
-                <option value="Drafted - unsigned" />
-                <option value="Amateur" />
-              </datalist>
               <div className="form-instructions">
                 <strong>
                   {editingVariantTarget
@@ -9164,17 +9249,23 @@ function InternalApp() {
               <div className="form-row">
                 <label>
                   Level of play
-                  <input
-                    list="level-of-play-options"
+                  <select
+                    required
                     value={playerAffiliationDraft.levelOfPlay}
-                    placeholder="MLB, MILB, Indy Ball, or league"
                     onChange={(event) =>
                       setPlayerAffiliationDraft((current) => ({
                         ...current,
                         levelOfPlay: event.target.value,
                       }))
                     }
-                  />
+                  >
+                    <option value="">Select pro level</option>
+                    {playerLevelOptions.map((level) => (
+                      <option value={level} key={level}>
+                        {level}
+                      </option>
+                    ))}
+                  </select>
                 </label>
                 <label>
                   MLB organization
@@ -9466,7 +9557,7 @@ function InternalApp() {
 
                     <div className="profile-affiliation-summary">
                       <span className="profile-type-pill">
-                        {profile.levelOfPlay || 'Level not verified'}
+                        {getPlayerLevelLabel(profile.levelOfPlay)}
                       </span>
                       <strong>{profile.currentClub || 'No current club saved'}</strong>
                       {profile.mlbOrganization ? (
@@ -9917,6 +10008,16 @@ function InternalApp() {
               />
             </div>
 
+            <div className="form-instructions model-list-instructions">
+              <strong>Administrators can maintain every model in this repository</strong>
+              <p>
+                Use Edit model to update its name, category, product link, or workable billet
+                range. These edits change the internal repository only; they do not alter the
+                Shopify product catalog.
+              </p>
+              {batModelEditMessage ? <p aria-live="polite">{batModelEditMessage}</p> : null}
+            </div>
+
             <div className="model-results">
               {filteredBatModels.map((model) => {
                 const records = producedBats.filter((record) => record.modelId === model.id)
@@ -9937,8 +10038,116 @@ function InternalApp() {
                         </p>
                         {compatibility ? <p>{compatibility}</p> : null}
                       </div>
-                      <span className="profile-count">{records.length} records</span>
+                      <div className="profile-actions">
+                        <span className="profile-count">{records.length} records</span>
+                        <button
+                          type="button"
+                          className="secondary-button compact-button"
+                          onClick={() => startBatModelEdit(model)}
+                        >
+                          Edit model
+                        </button>
+                      </div>
                     </div>
+
+                    {editingBatModelId === model.id && batModelEditDraft ? (
+                      <form className="nested-form model-edit-form" onSubmit={saveBatModelEdit}>
+                        <div className="form-row">
+                          <label>
+                            Model name
+                            <input
+                              required
+                              value={batModelEditDraft.name}
+                              onChange={(event) =>
+                                setBatModelEditDraft((current) =>
+                                  current ? { ...current, name: event.target.value } : current,
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            Category
+                            <input
+                              required
+                              value={batModelEditDraft.category}
+                              onChange={(event) =>
+                                setBatModelEditDraft((current) =>
+                                  current ? { ...current, category: event.target.value } : current,
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        <label>
+                          Product page link
+                          <input
+                            type="url"
+                            value={batModelEditDraft.url}
+                            placeholder="Optional product URL"
+                            onChange={(event) =>
+                              setBatModelEditDraft((current) =>
+                                current ? { ...current, url: event.target.value } : current,
+                              )
+                            }
+                          />
+                        </label>
+
+                        <div className="form-row">
+                          <label>
+                            Workable billet minimum
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={batModelEditDraft.billetWeightMin}
+                              placeholder="Optional"
+                              onChange={(event) =>
+                                setBatModelEditDraft((current) =>
+                                  current
+                                    ? { ...current, billetWeightMin: event.target.value }
+                                    : current,
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            Workable billet maximum
+                            <input
+                              type="number"
+                              min={batModelEditDraft.billetWeightMin || '0'}
+                              step="0.1"
+                              value={batModelEditDraft.billetWeightMax}
+                              placeholder="Optional"
+                              onChange={(event) =>
+                                setBatModelEditDraft((current) =>
+                                  current
+                                    ? { ...current, billetWeightMax: event.target.value }
+                                    : current,
+                                )
+                              }
+                            />
+                          </label>
+                        </div>
+
+                        {batModelEditMessage ? (
+                          <p className="helper-text" role="alert">
+                            {batModelEditMessage}
+                          </p>
+                        ) : null}
+
+                        <div className="input-action-row">
+                          <button type="submit">Save model</button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={cancelBatModelEdit}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
 
                     {records.length === 0 ? (
                       <p className="empty-state">No fit data points stored for this model yet.</p>

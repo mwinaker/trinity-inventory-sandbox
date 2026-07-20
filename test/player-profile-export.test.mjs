@@ -5,23 +5,31 @@ import {
   buildCsvFile,
   getPlayerLevelFilterOptions,
   matchesPlayerLevelFilters,
+  normalizePlayerLevel,
 } from '../src/player-profile-export.ts'
 
 test('player level filters can include MLB and MILB in the same pass', () => {
   const selected = ['MLB', 'MILB']
   assert.equal(matchesPlayerLevelFilters('MLB', selected), true)
   assert.equal(matchesPlayerLevelFilters('MILB', selected), true)
-  assert.equal(matchesPlayerLevelFilters('Indy Ball', selected), false)
+  assert.equal(matchesPlayerLevelFilters('Indy Ball/International', selected), false)
   assert.equal(matchesPlayerLevelFilters('', []), true)
 })
 
-test('player level options are unique, put MLB and MILB first, and include unverified profiles', () => {
-  assert.deepEqual(getPlayerLevelFilterOptions(['MILB', '', 'MLB', 'MILB', 'Indy Ball']), [
+test('player level filters expose only the three approved pro levels', () => {
+  assert.deepEqual(getPlayerLevelFilterOptions(), [
     'MLB',
     'MILB',
-    'Indy Ball',
-    'Level not verified',
+    'Indy Ball/International',
   ])
+})
+
+test('legacy league names normalize without exposing arbitrary labels', () => {
+  assert.equal(normalizePlayerLevel('Mexican League'), 'Indy Ball/International')
+  assert.equal(normalizePlayerLevel('Honkbal Hoofdklasse'), 'Indy Ball/International')
+  assert.equal(normalizePlayerLevel('International - WBC/Honkbalweek'), 'Indy Ball/International')
+  assert.equal(normalizePlayerLevel('Minor League Baseball'), 'MILB')
+  assert.equal(normalizePlayerLevel('unintended-label-123'), '')
 })
 
 test('CSV export quotes commas, quotes, and line breaks safely', () => {

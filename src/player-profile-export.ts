@@ -1,37 +1,37 @@
 export const unverifiedPlayerLevelLabel = 'Level not verified'
 
-const preferredPlayerLevelOrder = [
-  'MLB',
-  'MILB',
-  'Indy Ball',
-  'Mexican League',
-  'International',
-  'Free Agent',
-  'Drafted - unsigned',
-  'Amateur',
-]
+export const playerLevelOptions = ['MLB', 'MILB', 'Indy Ball/International'] as const
+
+export type PlayerLevel = (typeof playerLevelOptions)[number]
+
+export function normalizePlayerLevel(value: unknown): PlayerLevel | '' {
+  const level = String(value ?? '').trim().toLowerCase()
+  if (!level) return ''
+
+  if (/\b(milb|minor leagues?|minor league baseball)\b/.test(level)) return 'MILB'
+  if (/\b(mlb|major leagues?|major league baseball)\b/.test(level)) return 'MLB'
+  if (
+    /\b(indy|independent|international|mexican league|honkbal|wbc|npb|kbo|cpbl)\b/.test(
+      level,
+    )
+  ) {
+    return 'Indy Ball/International'
+  }
+
+  return ''
+}
 
 export function getPlayerLevelLabel(value: unknown) {
-  const level = String(value ?? '').trim()
+  const level = normalizePlayerLevel(value)
   return level || unverifiedPlayerLevelLabel
 }
 
-export function getPlayerLevelFilterOptions(values: unknown[]) {
-  const options = Array.from(new Set(values.map(getPlayerLevelLabel)))
-  return options.sort((a, b) => {
-    const aIndex = preferredPlayerLevelOrder.indexOf(a)
-    const bIndex = preferredPlayerLevelOrder.indexOf(b)
-    if (aIndex !== -1 || bIndex !== -1) {
-      if (aIndex === -1) return 1
-      if (bIndex === -1) return -1
-      if (aIndex !== bIndex) return aIndex - bIndex
-    }
-    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
-  })
+export function getPlayerLevelFilterOptions() {
+  return [...playerLevelOptions]
 }
 
 export function matchesPlayerLevelFilters(value: unknown, selectedLevels: string[]) {
-  return selectedLevels.length === 0 || selectedLevels.includes(getPlayerLevelLabel(value))
+  return selectedLevels.length === 0 || selectedLevels.includes(normalizePlayerLevel(value))
 }
 
 function escapeCsvValue(value: unknown) {
