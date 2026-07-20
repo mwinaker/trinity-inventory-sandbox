@@ -301,6 +301,11 @@ textarea {
   outline: none;
 }
 
+input:not([type='checkbox']):not([type='radio']):not([type='file']):not([type='hidden']),
+select {
+  height: 48px;
+}
+
 textarea {
   min-height: 96px;
   resize: vertical;
@@ -369,7 +374,6 @@ textarea:focus {
   align-items: start;
 }
 
-.intake-panel-primary .input-action-row > input,
 .intake-panel-primary .input-action-row > button {
   height: 48px;
   min-height: 48px;
