@@ -7334,47 +7334,46 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                 </p>
               </fieldset>
 
-              <div className="form-row single-field-row">
-                <label>
-                  Knot in barrel?
-                  <select
-                    value={draft.hasBarrelKnot}
-                    onChange={(event) =>
-                      setDraft({ ...draft, hasBarrelKnot: event.target.value as KnotStatus })
-                    }
-                  >
-                    {getKnotOptions(draft.grade).map((option) => (
-                      <option key={option} value={option}>
-                        {option}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <p className="form-hint">
-                Billet size: {standardBilletLength} in x {getBilletDiameter(draft.source)} in round
-                {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
-                  ? ` for ${draft.source} billets.`
-                  : '.'}
-              </p>
-
-              <div className="form-row">
-                <label>
-                  Weight
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={draft.weight}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        weight:
-                          event.target.value === '' ? '' : Number(event.target.value),
-                      })
-                    }
-                  />
-                </label>
+              <div className="billet-measurement-group">
+                <div className="form-row">
+                  <label>
+                    Knot in barrel?
+                    <select
+                      value={draft.hasBarrelKnot}
+                      onChange={(event) =>
+                        setDraft({ ...draft, hasBarrelKnot: event.target.value as KnotStatus })
+                      }
+                    >
+                      {getKnotOptions(draft.grade).map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Weight (oz)
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={draft.weight}
+                      onChange={(event) =>
+                        setDraft({
+                          ...draft,
+                          weight:
+                            event.target.value === '' ? '' : Number(event.target.value),
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+                <p className="form-hint">
+                  Standard billet size: {standardBilletLength} in x{' '}
+                  {getBilletDiameter(draft.source)} in round
+                  {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
+                    ? ` for ${draft.source} billets.`
+                    : '.'}
+                </p>
               </div>
 
               <label className="notes-field">

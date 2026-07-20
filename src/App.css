@@ -118,6 +118,37 @@ h2 {
   color: #fff6e6;
 }
 
+@media (min-width: 981px) {
+  .app-section-inventory .hero-panel > div:first-child {
+    min-height: 0;
+    padding: 32px 40px;
+  }
+
+  .app-section-inventory h1 {
+    max-width: none;
+    font-size: clamp(3.4rem, 5.2vw, 5rem);
+    line-height: 0.94;
+  }
+
+  .app-section-inventory .hero-copy {
+    margin-top: 16px;
+  }
+
+  .app-section-inventory .section-tabs {
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  .app-section-inventory .section-tabs button {
+    min-height: 42px;
+    padding-inline: 16px;
+  }
+
+  .app-section-inventory .hero-card {
+    padding: 24px;
+  }
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -300,24 +331,47 @@ textarea:focus {
 }
 
 .intake-panel-primary {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: end;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
 }
 
 .intake-panel-primary .section-heading,
 .intake-panel-primary .quick-entry,
 .intake-panel-primary .notes-field,
+.intake-panel-primary > .helper-text,
+.intake-panel-primary > .scanner-panel,
 .intake-panel-primary > button {
   grid-column: 1 / -1;
 }
 
 .intake-panel-primary > label,
-.intake-panel-primary .form-row {
+.intake-panel-primary .form-row,
+.intake-panel-primary .billet-suitability-picker,
+.intake-panel-primary .billet-measurement-group {
   min-width: 0;
+}
+
+.intake-panel-primary .section-heading {
+  margin-bottom: 0;
 }
 
 .intake-panel-primary .form-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.billet-measurement-group {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  border: 1px solid rgba(72, 50, 31, 0.16);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 253, 248, 0.48);
+}
+
+.billet-measurement-group .form-hint {
+  margin: 0;
 }
 
 .quick-entry {
@@ -329,7 +383,7 @@ textarea:focus {
 }
 
 .quick-entry textarea {
-  min-height: 118px;
+  min-height: 96px;
 }
 
 .quick-actions {
@@ -2337,6 +2391,12 @@ td select {
   margin: 0;
   color: #8e5d36;
   font-size: 0.88rem;
+}
+
+@media (min-width: 981px) and (max-width: 1180px) {
+  .intake-panel-primary {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 980px) {
