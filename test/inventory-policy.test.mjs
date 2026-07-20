@@ -21,11 +21,20 @@ test('legacy billet flags migrate into suitability categories', () => {
 
 test('Trophy suitability is exclusive while playable categories can be combined', () => {
   const playable = updateBilletSuitability(
-    updateBilletSuitability(['MLB capable'], 'Indy ball/International', true),
+    updateBilletSuitability(
+      updateBilletSuitability(['MLB capable'], 'Indy ball/International', true),
+      'Fungo only',
+      true,
+    ),
     'High school',
     true,
   )
-  assert.deepEqual(playable, ['MLB capable', 'Indy ball/International', 'High school'])
+  assert.deepEqual(playable, [
+    'MLB capable',
+    'Indy ball/International',
+    'High school',
+    'Fungo only',
+  ])
   assert.deepEqual(updateBilletSuitability(playable, 'Trophy', true), ['Trophy'])
   assert.deepEqual(updateBilletSuitability(['Trophy'], 'Trainer only', true), ['Trainer only'])
   assert.deepEqual(normalizeBilletSuitability(['MLB capable', 'Trophy']), ['Trophy'])

@@ -346,6 +346,7 @@ textarea:focus {
 .intake-panel-primary .notes-field,
 .intake-panel-primary > .helper-text,
 .intake-panel-primary > .scanner-panel,
+.intake-panel-primary .billet-classification-row,
 .intake-panel-primary > button {
   grid-column: 1 / -1;
 }
@@ -377,6 +378,13 @@ textarea:focus {
 .intake-panel-primary .input-action-row > button {
   height: 48px;
   min-height: 48px;
+}
+
+.billet-classification-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
 }
 
 .billet-measurement-group {
@@ -2557,7 +2565,8 @@ td select {
 @media (max-width: 620px) {
   .form-row,
   .build-grid,
-  .filters {
+  .filters,
+  .billet-classification-row {
     grid-template-columns: 1fr;
   }
 

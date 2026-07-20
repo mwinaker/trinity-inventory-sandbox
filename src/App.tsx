@@ -3375,6 +3375,13 @@ function parseQuickEntry(
       true,
     )
   }
+  if (/\bfungo(?:\s+only)?\b/.test(normalized)) {
+    next.suitabilityCategories = updateBilletSuitability(
+      next.suitabilityCategories,
+      'Fungo only',
+      true,
+    )
+  }
   if (/\b(no|not|non)\b[^.\n]{0,20}\btrophy\b/.test(normalized)) {
     next.suitabilityCategories = updateBilletSuitability(
       next.suitabilityCategories,
@@ -7251,6 +7258,24 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                   </select>
                 </label>
                 <label>
+                  Weight (oz)
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={draft.weight}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        weight:
+                          event.target.value === '' ? '' : Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <div className="form-row">
+                <label>
                   Delivery date
                   <select
                     value={draft.deliveryDate}
@@ -7268,9 +7293,6 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                     )}
                   </select>
                 </label>
-              </div>
-
-              <div className="form-row">
                 <label>
                   Add new delivery date
                   <div className="input-action-row">
@@ -7292,50 +7314,42 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                     </button>
                   </div>
                 </label>
-                <label>
-                  Status on intake
-                  <input value={statusLabels.storage} readOnly />
-                  <span className="helper-text">
-                    New billets enter Storage. Change the status to Production when a billet is
-                    selected for an order.
-                  </span>
-                </label>
               </div>
 
-              <fieldset className="billet-suitability-picker">
-                <legend>Suitable level of play</legend>
-                <div className="billet-suitability-options">
-                  {billetSuitabilityOptions.map((category) => (
-                    <label className="checkbox-row" key={category}>
-                      <input
-                        type="checkbox"
-                        checked={draft.suitabilityCategories.includes(category)}
-                        disabled={category === 'MLB capable' && autoNonMlbGrades.has(draft.grade)}
-                        onChange={(event) =>
-                          setDraft((current) =>
-                            withBilletSuitability(
-                              current,
-                              updateBilletSuitability(
-                                current.suitabilityCategories,
-                                category,
-                                event.target.checked,
+              <div className="billet-classification-row">
+                <fieldset className="billet-suitability-picker">
+                  <legend>Suitable level of play</legend>
+                  <div className="billet-suitability-options">
+                    {billetSuitabilityOptions.map((category) => (
+                      <label className="checkbox-row" key={category}>
+                        <input
+                          type="checkbox"
+                          checked={draft.suitabilityCategories.includes(category)}
+                          disabled={category === 'MLB capable' && autoNonMlbGrades.has(draft.grade)}
+                          onChange={(event) =>
+                            setDraft((current) =>
+                              withBilletSuitability(
+                                current,
+                                updateBilletSuitability(
+                                  current.suitabilityCategories,
+                                  category,
+                                  event.target.checked,
+                                ),
                               ),
-                            ),
-                          )
-                        }
-                      />
-                      <span>{category}</span>
-                    </label>
-                  ))}
-                </div>
-                <p className="form-hint">
-                  Select every level this billet can serve. Trophy is exclusive and clears all
-                  playable categories.
-                </p>
-              </fieldset>
+                            )
+                          }
+                        />
+                        <span>{category}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="form-hint">
+                    Select every level this billet can serve. Trophy is exclusive and clears all
+                    playable categories.
+                  </p>
+                </fieldset>
 
-              <div className="billet-measurement-group">
-                <div className="form-row">
+                <div className="billet-measurement-group">
                   <label>
                     Knot in barrel?
                     <select
@@ -7351,29 +7365,14 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                       ))}
                     </select>
                   </label>
-                  <label>
-                    Weight (oz)
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={draft.weight}
-                      onChange={(event) =>
-                        setDraft({
-                          ...draft,
-                          weight:
-                            event.target.value === '' ? '' : Number(event.target.value),
-                        })
-                      }
-                    />
-                  </label>
+                  <p className="form-hint">
+                    Standard billet size: {standardBilletLength} in x{' '}
+                    {getBilletDiameter(draft.source)} in round
+                    {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
+                      ? ` for ${draft.source} billets.`
+                      : '.'}
+                  </p>
                 </div>
-                <p className="form-hint">
-                  Standard billet size: {standardBilletLength} in x{' '}
-                  {getBilletDiameter(draft.source)} in round
-                  {draft.source === "RJ's Tree Farms" || draft.source === 'Cahan'
-                    ? ` for ${draft.source} billets.`
-                    : '.'}
-                </p>
               </div>
 
               <label className="notes-field">

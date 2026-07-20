@@ -3,6 +3,7 @@ export const billetSuitabilityOptions = [
   'Indy ball/International',
   'High school',
   'Trainer only',
+  'Fungo only',
   'Trophy',
 ] as const
 
