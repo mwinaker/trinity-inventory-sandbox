@@ -358,6 +358,21 @@ textarea:focus {
 
 .intake-panel-primary .form-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+.intake-panel-primary label {
+  align-content: start;
+}
+
+.intake-panel-primary .input-action-row {
+  align-items: start;
+}
+
+.intake-panel-primary .input-action-row > input,
+.intake-panel-primary .input-action-row > button {
+  height: 48px;
+  min-height: 48px;
 }
 
 .billet-measurement-group {
