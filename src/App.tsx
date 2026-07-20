@@ -21,6 +21,12 @@ import {
   updateBilletSuitability,
 } from './inventory-policy.ts'
 import type { BilletSuitability, BilletWorkflowStatus } from './inventory-policy.ts'
+import {
+  buildCsvFile,
+  getPlayerLevelFilterOptions,
+  getPlayerLevelLabel,
+  matchesPlayerLevelFilters,
+} from './player-profile-export.ts'
 import './App.css'
 
 type SpeechRecognitionResultEvent = {
@@ -5000,6 +5006,7 @@ function InternalApp() {
   const [variantTargetProfileId, setVariantTargetProfileId] = useState<string | null>(null)
   const [editingVariantTarget, setEditingVariantTarget] = useState<EditingVariantTarget | null>(null)
   const [playerQuery, setPlayerQuery] = useState('')
+  const [playerLevelFilters, setPlayerLevelFilters] = useState<string[]>([])
   const [scannerMessage, setScannerMessage] = useState('')
   const [isScanning, setIsScanning] = useState(false)
   const [modelQuery, setModelQuery] = useState('')
@@ -5432,8 +5439,12 @@ function InternalApp() {
     return ''
   }
 
-  const filteredPlayers = players.filter((player) => {
-    if (!isProPlayerProfile(player)) return false
+  const proPlayerProfiles = players.filter(isProPlayerProfile)
+  const playerLevelFilterOptions = getPlayerLevelFilterOptions(
+    proPlayerProfiles.map((player) => player.levelOfPlay),
+  )
+  const filteredPlayers = proPlayerProfiles.filter((player) => {
+    if (!matchesPlayerLevelFilters(player.levelOfPlay, playerLevelFilters)) return false
 
     const searchable = [
       player.playerName,
@@ -6559,6 +6570,82 @@ function InternalApp() {
     setVariantTargetProfileId(null)
     setEditingVariantTarget({ profileId: profile.id, variantId: bat.id })
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function downloadFilteredPlayerProfiles() {
+    if (filteredPlayers.length === 0) return
+
+    const headers = [
+      'Player name',
+      'Level of play',
+      'Current club or team',
+      'MLB organization',
+      'Affiliation verified',
+      'Affiliation note',
+      'Bat profile count',
+      'Bat models',
+      'Bat specifications',
+      'Linked order count',
+      'Total bats ordered',
+      'Paid order count',
+      'Total order value',
+      'Currency',
+      'Latest order submitted',
+      'Shopify orders',
+    ]
+    const rows = filteredPlayers.map((profile) => {
+      const orderHistory = buildPlayerOrderHistory(
+        getOrderJobsForPlayerProfile(profile, orderJobs),
+      )
+      const currencies = Array.from(
+        new Set(orderHistory.map((order) => order.currency).filter(Boolean)),
+      )
+      const batSpecifications = profile.bats.map((bat) =>
+        [
+          `${bat.modelNumber}: ${bat.length || 'N/A'} in / ${bat.weight || 'N/A'} oz`,
+          bat.source || 'No source',
+          bat.species,
+          bat.woodTier,
+          `ideal billet ${bat.idealBilletWeight || 'N/A'} oz`,
+          bat.colorPreferences ? `colors ${bat.colorPreferences}` : '',
+          bat.notes,
+        ]
+          .filter(Boolean)
+          .join(' / '),
+      )
+
+      return [
+        profile.playerName,
+        getPlayerLevelLabel(profile.levelOfPlay),
+        profile.currentClub,
+        profile.mlbOrganization,
+        profile.affiliationVerifiedAt,
+        profile.affiliationNote,
+        profile.bats.length,
+        profile.bats.map((bat) => bat.modelNumber).join(' | '),
+        batSpecifications.join(' || '),
+        orderHistory.length,
+        orderHistory.reduce((total, order) => total + order.totalQuantity, 0),
+        orderHistory.filter((order) => order.isPaid).length,
+        orderHistory.reduce((total, order) => total + order.totalValue, 0).toFixed(2),
+        currencies.join(' | '),
+        orderHistory[0]?.submittedAt || orderHistory[0]?.shopifyCreatedAt || '',
+        orderHistory
+          .map((order) => order.shopifyOrderName || order.shopifyDraftOrderName)
+          .filter(Boolean)
+          .join(' | '),
+      ]
+    })
+    const csv = buildCsvFile(headers, rows)
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `trinity-pro-player-profiles-${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
   }
 
   function addProducedBatRecord(event: React.FormEvent<HTMLFormElement>) {
@@ -9275,12 +9362,61 @@ function InternalApp() {
                 <p className="eyebrow">Search database</p>
                 <h2>Pro Player Profiles</h2>
               </div>
-              <input
-                aria-label="Search pro player profiles"
-                placeholder="Search pro player, model, source, species, weight, wood tier..."
-                value={playerQuery}
-                onChange={(event) => setPlayerQuery(event.target.value)}
-              />
+              <div className="profile-search-actions">
+                <input
+                  aria-label="Search pro player profiles"
+                  placeholder="Search player, team, organization, model, source, species..."
+                  value={playerQuery}
+                  onChange={(event) => setPlayerQuery(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={filteredPlayers.length === 0}
+                  onClick={downloadFilteredPlayerProfiles}
+                >
+                  Download filtered list ({filteredPlayers.length})
+                </button>
+              </div>
+              <fieldset className="profile-level-filters">
+                <legend>Filter by level of play</legend>
+                <div className="filter-chip-row">
+                  {playerLevelFilterOptions.map((level) => (
+                    <label
+                      className={`filter-chip ${playerLevelFilters.includes(level) ? 'selected' : ''}`}
+                      key={level}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={playerLevelFilters.includes(level)}
+                        onChange={() =>
+                          setPlayerLevelFilters((current) =>
+                            toggleSelectedValue(current, level),
+                          )
+                        }
+                      />
+                      <span>{level}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="profile-search-summary">
+                <p aria-live="polite">
+                  {filteredPlayers.length} of {proPlayerProfiles.length} pro player profiles match.
+                </p>
+                {playerQuery || playerLevelFilters.length > 0 ? (
+                  <button
+                    type="button"
+                    className="secondary-button compact-button"
+                    onClick={() => {
+                      setPlayerQuery('')
+                      setPlayerLevelFilters([])
+                    }}
+                  >
+                    Clear player filters
+                  </button>
+                ) : null}
+              </div>
             </div>
 
             <div className="profile-results">

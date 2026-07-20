@@ -2010,6 +2010,50 @@ button:hover {
   grid-template-columns: minmax(0, 0.8fr) minmax(260px, 1fr);
 }
 
+.profile-search-actions {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.profile-search-actions input {
+  flex: 1 1 280px;
+}
+
+.profile-level-filters {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.profile-level-filters legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: #746353;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.profile-search-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.profile-search-summary p {
+  margin: 0;
+  color: #5d4b3c;
+  font-weight: 800;
+}
+
 .bat-form {
   padding: 18px;
   border-radius: 22px;
