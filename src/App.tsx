@@ -4363,7 +4363,7 @@ function SalesOrderFormFields({
       </div>
 
       <button type="button" className="secondary-button" onClick={addLine}>
-        Add another line
+        Add new product
       </button>
 
       <div className="attachment-field">
