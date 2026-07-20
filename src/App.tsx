@@ -314,6 +314,7 @@ type OrderJob = {
   billingPhone: string
   billingCompany: string
   billingRelationship: string
+  purchaseOrder: string
   productTitle: string
   variantTitle: string
   shopifyProductId: string
@@ -373,6 +374,7 @@ type SalesOrderDraft = {
   playerName: string
   playerEmail: string
   playerPhone: string
+  purchaseOrder: string
   shippingAddress1: string
   shippingAddress2: string
   shippingCity: string
@@ -1161,6 +1163,7 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   playerName: '',
   playerEmail: '',
   playerPhone: '',
+  purchaseOrder: '',
   shippingAddress1: '',
   shippingAddress2: '',
   shippingCity: '',
@@ -1494,6 +1497,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     billingPhone: record.billingPhone ?? '',
     billingCompany: record.billingCompany ?? '',
     billingRelationship: record.billingRelationship ?? '',
+    purchaseOrder: record.purchaseOrder ?? '',
     productTitle: record.productTitle ?? '',
     variantTitle: record.variantTitle ?? '',
     shopifyProductId: record.shopifyProductId ?? '',
@@ -3958,6 +3962,17 @@ function SalesOrderFormFields({
             />
           </label>
         ) : null}
+      </div>
+
+      <div className="form-row single-field-row">
+        <label>
+          Purchase order (optional)
+          <input
+            value={draft.purchaseOrder}
+            placeholder="Example: PO-10452"
+            onChange={(event) => updateField('purchaseOrder', event.target.value)}
+          />
+        </label>
       </div>
 
       <label className="checkbox-row billing-toggle">

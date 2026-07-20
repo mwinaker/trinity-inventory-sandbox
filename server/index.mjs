@@ -2933,6 +2933,7 @@ function buildInternalOrderCopyMessage({
   const payer = resolvePayer(payload)
   const lines = Array.isArray(payload.lines) ? payload.lines : []
   const playerName = cleanString(payload.playerName || payload.customerName)
+  const purchaseOrder = cleanString(payload.purchaseOrder)
   const salesRep = cleanString(payload.salesRep)
   const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const internalAttachment = normalizeOrderAttachment(payload.attachment)
@@ -2957,6 +2958,7 @@ function buildInternalOrderCopyMessage({
     invoiceUrl ? `Draft invoice link: ${invoiceUrl}` : '',
     salesRepLine,
     playerName ? `Player: ${playerName}` : '',
+    purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     cleanString(payload.playerEmail) ? `Player email: ${cleanString(payload.playerEmail)}` : '',
     cleanString(payload.playerPhone || payload.customerPhone)
       ? `Player phone: ${cleanString(payload.playerPhone || payload.customerPhone)}`
@@ -4714,6 +4716,7 @@ async function createDraftOrder(input) {
           draftOrder {
             id
             name
+            poNumber
             invoiceUrl
             email
             createdAt
@@ -4798,6 +4801,7 @@ async function createPendingOrder(order, options = {}) {
           order {
             id
             name
+            poNumber
             email
             createdAt
             updatedAt
@@ -4902,6 +4906,7 @@ async function completeDraftOrderAsPending(draftOrderId) {
           draftOrder {
             id
             name
+            poNumber
             status
             order {
               id
@@ -6418,12 +6423,14 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const playerName = cleanString(payload.playerName || payload.customerName)
+  const purchaseOrder = cleanString(payload.purchaseOrder)
   const billingCompany = cleanString(payload.billingCompany)
   const customMessage = [
     'A Trinity Sports Group invoice has been created from an internal sales order.',
     hasProOrder ? 'Order type: Pro Order' : '',
     isZeroDollarOrder ? '$0 sample order: no payment is due; invoice sent for documentation.' : '',
     playerName ? `Player: ${playerName}` : '',
+    purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
     cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
   ]
@@ -6444,6 +6451,7 @@ function buildOrderInvoiceEmailInput(payload, order) {
 function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
   const payer = resolvePayer(payload)
   const playerName = cleanString(payload.playerName || payload.customerName)
+  const purchaseOrder = cleanString(payload.purchaseOrder)
   const billingCompany = cleanString(payload.billingCompany)
   const lineSummary = summarizeSalesOrderLines(payload.lines)
   const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
@@ -6453,6 +6461,7 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
       ? `If the payment button does not open correctly, use this secure invoice link: ${invoiceUrl}`
       : '',
     playerName ? `Player: ${playerName}` : '',
+    purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
     lineSummary ? `Order lines: ${lineSummary}` : '',
     cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
@@ -6473,6 +6482,7 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
   const draftOrderName = cleanString(primaryJob.shopifyDraftOrderName) || 'Trinity order'
   const recipientEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail)
   const playerName = cleanString(primaryJob.playerName)
+  const purchaseOrder = cleanString(primaryJob.purchaseOrder)
   const billingCompany = cleanString(primaryJob.billingCompany)
   const notes = cleanString(primaryJob.internalNotes || primaryJob.notes)
   const customMessage = [
@@ -6481,6 +6491,7 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
       ? `If the payment button does not open correctly, use this secure invoice link: ${invoiceUrl}`
       : '',
     playerName ? `Player: ${playerName}` : '',
+    purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
     notes ? `Notes: ${notes}` : '',
   ]
@@ -6517,6 +6528,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
+  const purchaseOrder = cleanString(payload.purchaseOrder)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
   const shippingOption = resolveShippingOption(payload, requiresShipping)
@@ -6545,6 +6557,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
     playerPhone ? `Player phone: ${playerPhone}` : '',
+    purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
     billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
@@ -6563,11 +6576,11 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     phone: payer.phone || undefined,
     currency: shopCurrencyCode,
     financialStatus: 'PENDING',
+    ...(purchaseOrder ? { poNumber: purchaseOrder } : {}),
     ...(proOrderNotificationLabel
       ? {
           sourceName: proOrderNotificationLabel,
           sourceIdentifier: intakeId,
-          poNumber: proOrderNotificationLabel,
         }
       : {}),
     ...(shippingAddress ? { shippingAddress } : {}),
@@ -6600,6 +6613,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
+      trinity_purchase_order: purchaseOrder,
       trinity_shipping_address: formattedShippingAddress,
       trinity_billing_different: billingDifferent ? 'true' : '',
       trinity_billing_name: payer.name,
@@ -6663,6 +6677,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const playerName = cleanString(payload.playerName || payload.customerName)
   const playerEmail = cleanString(payload.playerEmail)
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
+  const purchaseOrder = cleanString(payload.purchaseOrder)
   const billingDifferent = isTruthy(payload.billingDifferent)
   const requiresShipping = requiresShippingForOrder(payload)
   const shippingOption = resolveShippingOption(payload, requiresShipping)
@@ -6688,6 +6703,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
     playerPhone ? `Player phone: ${playerPhone}` : '',
+    purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     formattedShippingAddress ? `Shipping address: ${formattedShippingAddress}` : '',
     billingDifferent ? `Bill to: ${payer.name || payer.email}` : '',
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
@@ -6704,6 +6720,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   return {
     email: payer.email || undefined,
     phone: payer.phone || undefined,
+    ...(purchaseOrder ? { poNumber: purchaseOrder } : {}),
     ...(shippingAddress ? { shippingAddress } : {}),
     ...(shippingLine ? { shippingLine } : {}),
     note,
@@ -6736,6 +6753,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
+      trinity_purchase_order: purchaseOrder,
       trinity_shipping_address: formattedShippingAddress,
       trinity_billing_different: billingDifferent ? 'true' : '',
       trinity_billing_name: payer.name,
@@ -6963,6 +6981,7 @@ function mapDraftOrderToJobs(
   const payer = resolvePayer(payload)
   const draftInvoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
   const internalAttachment = normalizeOrderAttachment(payload.attachment)
+  const purchaseOrder = cleanString(payload.purchaseOrder)
 
   return lines.map((line, index) => {
     const draftLine = draftLines[index] ?? {}
@@ -6992,6 +7011,7 @@ function mapDraftOrderToJobs(
       billingPhone: payer.phone,
       billingCompany: payer.company,
       billingRelationship: payer.relationship,
+      purchaseOrder,
       productTitle: draftLine.name || cleanString(line.title) || product?.title || 'Custom Trinity bat',
       variantTitle: variant?.title ?? '',
       shopifyProductId: product?.id ?? '',
@@ -7049,6 +7069,7 @@ function mapCompletedDraftOrderToJobs(
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
+      purchaseOrder: job.purchaseOrder || cleanString(payload.purchaseOrder),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
       internalNotes: cleanString(payload.notes),
@@ -7078,6 +7099,7 @@ function mapCreatedOrderToJobs(
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
+      purchaseOrder: job.purchaseOrder || cleanString(payload.purchaseOrder),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
       internalNotes: cleanString(payload.notes),
@@ -7132,6 +7154,7 @@ function mapGraphQLOrderToJobs(order) {
       billingPhone: identity.billingPhone,
       billingCompany: identity.billingCompany,
       billingRelationship: identity.billingRelationship,
+      purchaseOrder: orderAttributes.trinity_purchase_order ?? cleanString(order.poNumber),
       productTitle: line.title ?? product?.title ?? '',
       variantTitle: variant?.title ?? '',
       shopifyProductId: product?.id ?? '',
@@ -7246,6 +7269,8 @@ function mapOrderWebhookToJobs(order, topic) {
       billingPhone: identity.billingPhone,
       billingCompany: identity.billingCompany,
       billingRelationship: identity.billingRelationship,
+      purchaseOrder:
+        orderAttributes.trinity_purchase_order ?? cleanString(order.po_number || order.poNumber),
       productTitle: line.title ?? line.name ?? '',
       variantTitle: line.variant_title ?? '',
       shopifyProductId: line.product_id ? toShopifyGid('Product', line.product_id) : '',
@@ -7325,6 +7350,7 @@ function mergeOrderJob(existing, incoming) {
     billingPhone: existing.billingPhone || incoming.billingPhone,
     billingCompany: existing.billingCompany || incoming.billingCompany,
     billingRelationship: existing.billingRelationship || incoming.billingRelationship,
+    purchaseOrder: existing.purchaseOrder || incoming.purchaseOrder,
     specs: mergeSpecs(existing.specs, incoming.specs),
     internalAttachment: existing.internalAttachment || incoming.internalAttachment || null,
     internalNotes: existing.internalNotes || incoming.internalNotes,

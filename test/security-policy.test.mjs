@@ -167,6 +167,10 @@ test('order bounds reject oversized payloads and untrusted attachment links', ()
   )
   assert.equal(isAllowedShopifyAttachmentUrl('https://cdn.shopify.com/s/files/file.pdf'), true)
   assert.equal(isAllowedShopifyAttachmentUrl('http://cdn.shopify.com/s/files/file.pdf'), false)
+  assert.match(
+    getSalesOrderBoundsError({ purchaseOrder: 'P'.repeat(161), lines: [] }),
+    /Purchase order is too long/,
+  )
 })
 
 test('unauthenticated order callers cannot create finalized Shopify orders', () => {

@@ -176,6 +176,7 @@ export function getSalesOrderBoundsError(payload) {
     ['Player name', payload?.playerName || payload?.customerName, 160],
     ['Player email', payload?.playerEmail, 254],
     ['Player phone', payload?.playerPhone, 50],
+    ['Purchase order', payload?.purchaseOrder, 160],
     ['Billing name', payload?.billingName, 160],
     ['Billing email', payload?.billingEmail, 254],
     ['Billing phone', payload?.billingPhone, 50],
