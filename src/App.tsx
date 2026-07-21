@@ -1303,7 +1303,7 @@ function getProfileBilletMatches(bat: BatVariation, billets: Billet[]) {
     .map(({ billet }) => billet)
 }
 
-function isProPlayerProfile(profile: PlayerProfile) {
+function isPlayerBatProfile(profile: PlayerProfile) {
   return (
     profile.profileKind === 'Player' &&
     profile.bats.length > 0 &&
@@ -5506,9 +5506,9 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
     return ''
   }
 
-  const proPlayerProfiles = players.filter(isProPlayerProfile)
+  const playerBatProfiles = players.filter(isPlayerBatProfile)
   const playerLevelFilterOptions = getPlayerLevelFilterOptions()
-  const filteredPlayers = proPlayerProfiles.filter((player) => {
+  const filteredPlayers = playerBatProfiles.filter((player) => {
     if (!matchesPlayerLevelFilters(player.levelOfPlay, playerLevelFilters)) return false
 
     const searchable = [
@@ -6199,7 +6199,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
       setOrderActionMessage(
         `Imported ${payload.importedOrders ?? 0} recent Shopify order${
           payload.importedOrders === 1 ? '' : 's'
-        }. Updated ${payload.updatedPlayerAffiliations ?? 0} pro player affiliation${
+        }. Updated ${payload.updatedPlayerAffiliations ?? 0} player affiliation${
           payload.updatedPlayerAffiliations === 1 ? '' : 's'
         } in Shopify.`,
       )
@@ -6732,7 +6732,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `trinity-pro-player-profiles-${new Date().toISOString().slice(0, 10)}.csv`
+    link.download = `trinity-player-bat-profiles-${new Date().toISOString().slice(0, 10)}.csv`
     document.body.appendChild(link)
     link.click()
     link.remove()
@@ -7043,7 +7043,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
               className={activeSection === 'players' ? 'active' : ''}
               onClick={() => setActiveSection('players')}
             >
-              Pro Player Profiles
+              Player Bat Profiles
             </button>
             <button
               type="button"
@@ -9389,7 +9389,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
         <section className="profiles-page">
           <section className="panel profile-entry-panel">
             <div className="section-heading">
-              <p className="eyebrow">{editingVariantTarget ? 'Edit pro player' : 'Add pro player'}</p>
+              <p className="eyebrow">{editingVariantTarget ? 'Edit player' : 'Add player'}</p>
               <h2>{editingVariantTarget ? 'Edit saved variant' : 'Store a bat profile'}</h2>
             </div>
 
@@ -9400,7 +9400,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                     ? `Edit variant for ${playerNameDraft || 'this profile'}`
                     : variantTargetProfileId
                       ? `Add a new variant to ${playerNameDraft || 'this profile'}`
-                      : 'Enter a pro player bat record'}
+                      : 'Enter a player bat record'}
                 </strong>
                 <p>
                   Add the model, finished bat specs, wood species, wood tier, color notes, and
@@ -9415,7 +9415,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                   </p>
                 ) : variantTargetProfileId ? (
                   <p>
-                    This will be saved inside the existing pro player profile for {playerNameDraft}.
+                    This will be saved inside the existing player bat profile for {playerNameDraft}.
                   </p>
                 ) : null}
               </div>
@@ -9454,7 +9454,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                       }))
                     }
                   >
-                    <option value="">Select pro level</option>
+                    <option value="">Select level of play</option>
                     {playerLevelOptions.map((level) => (
                       <option value={level} key={level}>
                         {level}
@@ -9642,7 +9642,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                     ? 'Save changes'
                     : variantTargetProfileId
                       ? 'Save variant'
-                      : 'Save pro bat profile'}
+                      : 'Save player bat profile'}
                 </button>
                 {variantTargetProfileId || editingVariantTarget ? (
                   <button
@@ -9661,11 +9661,11 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
             <div className="inventory-toolbar profile-toolbar">
               <div className="section-heading">
                 <p className="eyebrow">Search database</p>
-                <h2>Pro Player Profiles</h2>
+                <h2>Player Bat Profiles</h2>
               </div>
               <div className="profile-search-actions">
                 <input
-                  aria-label="Search pro player profiles"
+                  aria-label="Search player bat profiles"
                   placeholder="Search player, team, organization, model, source, species..."
                   value={playerQuery}
                   onChange={(event) => setPlayerQuery(event.target.value)}
@@ -9703,7 +9703,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
               </fieldset>
               <div className="profile-search-summary">
                 <p aria-live="polite">
-                  {filteredPlayers.length} of {proPlayerProfiles.length} pro player profiles match.
+                  {filteredPlayers.length} of {playerBatProfiles.length} player bat profiles match.
                 </p>
                 {playerQuery || playerLevelFilters.length > 0 ? (
                   <button
@@ -9722,7 +9722,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
 
             <div className="profile-results">
               {filteredPlayers.length === 0 ? (
-                <p className="empty-state">No pro player profiles match that search yet.</p>
+                <p className="empty-state">No player bat profiles match that search yet.</p>
               ) : (
                 filteredPlayers.map((profile) => {
                   const playerOrderHistory = buildPlayerOrderHistory(
@@ -9733,7 +9733,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                   <article className="profile-result-card" key={profile.id}>
                     <div className="split-heading">
                       <div>
-                        <span className="profile-type-pill">Pro player</span>
+                        <span className="profile-type-pill">Player bat profile</span>
                         <h3>{profile.playerName}</h3>
                       </div>
                       <div className="profile-actions">

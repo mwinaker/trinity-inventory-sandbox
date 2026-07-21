@@ -1,6 +1,12 @@
 export const unverifiedPlayerLevelLabel = 'Level not verified'
 
-export const playerLevelOptions = ['MLB', 'MILB', 'Indy Ball/International'] as const
+export const playerLevelOptions = [
+  'MLB',
+  'MILB',
+  'Indy Ball/International',
+  'College',
+  'High School',
+] as const
 
 export type PlayerLevel = (typeof playerLevelOptions)[number]
 
@@ -10,6 +16,8 @@ export function normalizePlayerLevel(value: unknown): PlayerLevel | '' {
 
   if (/\b(milb|minor leagues?|minor league baseball)\b/.test(level)) return 'MILB'
   if (/\b(mlb|major leagues?|major league baseball)\b/.test(level)) return 'MLB'
+  if (/\b(ncaa|college|collegiate)\b/.test(level)) return 'College'
+  if (/\b(high[ -]?school|hs)\b/.test(level)) return 'High School'
   if (
     /\b(indy|independent|international|mexican league|honkbal|wbc|npb|kbo|cpbl)\b/.test(
       level,
