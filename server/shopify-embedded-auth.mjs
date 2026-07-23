@@ -52,9 +52,129 @@ export function renderShopifySessionBounce(apiKey = '') {
     <meta name="shopify-api-key" content="${escapeHtmlAttribute(apiKey)}" />
     <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
     <title>Signing in to Trinity Billet Inventory</title>
+    <style>
+      :root {
+        color: #28170f;
+        background: #f3e4c6;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+      }
+      main {
+        width: min(30rem, calc(100% - 3rem));
+        padding: 2rem;
+        border: 1px solid rgba(47, 76, 50, 0.2);
+        border-radius: 1.5rem;
+        background: #fffaf0;
+        box-shadow: 0 1rem 3rem rgba(40, 23, 15, 0.12);
+        text-align: center;
+      }
+      .status-dot {
+        width: 0.9rem;
+        height: 0.9rem;
+        margin: 0 auto 1rem;
+        border-radius: 999px;
+        background: #79c95b;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(1.6rem, 6vw, 2.25rem);
+      }
+      p {
+        margin: 0.75rem 0 0;
+        color: #65574e;
+        line-height: 1.5;
+      }
+      button {
+        margin-top: 1.25rem;
+        padding: 0.8rem 1.1rem;
+        border: 0;
+        border-radius: 999px;
+        color: #fffaf0;
+        background: #2f4c32;
+        font: inherit;
+        font-weight: 700;
+      }
+      button[hidden] {
+        display: none;
+      }
+    </style>
   </head>
   <body>
-    <p>Signing in through Shopify…</p>
+    <main>
+      <div class="status-dot" aria-hidden="true"></div>
+      <h1 id="status">Signing in through Shopify…</h1>
+      <p id="detail">This should only take a moment.</p>
+      <button id="retry" type="button" hidden>Try Shopify sign-in again</button>
+    </main>
+    <script>
+      (() => {
+        const status = document.getElementById('status')
+        const detail = document.getElementById('detail')
+        const retry = document.getElementById('retry')
+        let signInAttempt = 0
+
+        function isAllowedReloadTarget(target) {
+          return (
+            target.origin === window.location.origin &&
+            (
+              target.pathname === '/' ||
+              target.pathname === '/internal-tool' ||
+              target.pathname === '/inventory-tool' ||
+              target.pathname.startsWith('/apps/')
+            )
+          )
+        }
+
+        async function requestShopifySignIn() {
+          signInAttempt += 1
+          const currentAttempt = signInAttempt
+          status.textContent = 'Signing in through Shopify…'
+          detail.textContent = 'This should only take a moment.'
+          retry.hidden = true
+
+          try {
+            const reloadPath =
+              new URLSearchParams(window.location.search).get('shopify-reload') || '/'
+            const target = new URL(reloadPath, window.location.origin)
+            if (!isAllowedReloadTarget(target)) {
+              throw new Error('Invalid Shopify reload target')
+            }
+
+            if (!window.shopify || typeof window.shopify.idToken !== 'function') {
+              throw new Error('Shopify App Bridge is unavailable')
+            }
+
+            const token = await Promise.race([
+              window.shopify.idToken(),
+              new Promise((_, reject) => {
+                window.setTimeout(() => reject(new Error('Shopify sign-in timed out')), 8000)
+              }),
+            ])
+            if (currentAttempt !== signInAttempt) return
+            if (typeof token !== 'string' || !token.trim()) {
+              throw new Error('Shopify returned an empty session token')
+            }
+
+            target.searchParams.delete('shopify-reload')
+            target.searchParams.set('id_token', token.trim())
+            window.location.replace(target.href)
+          } catch {
+            if (currentAttempt !== signInAttempt) return
+            status.textContent = 'Shopify could not complete sign-in'
+            detail.textContent = 'Tap below to request a fresh Shopify session.'
+            retry.hidden = false
+          }
+        }
+
+        retry.addEventListener('click', requestShopifySignIn)
+        void requestShopifySignIn()
+      })()
+    </script>
   </body>
 </html>`
 }

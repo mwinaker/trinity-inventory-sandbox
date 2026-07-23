@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import test from 'node:test'
+import vm from 'node:vm'
 
 import {
   allowsLocalInternalAccess,
@@ -38,6 +39,58 @@ function createSessionToken(payloadPatch = {}, secret = apiSecret) {
     .digest('base64url')
 
   return `${header}.${payload}.${signature}`
+}
+
+function getBounceInlineScript() {
+  const html = renderShopifySessionBounce(apiKey)
+  const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)]
+  return scripts.map((match) => match[1]).find((script) => script.includes('requestShopifySignIn'))
+}
+
+async function runBounceInlineScript({
+  search = '?shopify-reload=%2F',
+  idToken = async () => 'fresh-shopify-token',
+  setTimeout = () => 1,
+} = {}) {
+  const elements = {
+    status: { textContent: '' },
+    detail: { textContent: '' },
+    retry: {
+      hidden: true,
+      addEventListener(_eventName, handler) {
+        this.handler = handler
+      },
+    },
+  }
+  let replacedLocation = ''
+  const window = {
+    location: {
+      origin: 'https://trinity.local',
+      search,
+      replace(value) {
+        replacedLocation = value
+      },
+    },
+    setTimeout,
+    shopify: { idToken },
+  }
+  const document = {
+    getElementById(id) {
+      return elements[id]
+    },
+  }
+
+  vm.runInNewContext(getBounceInlineScript(), {
+    document,
+    Error,
+    Promise,
+    URL,
+    URLSearchParams,
+    window,
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  return { elements, replacedLocation }
 }
 
 test('internal and Shopify alternate launch paths receive the embedded app shell', () => {
@@ -105,8 +158,59 @@ test('session-token bounce loads only App Bridge so Shopify can immediately rela
 
   assert.match(html, /name="shopify-api-key" content="trinity-client-id"/)
   assert.match(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
+  assert.match(html, /window\.shopify\.idToken\(\)/)
+  assert.match(html, /window\.location\.replace\(target\.href\)/)
+  assert.match(html, /Shopify sign-in timed out/)
+  assert.match(html, /Try Shopify sign-in again/)
   assert.doesNotMatch(html, /shopify-disabled-features/)
   assert.doesNotMatch(html, /src="\/src\/main\.tsx"/)
+})
+
+test('session-token bounce actively returns to the requested app path with a fresh token', async () => {
+  const result = await runBounceInlineScript({
+    search:
+      '?embedded=1&shopify-reload=%2Finventory-tool%3Fembedded%3D1%26host%3Dencoded-host',
+  })
+
+  assert.equal(
+    result.replacedLocation,
+    'https://trinity.local/inventory-tool?embedded=1&host=encoded-host&id_token=fresh-shopify-token',
+  )
+  assert.equal(result.elements.retry.hidden, true)
+})
+
+test('session-token bounce fails visibly instead of hanging when Shopify does not respond', async () => {
+  const result = await runBounceInlineScript({
+    idToken: async () => new Promise(() => {}),
+    setTimeout(callback) {
+      callback()
+      return 1
+    },
+  })
+
+  assert.equal(result.replacedLocation, '')
+  assert.equal(result.elements.status.textContent, 'Shopify could not complete sign-in')
+  assert.equal(
+    result.elements.detail.textContent,
+    'Tap below to request a fresh Shopify session.',
+  )
+  assert.equal(result.elements.retry.hidden, false)
+  assert.equal(typeof result.elements.retry.handler, 'function')
+})
+
+test('session-token bounce rejects navigation outside the Trinity app origin', async () => {
+  let tokenRequested = false
+  const result = await runBounceInlineScript({
+    search: '?shopify-reload=https%3A%2F%2Fevil.example%2F',
+    idToken: async () => {
+      tokenRequested = true
+      return 'fresh-shopify-token'
+    },
+  })
+
+  assert.equal(tokenRequested, false)
+  assert.equal(result.replacedLocation, '')
+  assert.equal(result.elements.retry.hidden, false)
 })
 
 test('internal app shell loads App Bridge without forcing standalone desktop redirects', () => {
