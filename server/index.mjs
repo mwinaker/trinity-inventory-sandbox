@@ -58,6 +58,10 @@ import {
   isValidTeamAccessPin,
   teamAccessSessionHeaderName,
 } from './team-access-pin.mjs'
+import {
+  needsSalesRepPlayerEmailProtection,
+  protectSalesRepPlayerEmail,
+} from './sales-order-contact-policy.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -1555,7 +1559,7 @@ app.post('/api/sales-orders', async (request, response) => {
       response.status(400).json({ ok: false, message: preparedPayload.error })
       return
     }
-    const payload = preparedPayload.payload
+    let payload = preparedPayload.payload
     const attachmentValidationMessage = validateOrderAttachmentUploadReceipt(payload.attachment)
     if (attachmentValidationMessage) {
       response.status(400).json({ ok: false, message: attachmentValidationMessage })
@@ -1576,6 +1580,12 @@ app.post('/api/sales-orders', async (request, response) => {
     const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
 
     await ensureDefinitions()
+    if (needsSalesRepPlayerEmailProtection(payload)) {
+      const savedCrmContacts = getManualCrmContactRecords(
+        await listRecords(resourceConfigs.crmContacts),
+      )
+      payload = protectSalesRepPlayerEmail(payload, savedCrmContacts)
+    }
     if (shouldCreateDraftOrder) {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
@@ -1641,7 +1651,9 @@ app.post('/api/sales-orders', async (request, response) => {
       return
     }
 
-    const shouldSendInvoice = payload.sendInvoice !== false || isZeroDollarOrder
+    const payerEmail = resolvePayer(payload).email
+    const shouldSendInvoice =
+      Boolean(payerEmail) && (payload.sendInvoice !== false || isZeroDollarOrder)
     const orderInput = buildOrderCreateInput(payload, intakeId, orderSubmittedAt)
     const order = await createPendingOrder(orderInput, {
       sendReceipt: shouldSendInvoice && isZeroDollarOrder,
@@ -1661,7 +1673,6 @@ app.post('/api/sales-orders', async (request, response) => {
       Promise.all(jobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
     ])
     await syncOrderJobMetafields(jobs)
-    const payerEmail = resolvePayer(payload).email
     const internalOrderNotification = await trySendInternalOrderCopyNotification({
       payload,
       order,
@@ -6118,13 +6129,15 @@ function toFiniteNumber(value) {
 function resolvePayer(payload) {
   const billingDifferent = isTruthy(payload.billingDifferent)
   const playerName = cleanString(payload.playerName || payload.customerName)
-  const playerEmail = cleanString(payload.playerEmail || payload.customerEmail)
+  const directPayerEmail = cleanString(
+    payload.payerEmail || payload.playerEmail || payload.customerEmail,
+  )
   const playerPhone = cleanString(payload.playerPhone || payload.customerPhone)
 
   if (!billingDifferent) {
     return {
       name: playerName,
-      email: playerEmail,
+      email: directPayerEmail,
       phone: playerPhone,
       company: '',
       relationship: '',
@@ -6241,8 +6254,9 @@ function validateSalesOrderPayload(payload) {
   const lines = Array.isArray(payload?.lines) ? payload.lines : []
 
   if (!playerName) return 'Player name is required.'
-  if (!payer.email) return 'Payer email is required.'
-  if (!isPlausibleEmail(payer.email)) return 'Payer email must be a valid email address.'
+  if (payer.email && !isPlausibleEmail(payer.email)) {
+    return 'Payer email must be a valid email address.'
+  }
   if (cleanString(payload?.salesRepEmail) && !salesRepEmail) {
     return 'Sales rep email must be a valid email address.'
   }

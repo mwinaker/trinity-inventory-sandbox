@@ -372,6 +372,7 @@ const maxSalesOrderAttachmentBytes = 20 * 1024 * 1024
 
 type SalesOrderDraft = {
   playerName: string
+  payerEmail: string
   playerEmail: string
   playerPhone: string
   purchaseOrder: string
@@ -1162,6 +1163,7 @@ const emptySalesLine = (): SalesOrderLineDraft => ({
 
 const emptySalesOrderDraft = (): SalesOrderDraft => ({
   playerName: '',
+  payerEmail: '',
   playerEmail: '',
   playerPhone: '',
   purchaseOrder: '',
@@ -2282,7 +2284,7 @@ function createSalesPortalOrder(
   contactId: string,
 ): SalesPortalOrder {
   const payerName = draft.billingDifferent ? draft.billingName : draft.playerName
-  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.payerEmail
   const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
 
   return {
@@ -3731,8 +3733,10 @@ function getCrmTouchpointSequenceTimestamp(touchpoint: CrmTouchpoint, fallbackIn
 }
 
 function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
-  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+  const payerEmail = draft.billingDifferent ? draft.billingEmail : draft.payerEmail
   const payerPhone = draft.billingDifferent ? draft.billingPhone : draft.playerPhone
+  const hasInvalidPayerEmail =
+    Boolean(payerEmail.trim()) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail.trim())
   const hasMissingShippingAddress =
     draft.requiresShipping &&
     (!draft.shippingAddress1.trim() ||
@@ -3752,7 +3756,7 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
 
   return (
     !draft.playerName.trim() ||
-    !payerEmail.trim() ||
+    hasInvalidPayerEmail ||
     !payerPhone.trim() ||
     hasMissingShippingAddress ||
     hasInvalidLine
@@ -3963,12 +3967,12 @@ function SalesOrderFormFields({
         </label>
         {!draft.billingDifferent ? (
           <label>
-            Payer email
+            Payer email (optional)
             <input
               type="email"
-              value={draft.playerEmail}
+              value={draft.payerEmail}
               placeholder="payer@example.com"
-              onChange={(event) => updateField('playerEmail', event.target.value)}
+              onChange={(event) => updateField('payerEmail', event.target.value)}
             />
           </label>
         ) : null}
@@ -4080,7 +4084,7 @@ function SalesOrderFormFields({
               />
             </label>
             <label>
-              Payer email
+              Payer email (optional)
               <input
                 type="email"
                 value={draft.billingEmail}
@@ -4539,7 +4543,7 @@ function getPublicDraftPayerName(draft: SalesOrderDraft) {
 }
 
 function getPublicDraftPayerEmail(draft: SalesOrderDraft) {
-  return draft.billingDifferent ? draft.billingEmail : draft.playerEmail
+  return draft.billingDifferent ? draft.billingEmail : draft.payerEmail
 }
 
 function formatSalesOrderMoney(value: number | string) {
@@ -4635,6 +4639,9 @@ function PublicSalesOrderForm() {
     ? getDraftOrderRushSurcharge(pendingDraftReview)
     : null
   const draftReviewTotal = pendingDraftReview ? getDraftOrderTotal(pendingDraftReview) : 0
+  const draftReviewPayerEmail = pendingDraftReview
+    ? getPublicDraftPayerEmail(pendingDraftReview.draft).trim()
+    : ''
 
   useEffect(() => {
     let cancelled = false
@@ -4697,7 +4704,7 @@ function PublicSalesOrderForm() {
 
     if (hasInvalidSalesOrderDraft(salesOrderDraft)) {
       setMessage(
-        'Add the player, payer email, payer phone, shipping address, bat model, unit price, and complete each line before submitting.',
+        'Add the player, payer phone, shipping address, bat model, unit price, and complete each line before submitting. If entered, the payer email must be valid.',
       )
       return
     }
@@ -4761,6 +4768,10 @@ function PublicSalesOrderForm() {
 
   async function sendReviewedDraftInvoice() {
     if (!pendingDraftReview || pendingDraftReview.invoiceSent) return
+    if (!draftReviewPayerEmail) {
+      setMessage('Add a payer email before sending this invoice.')
+      return
+    }
 
     try {
       setIsSendingInvoice(true)
@@ -4813,7 +4824,7 @@ function PublicSalesOrderForm() {
             <div>
               <span>Payer</span>
               <strong>{getPublicDraftPayerName(pendingDraftReview.draft)}</strong>
-              <p>{getPublicDraftPayerEmail(pendingDraftReview.draft)}</p>
+              <p>{draftReviewPayerEmail || 'No payer email entered'}</p>
             </div>
             <div>
               <span>Player</span>
@@ -4900,10 +4911,14 @@ function PublicSalesOrderForm() {
             <button
               type="button"
               onClick={sendReviewedDraftInvoice}
-              disabled={isSendingInvoice || pendingDraftReview.invoiceSent}
+              disabled={
+                isSendingInvoice || pendingDraftReview.invoiceSent || !draftReviewPayerEmail
+              }
             >
               {pendingDraftReview.invoiceSent
                 ? 'Invoice sent'
+                : !draftReviewPayerEmail
+                  ? 'No payer email to send'
                 : isSendingInvoice
                   ? 'Sending invoice...'
                   : 'Send invoice now'}
@@ -6177,7 +6192,7 @@ function InternalApp({
     event.preventDefault()
     const payerEmail = salesOrderDraft.billingDifferent
       ? salesOrderDraft.billingEmail
-      : salesOrderDraft.playerEmail
+      : salesOrderDraft.payerEmail
     const payerPhone = salesOrderDraft.billingDifferent
       ? salesOrderDraft.billingPhone
       : salesOrderDraft.playerPhone
@@ -6201,13 +6216,14 @@ function InternalApp({
 
     if (
       !salesOrderDraft.playerName.trim() ||
-      !payerEmail.trim() ||
+      (Boolean(payerEmail.trim()) &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail.trim())) ||
       !payerPhone.trim() ||
       hasMissingShippingAddress ||
       hasInvalidLine
     ) {
       setOrderActionMessage(
-        'Add the player, payer email, payer phone, shipping address, bat model, unit price, and complete each line before creating the order.',
+        'Add the player, payer phone, shipping address, bat model, unit price, and complete each line before creating the order. If entered, the payer email must be valid.',
       )
       return
     }
@@ -11331,6 +11347,7 @@ function SalesPortalApp() {
     setOrderDraft({
       ...emptySalesOrderDraft(),
       playerName: contact.playerNames[0] || contact.name,
+      payerEmail: contact.email,
       playerEmail: contact.email,
       playerPhone: contact.phone,
       billingDifferent: Boolean(contact.company),
@@ -11370,7 +11387,9 @@ function SalesPortalApp() {
       salesRepEmail: portalOwner.email,
     }
     if (hasInvalidSalesOrderDraft(draft)) {
-      setPortalMessage('Add player, payer email, payer phone, shipping info, bat model, and price.')
+      setPortalMessage(
+        'Add player, payer phone, shipping info, bat model, and price. If entered, the payer email must be valid.',
+      )
       return
     }
     const selectedManualContact = selectedContactId

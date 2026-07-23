@@ -174,6 +174,7 @@ export function getSalesOrderBoundsError(payload) {
 
   const fieldLimits = [
     ['Player name', payload?.playerName || payload?.customerName, 160],
+    ['Payer email', payload?.payerEmail, 254],
     ['Player email', payload?.playerEmail, 254],
     ['Player phone', payload?.playerPhone, 50],
     ['Purchase order', payload?.purchaseOrder, 160],

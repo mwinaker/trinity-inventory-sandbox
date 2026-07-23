@@ -171,6 +171,10 @@ test('order bounds reject oversized payloads and untrusted attachment links', ()
     getSalesOrderBoundsError({ purchaseOrder: 'P'.repeat(161), lines: [] }),
     /Purchase order is too long/,
   )
+  assert.match(
+    getSalesOrderBoundsError({ payerEmail: `${'a'.repeat(250)}@example.com`, lines: [] }),
+    /Payer email is too long/,
+  )
 })
 
 test('unauthenticated order callers cannot create finalized Shopify orders', () => {
