@@ -912,6 +912,83 @@ button:hover {
     #fffaf0;
 }
 
+.team-access-loading {
+  display: grid;
+  width: min(520px, 100%);
+  margin: min(12vh, 90px) auto 0;
+  gap: 16px;
+}
+
+.team-access-loading .status-dot {
+  margin-bottom: 4px;
+}
+
+.team-access-loading h1 {
+  font-size: clamp(2.3rem, 7vw, 3.8rem);
+  letter-spacing: -0.04em;
+}
+
+.team-pin-form {
+  display: grid;
+  width: min(360px, 100%);
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.team-pin-form label {
+  display: grid;
+  gap: 8px;
+  color: #4f3c2e;
+  font-weight: 900;
+}
+
+.team-pin-input {
+  min-height: 64px;
+  border: 2px solid rgba(47, 76, 50, 0.28);
+  text-align: center;
+  font-size: 1.8rem;
+  font-weight: 900;
+  letter-spacing: 0.55em;
+  text-indent: 0.55em;
+}
+
+.team-pin-form button {
+  margin: 0;
+}
+
+.team-pin-message {
+  margin: 0;
+  color: #8f301f;
+}
+
+.shopify-reconnect-fallback {
+  width: min(360px, 100%);
+  margin-top: 18px;
+  color: #5d4b3c;
+}
+
+.shopify-reconnect-fallback summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.shopify-reconnect-fallback button {
+  margin-top: 12px;
+}
+
+.legacy-access-login {
+  color: #5d4b3c;
+}
+
+.legacy-access-login summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.legacy-access-login .bat-form {
+  margin-top: 12px;
+}
+
 .sales-portal-login-brand {
   display: grid;
   justify-items: center;

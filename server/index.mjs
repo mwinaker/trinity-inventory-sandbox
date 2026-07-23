@@ -52,6 +52,12 @@ import {
   shouldRetryShopifySessionRequest,
   verifyShopifySessionToken,
 } from './shopify-embedded-auth.mjs'
+import {
+  createTeamAccessPin,
+  getTeamSessionTokenCandidates,
+  isValidTeamAccessPin,
+  teamAccessSessionHeaderName,
+} from './team-access-pin.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -178,6 +184,11 @@ const salesPortalVerifyRateLimiter = createFixedWindowRateLimiter({
   max: 20,
   windowMs: 15 * 60 * 1000,
   message: 'Too many sign-in attempts. Please wait and try again.',
+})
+const teamAccessPinRateLimiter = createFixedWindowRateLimiter({
+  max: 10,
+  windowMs: 15 * 60 * 1000,
+  message: 'Too many PIN attempts. Please wait 15 minutes and try again.',
 })
 const billetDiameterWeightCorrectionOz = 1.75
 const billetSourceOptions = new Set(billetSourceValues)
@@ -929,12 +940,12 @@ app.post('/api/sales-portal/admin-login-code', requireSalesPortalAdminOrInternal
       loginCode: accessCode,
       accessCode,
       user: publicSalesPortalUser(user),
-      message: `Access code created for ${owner.label}.`,
+      message: `Four-digit PIN created for ${owner.label}.`,
     })
   } catch (error) {
     response.status(500).json({
       ok: false,
-      message: error instanceof Error ? error.message : 'Could not create an access code.',
+      message: error instanceof Error ? error.message : 'Could not create a team PIN.',
     })
   }
 })
@@ -997,7 +1008,37 @@ app.post('/api/sales-portal/verify-code', salesPortalVerifyRateLimiter, async (r
 
   void recordSalesPortalLogin(email)
   response.cookie(salesPortalSessionCookieName, token, getSalesPortalCookieOptions(request))
-  response.json({ ok: true, session })
+  response.json({ ok: true, session, sessionToken: token })
+})
+
+app.post('/api/team-access/pin', teamAccessPinRateLimiter, async (request, response) => {
+  const pin = cleanString(request.body?.pin)
+  if (!isValidTeamAccessPin(pin)) {
+    response.status(400).json({ ok: false, message: 'Enter your four-digit Trinity PIN.' })
+    return
+  }
+
+  try {
+    const verifiedUser = await verifySalesPortalPin(pin)
+    const email = normalizeSalesPortalEmail(verifiedUser?.email)
+    const session = email ? buildSalesPortalSession(email) : null
+    const token = email ? createSalesPortalSessionToken(email) : ''
+
+    if (!verifiedUser || !session || !token) {
+      response.status(400).json({ ok: false, message: 'That PIN did not match.' })
+      return
+    }
+
+    void recordSalesPortalLogin(email)
+    response.cookie(salesPortalSessionCookieName, token, getSalesPortalCookieOptions(request))
+    response.set('Cache-Control', 'no-store')
+    response.json({ ok: true, session, sessionToken: token })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not verify the PIN.',
+    })
+  }
 })
 
 app.post('/api/sales-portal/logout', (_request, response) => {
@@ -2212,11 +2253,20 @@ function createSalesPortalSessionToken(email) {
 }
 
 function getSalesPortalSessionPayload(request) {
-  const payload = verifySalesPortalSignedPayload(getCookie(request, salesPortalSessionCookieName))
-  if (payload?.purpose !== 'sales_portal_session') return null
-  if (typeof payload.exp !== 'number' || payload.exp < Date.now()) return null
-  if (typeof payload.iat !== 'number' || payload.iat <= 0) return null
-  return payload
+  const candidates = getTeamSessionTokenCandidates({
+    headerToken: request.get(teamAccessSessionHeaderName),
+    cookieToken: getCookie(request, salesPortalSessionCookieName),
+  })
+
+  for (const candidate of candidates) {
+    const payload = verifySalesPortalSignedPayload(candidate)
+    if (payload?.purpose !== 'sales_portal_session') continue
+    if (typeof payload.exp !== 'number' || payload.exp < Date.now()) continue
+    if (typeof payload.iat !== 'number' || payload.iat <= 0) continue
+    return payload
+  }
+
+  return null
 }
 
 async function getValidatedSalesPortalSession(request) {
@@ -2308,7 +2358,7 @@ async function requireSalesPortalAdminOrInternalAccess(request, response, next) 
     }
     response.status(401).json({
       ok: false,
-      message: 'Admin access is required to issue sales portal access codes.',
+      message: 'Admin access is required to issue team PINs.',
     })
   } catch (error) {
     response.status(503).json({
@@ -2359,13 +2409,7 @@ function createSalesPortalLoginCodeEntry(email) {
 }
 
 function createSalesPortalAccessCode() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-  let code = ''
-  for (let index = 0; index < 10; index += 1) {
-    code += alphabet[crypto.randomInt(0, alphabet.length)]
-  }
-
-  return `TRI-${code.slice(0, 5)}-${code.slice(5)}`
+  return createTeamAccessPin()
 }
 
 function normalizeSalesPortalAccessCode(value) {
@@ -2385,7 +2429,23 @@ async function issueSalesPortalAccessCode(email) {
 
   await ensureDefinitions()
   const now = new Date().toISOString()
-  const accessCode = createSalesPortalAccessCode()
+  const users = await listRecords(resourceConfigs.salesPortalUsers)
+  let accessCode = ''
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const candidate = createSalesPortalAccessCode()
+    const alreadyAssigned = users.some((user) => {
+      const savedEmail = normalizeSalesPortalEmail(user.email)
+      const savedHash = cleanString(user.accessCodeHash)
+      if (!savedEmail || !savedHash || savedEmail === owner.email) return false
+      return safeEqual(savedHash, hashSalesPortalAccessCode(savedEmail, candidate), 'utf8')
+    })
+    if (!alreadyAssigned) {
+      accessCode = candidate
+      break
+    }
+  }
+  if (!accessCode) throw new Error('Could not create a unique team PIN. Try again.')
+
   const existing = (await getRecordByHandle(resourceConfigs.salesPortalUsers, owner.email)) ?? {}
   const user = {
     ...existing,
@@ -2415,6 +2475,28 @@ async function verifySalesPortalAccessCode(email, code) {
   if (status !== 'active' || !codeHash) return null
 
   return safeEqual(codeHash, hashSalesPortalAccessCode(owner.email, code), 'utf8') ? user : null
+}
+
+async function verifySalesPortalPin(pin) {
+  if (!isValidTeamAccessPin(pin)) return null
+
+  await ensureDefinitions()
+  const users = await listRecords(resourceConfigs.salesPortalUsers)
+  let verifiedUser = null
+  let matchCount = 0
+  for (const user of users) {
+    const email = normalizeSalesPortalEmail(user.email)
+    const owner = getTeamToolMemberForEmail(email)
+    const status = cleanString(user.status).toLowerCase()
+    const codeHash = cleanString(user.accessCodeHash)
+    if (!owner || status !== 'active' || !codeHash) continue
+    if (safeEqual(codeHash, hashSalesPortalAccessCode(email, pin), 'utf8')) {
+      verifiedUser = user
+      matchCount += 1
+    }
+  }
+
+  return matchCount === 1 ? verifiedUser : null
 }
 
 async function getOrCreateActiveSalesPortalUser(email) {

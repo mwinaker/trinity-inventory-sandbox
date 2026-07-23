@@ -628,6 +628,7 @@ const billingContactStorageKey = 'trinity-billing-contacts-v1'
 const crmContactStorageKey = 'trinity-crm-sandbox-contacts-v1'
 const crmActiveOwnerStorageKey = 'trinity-crm-sandbox-active-owner-v1'
 const salesPortalSessionStorageKey = 'trinity-sales-portal-session-v1'
+const teamAccessTokenStorageKey = 'trinity-team-access-token-v1'
 const salesPortalOrderStorageKey = 'trinity-sales-portal-orders-v1'
 const legacyLocalStateBackupKey = 'trinity-local-recovery-backup-v1'
 const legacyLocalStateKeys = [
@@ -3576,6 +3577,7 @@ type SalesPortalApiResponse = {
   accessCode?: string
   expiresAt?: string
   session?: SalesPortalSession
+  sessionToken?: string
   crmContacts?: CrmContact[]
   orderJobs?: OrderJob[]
   teamReportingOrderJobs?: OrderJob[]
@@ -3661,7 +3663,20 @@ function getInitialActiveSection(): ActiveSection {
 }
 
 function fetchApi(path: string, init?: RequestInit) {
-  return fetch(path, init)
+  const headers = new Headers(init?.headers)
+  const teamAccessToken = window.localStorage.getItem(teamAccessTokenStorageKey)
+  if (teamAccessToken && !headers.has('X-Trinity-Team-Session')) {
+    headers.set('X-Trinity-Team-Session', teamAccessToken)
+  }
+  return fetch(path, { ...init, headers })
+}
+
+function saveTeamAccessToken(token: string) {
+  if (token) {
+    window.localStorage.setItem(teamAccessTokenStorageKey, token)
+  } else {
+    window.localStorage.removeItem(teamAccessTokenStorageKey)
+  }
 }
 
 function isShopifyEmbeddedApp() {
@@ -4933,9 +4948,78 @@ function PublicSalesOrderForm() {
 type InternalAppProps = {
   accessSession?: SalesPortalSession | null
   onSignOut?: () => void | Promise<void>
+  onTeamAccessAuthenticated?: (session: SalesPortalSession) => void
 }
 
-function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {}) {
+type TeamPinLoginFormProps = {
+  onAuthenticated: (session: SalesPortalSession) => void
+}
+
+function TeamPinLoginForm({ onAuthenticated }: TeamPinLoginFormProps) {
+  const [pin, setPin] = useState('')
+  const [message, setMessage] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  async function signInWithPin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!/^\d{4}$/.test(pin)) {
+      setMessage('Enter your four-digit Trinity PIN.')
+      return
+    }
+
+    try {
+      setIsSubmitting(true)
+      setMessage('')
+      const response = await fetchApi('/api/team-access/pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin }),
+      })
+      const payload = (await response.json()) as SalesPortalApiResponse
+      if (!response.ok || !payload.ok || !payload.session || !payload.sessionToken) {
+        throw new Error(payload.message ?? 'Could not sign in with that PIN.')
+      }
+
+      saveTeamAccessToken(payload.sessionToken)
+      setPin('')
+      onAuthenticated(payload.session)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not sign in with that PIN.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <form className="team-pin-form" onSubmit={signInWithPin}>
+      <label>
+        Four-digit PIN
+        <input
+          className="team-pin-input"
+          type="password"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          pattern="[0-9]{4}"
+          maxLength={4}
+          value={pin}
+          placeholder="••••"
+          aria-label="Four-digit Trinity PIN"
+          onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 4))}
+        />
+      </label>
+      <button type="submit" className="primary-button" disabled={isSubmitting}>
+        {isSubmitting ? 'Signing in...' : 'Open Trinity tool'}
+      </button>
+      {message ? <p className="helper-text team-pin-message">{message}</p> : null}
+    </form>
+  )
+}
+
+function InternalApp({
+  accessSession = null,
+  onSignOut,
+  onTeamAccessAuthenticated,
+}: InternalAppProps = {}) {
   const crmSandboxPreviewEnabled = isCrmSandboxPreviewRoute()
   const accessMember = accessSession ? getTeamMemberByEmail(accessSession.email) : null
   const accessOwner = accessSession ? getTeamToolOwnerForEmail(accessSession.email) : null
@@ -6971,19 +7055,62 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
       const payload = (await response.json()) as SalesPortalApiResponse
       const accessCode = payload.accessCode ?? payload.loginCode
       if (!response.ok || !payload.ok || !accessCode) {
-        throw new Error(payload.message ?? 'Could not create an access code.')
+        throw new Error(payload.message ?? 'Could not create a team PIN.')
       }
 
       setIssuedTeamAccessCode(accessCode)
-      setTeamAccessMessage(`New access code created for ${owner.label}.`)
+      setTeamAccessMessage(`New four-digit PIN created for ${owner.label}.`)
     } catch (error) {
       setIssuedTeamAccessCode('')
       setTeamAccessMessage(
-        error instanceof Error ? error.message : 'Could not create an access code.',
+        error instanceof Error ? error.message : 'Could not create a team PIN.',
       )
     } finally {
       setIsIssuingTeamAccessCode(false)
     }
+  }
+
+  if (
+    !isLoadingRemoteState &&
+    backendStatus === 'unauthorized' &&
+    isShopifyEmbeddedApp() &&
+    onTeamAccessAuthenticated
+  ) {
+    return (
+      <main className="sales-portal-shell">
+        <section className="panel sales-portal-login">
+          <div className="sales-portal-login-brand">
+            <img
+              src="/trinity-logo-cropped.png"
+              alt="Trinity Bat Company"
+              className="sales-portal-logo"
+            />
+            <div className="section-heading">
+              <p className="eyebrow">Trinity team access</p>
+              <h1>Billet Inventory</h1>
+            </div>
+          </div>
+          <div className="section-heading">
+            <p className="eyebrow">Shopify Mobile fallback</p>
+            <h2>Enter your four-digit PIN</h2>
+          </div>
+          <p className="empty-state">
+            Enter your PIN once. This device will remember your team access for 30 days.
+          </p>
+          <TeamPinLoginForm onAuthenticated={onTeamAccessAuthenticated} />
+          <details className="shopify-reconnect-fallback">
+            <summary>Try Shopify sign-in instead</summary>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={reconnectShopifySession}
+            >
+              Retry Shopify sign-in
+            </button>
+          </details>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -7070,7 +7197,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
               ? 'Shopify-backed internal tool'
               : backendStatus === 'unauthorized'
                 ? isShopifyEmbeddedApp()
-                  ? 'Shopify sign-in required'
+                  ? 'Team PIN required'
                   : 'Secure internal access required'
                 : 'Live sync unavailable'}
           </strong>
@@ -7087,9 +7214,9 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
               ) : null}
             </div>
           ) : null}
-          {hasAdminAccess ? (
+          {hasAdminAccess && backendStatus === 'connected' ? (
             <details className="sales-portal-code-issuer">
-              <summary>Team access codes</summary>
+              <summary>Team PINs</summary>
               <label>
                 Team member
                 <select
@@ -7115,7 +7242,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
                 disabled={isIssuingTeamAccessCode}
                 onClick={issueTeamAccessCode}
               >
-                {isIssuingTeamAccessCode ? 'Creating...' : 'Create access code'}
+                {isIssuingTeamAccessCode ? 'Creating...' : 'Create PIN'}
               </button>
               {issuedTeamAccessCode ? (
                 <div className="helper-text sales-portal-issued-code">
@@ -7147,27 +7274,33 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
         <section className="panel inventory-panel">
           <div className="section-heading">
             <p className="eyebrow">
-              {isShopifyEmbeddedApp() ? 'Shopify session' : 'Secure internal access'}
+              {isShopifyEmbeddedApp() ? 'Reliable team access' : 'Secure internal access'}
             </p>
             <h2>
               {isShopifyEmbeddedApp()
-                ? 'Reconnect through Shopify'
+                ? 'Enter your Trinity PIN'
                 : 'Use the internal access link'}
             </h2>
           </div>
           {isShopifyEmbeddedApp() ? (
             <>
               <p className="empty-state">
-                Shopify did not attach a valid session to this app launch. Reconnect once to request
-                a fresh verified Shopify session.
+                Shopify Mobile did not pass through a verified session. Enter your four-digit PIN
+                once and this device will remember your team access for 30 days.
               </p>
-              <button
-                type="button"
-                className="primary-button"
-                onClick={reconnectShopifySession}
-              >
-                Reconnect through Shopify
-              </button>
+              {onTeamAccessAuthenticated ? (
+                <TeamPinLoginForm onAuthenticated={onTeamAccessAuthenticated} />
+              ) : null}
+              <details className="shopify-reconnect-fallback">
+                <summary>Try Shopify sign-in instead</summary>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={reconnectShopifySession}
+                >
+                  Retry Shopify sign-in
+                </button>
+              </details>
             </>
           ) : (
             <p className="empty-state">
@@ -10873,6 +11006,7 @@ function SalesPortalApp() {
           setLoginEmail(payload.session.email)
           setLoginMessage('')
         } else {
+          if (response.status === 401) saveTeamAccessToken('')
           setSession(null)
         }
       } catch {
@@ -11006,7 +11140,7 @@ function SalesPortalApp() {
         setLoginEmail(email)
         setLoginCode(issuedCode)
       }
-      setLoginMessage(payload.message ?? `Access code created for ${owner.label}.`)
+      setLoginMessage(payload.message ?? `PIN created for ${owner.label}.`)
     } catch (error) {
       setIssuedLoginCode(null)
       setLoginMessage(error instanceof Error ? error.message : 'Could not create a sign-in code.')
@@ -11046,6 +11180,7 @@ function SalesPortalApp() {
 
       if (isVerifyingCode) {
         if (!payload.session) throw new Error('Sales portal session was not returned.')
+        if (payload.sessionToken) saveTeamAccessToken(payload.sessionToken)
         setSession(payload.session)
         setLoginCode('')
         setLoginMessage('')
@@ -11075,6 +11210,7 @@ function SalesPortalApp() {
     } catch {
       // Clearing the local shell is still the right user outcome if logout cannot reach the server.
     }
+    saveTeamAccessToken('')
     setSession(null)
     setCrmContacts([])
     setOrderJobs([])
@@ -11337,34 +11473,55 @@ function SalesPortalApp() {
               <h1>{isDemoSession ? 'Sales portal' : 'Team tool access'}</h1>
             </div>
           </div>
-          <form className="bat-form" onSubmit={loginToPortal}>
-            <label>
-              Trinity email
-              <input
-                type="email"
-                value={loginEmail}
-                placeholder="name@trinitybats.com"
-                onChange={(event) => {
-                  setLoginEmail(event.target.value)
-                  setLoginCode('')
-                }}
-              />
-            </label>
-            <label>
-              Access code
-              <input
-                value={loginCode}
-                placeholder="TRI-XXXXX-XXXXX or 6-digit email code"
-                onChange={(event) => setLoginCode(event.target.value)}
-              />
-            </label>
-            <button type="submit">{loginCode.trim() ? 'Sign in' : 'Send email code'}</button>
-          </form>
+          {isDemoSession ? (
+            <form className="bat-form" onSubmit={loginToPortal}>
+              <label>
+                Trinity email
+                <input
+                  type="email"
+                  value={loginEmail}
+                  placeholder="name@trinitybats.com"
+                  onChange={(event) => {
+                    setLoginEmail(event.target.value)
+                    setLoginCode('')
+                  }}
+                />
+              </label>
+              <button type="submit">Open demo</button>
+            </form>
+          ) : (
+            <>
+              <TeamPinLoginForm onAuthenticated={setSession} />
+              <details className="legacy-access-login">
+                <summary>Use an existing access code instead</summary>
+                <form className="bat-form" onSubmit={loginToPortal}>
+                  <label>
+                    Trinity email
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      placeholder="name@trinitybats.com"
+                      onChange={(event) => setLoginEmail(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Existing access code
+                    <input
+                      value={loginCode}
+                      placeholder="TRI-XXXXX-XXXXX"
+                      onChange={(event) => setLoginCode(event.target.value)}
+                    />
+                  </label>
+                  <button type="submit">Sign in</button>
+                </form>
+              </details>
+            </>
+          )}
           {canIssueLoginCode ? (
             <div className="sales-portal-code-issuer">
               <div className="form-row">
                 <label>
-                  Issue access
+                  Issue PIN
                   <select
                     value={codeIssuerEmail}
                     onChange={(event) => {
@@ -11387,12 +11544,12 @@ function SalesPortalApp() {
                   disabled={isIssuingLoginCode}
                   onClick={issueSalesPortalLoginCode}
                 >
-                  {isIssuingLoginCode ? 'Creating...' : 'Create access code'}
+                  {isIssuingLoginCode ? 'Creating...' : 'Create PIN'}
                 </button>
               </div>
               {issuedLoginCode ? (
                 <div className="helper-text sales-portal-issued-code">
-                  Code <strong>{issuedLoginCode.code}</strong>
+                  PIN <strong>{issuedLoginCode.code}</strong>
                   {issuedLoginCode.expiresAt
                     ? ` expires at ${new Date(issuedLoginCode.expiresAt).toLocaleTimeString([], {
                         hour: 'numeric',
@@ -11970,7 +12127,7 @@ function SalesPortalApp() {
               <div className="sales-portal-code-issuer sales-portal-admin-access">
                 <div className="section-heading">
                   <p className="eyebrow">Team access</p>
-                  <h2>Issue access codes</h2>
+                  <h2>Issue team PINs</h2>
                 </div>
                 <div className="form-row">
                   <label>
@@ -11997,12 +12154,12 @@ function SalesPortalApp() {
                     disabled={isIssuingLoginCode}
                     onClick={issueSalesPortalLoginCode}
                   >
-                    {isIssuingLoginCode ? 'Creating...' : 'Create access code'}
+                    {isIssuingLoginCode ? 'Creating...' : 'Create PIN'}
                   </button>
                 </div>
                 {issuedLoginCode ? (
                   <div className="helper-text sales-portal-issued-code">
-                    Code <strong>{issuedLoginCode.code}</strong> for {issuedLoginCode.email}. It stays active
+                    PIN <strong>{issuedLoginCode.code}</strong> for {issuedLoginCode.email}. It stays active
                     until an admin reissues it.
                     <button
                       type="button"
@@ -12183,6 +12340,73 @@ function SalesPortalApp() {
   )
 }
 
+function InternalToolApp() {
+  const [session, setSession] = useState<SalesPortalSession | null>(null)
+  const [isCheckingTeamSession, setIsCheckingTeamSession] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function checkRememberedTeamSession() {
+      try {
+        const response = await fetchApi('/api/sales-portal/session', { cache: 'no-store' })
+        const payload = (await response.json()) as SalesPortalApiResponse
+        if (cancelled) return
+
+        if (response.ok && payload.ok && payload.session) {
+          setSession(payload.session)
+        } else {
+          if (response.status === 401) saveTeamAccessToken('')
+          setSession(null)
+        }
+      } catch {
+        if (!cancelled) setSession(null)
+      } finally {
+        if (!cancelled) setIsCheckingTeamSession(false)
+      }
+    }
+
+    void checkRememberedTeamSession()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function signOutTeamSession() {
+    try {
+      await fetchApi('/api/sales-portal/logout', { method: 'POST' })
+    } catch {
+      // The local device token is still cleared when the server cannot be reached.
+    }
+    saveTeamAccessToken('')
+    setSession(null)
+  }
+
+  if (isCheckingTeamSession) {
+    return (
+      <main className="sales-portal-shell">
+        <section className="panel team-access-loading">
+          <span className="status-dot" aria-hidden="true"></span>
+          <div className="section-heading">
+            <p className="eyebrow">Trinity team access</p>
+            <h1>Opening your tool</h1>
+          </div>
+          <p className="empty-state">Checking this device for remembered access.</p>
+        </section>
+      </main>
+    )
+  }
+
+  return (
+    <InternalApp
+      key={session?.email ?? 'shopify-session'}
+      accessSession={session}
+      onSignOut={session ? signOutTeamSession : undefined}
+      onTeamAccessAuthenticated={setSession}
+    />
+  )
+}
+
 function App() {
   if (salesPortalDemoOnly) {
     return <SalesPortalApp />
@@ -12200,10 +12424,10 @@ function App() {
   }
 
   if (isInternalToolRoute()) {
-    return <InternalApp />
+    return <InternalToolApp />
   }
 
-  return <InternalApp />
+  return <InternalToolApp />
 }
 
 export default App
