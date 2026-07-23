@@ -42,9 +42,14 @@ import {
 } from './order-printer-pro.mjs'
 import {
   allowsLocalInternalAccess,
+  buildShopifySessionBounceLocation,
+  hasEmbeddedShopifyContext,
   isInternalAppShellPath,
   renderAppShell,
+  renderShopifySessionBounce,
   setShopifySessionRetryHeader,
+  shopifySessionBouncePath,
+  shouldRetryShopifySessionRequest,
   verifyShopifySessionToken,
 } from './shopify-embedded-auth.mjs'
 
@@ -743,6 +748,11 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
 })
 
 app.use(establishInternalSession)
+
+app.get(shopifySessionBouncePath, (_request, response) => {
+  response.set('Cache-Control', 'no-store')
+  response.type('html').send(renderShopifySessionBounce(shopifyApiKey))
+})
 
 app.post(
   '/api/order-attachments',
@@ -1856,7 +1866,25 @@ function serveAppShell(response, includeShopifyAppBridge) {
 function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
   const hasCryptographicallyVerifiedLaunch = hasValidShopifyLaunch(request)
+  const hasInternalSession = hasValidInternalSession(request)
   const isNavigationRequest = isHtmlNavigationRequest(request)
+  const isEmbeddedInternalNavigation =
+    isNavigationRequest &&
+    isInternalAppShellPath(request.path) &&
+    hasEmbeddedShopifyContext({
+      embedded: getQueryParam(request, 'embedded'),
+      host: getQueryParam(request, 'host'),
+    })
+
+  if (
+    isEmbeddedInternalNavigation &&
+    !hasCryptographicallyVerifiedLaunch &&
+    !hasStandaloneAccess &&
+    !hasInternalSession
+  ) {
+    response.redirect(302, buildShopifySessionBounceLocation(request.originalUrl))
+    return
+  }
 
   if (
     isNavigationRequest &&
@@ -1929,7 +1957,9 @@ async function requireInternalAccess(request, response, next) {
     return
   }
 
-  setShopifySessionRetryHeader(response)
+  if (shouldRetryShopifySessionRequest(request.get('authorization'))) {
+    setShopifySessionRetryHeader(response)
+  }
   response.status(401).json({
     ok: false,
     message: 'Internal inventory access requires a verified Shopify session.',
@@ -2273,7 +2303,9 @@ async function requireSalesPortalAdminOrInternalAccess(request, response, next) 
       return
     }
 
-    setShopifySessionRetryHeader(response)
+    if (shouldRetryShopifySessionRequest(request.get('authorization'))) {
+      setShopifySessionRetryHeader(response)
+    }
     response.status(401).json({
       ok: false,
       message: 'Admin access is required to issue sales portal access codes.',

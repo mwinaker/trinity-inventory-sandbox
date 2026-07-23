@@ -42,7 +42,6 @@ import {
   updateBilletSuitability,
 } from './inventory-policy.ts'
 import type { BilletSuitability, BilletWorkflowStatus } from './inventory-policy.ts'
-import { shopifyAuthenticatedFetch } from './shopify-authenticated-fetch.ts'
 import {
   getOptionalWeightValue,
   isValidEditableWeightRange,
@@ -3661,33 +3660,24 @@ function getInitialActiveSection(): ActiveSection {
   return isCrmSandboxPreviewRoute() && params.get('section') === 'crm' ? 'crm' : 'inventory'
 }
 
-function getEmbeddedAuthSearch() {
-  const params = new URLSearchParams(window.location.search)
-  const forwarded = new URLSearchParams()
-  for (const key of [
-    'access',
-    'embedded',
-    'hmac',
-    'host',
-    'id_token',
-    'locale',
-    'session',
-    'shop',
-    'timestamp',
-  ]) {
-    const value = params.get(key)
-    if (value) forwarded.set(key, value)
-  }
-  const query = forwarded.toString()
-  return query ? `?${query}` : ''
-}
-
-function getApiPath(path: string) {
-  return `${path}${getEmbeddedAuthSearch()}`
-}
-
 function fetchApi(path: string, init?: RequestInit) {
-  return shopifyAuthenticatedFetch(getApiPath(path), init)
+  return fetch(path, init)
+}
+
+function isShopifyEmbeddedApp() {
+  return Boolean(document.querySelector('meta[name="shopify-api-key"]'))
+}
+
+function reconnectShopifySession() {
+  const searchParams = new URLSearchParams(window.location.search)
+  searchParams.delete('id_token')
+  searchParams.delete('shopify-reload')
+
+  const reloadQuery = searchParams.toString()
+  const reloadPath = `${window.location.pathname}${reloadQuery ? `?${reloadQuery}` : ''}`
+  searchParams.set('shopify-reload', reloadPath)
+
+  window.location.assign(`/session-token-bounce?${searchParams.toString()}`)
 }
 
 function getSalesOrderSuccessMessage(
@@ -5237,7 +5227,11 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
       })
       if (response.status === 401) {
         setBackendStatus('unauthorized')
-        setSyncMessage('Use the secure internal access link or launch from Shopify admin.')
+        setSyncMessage(
+          isShopifyEmbeddedApp()
+            ? 'Shopify could not verify this embedded app session.'
+            : 'Use the secure internal access link or launch from Shopify admin.',
+        )
         hasLoadedRemoteState.current = true
         setIsLoadingRemoteState(false)
         return false
@@ -5332,18 +5326,19 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
   }, [crmSandboxPreviewEnabled])
 
   useEffect(() => {
-    if (backendStatus !== 'offline' && backendStatus !== 'unauthorized') return
+    if (backendStatus !== 'offline') return
     if (crmSandboxPreviewEnabled) return
 
-    const retry = window.setInterval(() => {
-      if (backendStatus === 'offline' && hasPendingLocalSync.current) {
+    const reconnectWhenOnline = () => {
+      if (hasPendingLocalSync.current) {
         void syncRemoteState()
       } else {
         void loadRemoteState()
       }
-    }, 10000)
+    }
 
-    return () => window.clearInterval(retry)
+    window.addEventListener('online', reconnectWhenOnline)
+    return () => window.removeEventListener('online', reconnectWhenOnline)
   }, [backendStatus, crmSandboxPreviewEnabled])
 
   useEffect(() => {
@@ -5368,6 +5363,8 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
   }, [backendStatus])
 
   useEffect(() => {
+    if (backendStatus !== 'connected') return
+
     let cancelled = false
 
     async function loadCatalog() {
@@ -7072,7 +7069,9 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
             {backendStatus === 'connected'
               ? 'Shopify-backed internal tool'
               : backendStatus === 'unauthorized'
-                ? 'Secure internal access required'
+                ? isShopifyEmbeddedApp()
+                  ? 'Shopify sign-in required'
+                  : 'Secure internal access required'
                 : 'Live sync unavailable'}
           </strong>
           <p>{syncMessage}</p>
@@ -7147,13 +7146,36 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
       ) : backendStatus === 'unauthorized' ? (
         <section className="panel inventory-panel">
           <div className="section-heading">
-            <p className="eyebrow">Secure internal access</p>
-            <h2>Use the internal access link</h2>
+            <p className="eyebrow">
+              {isShopifyEmbeddedApp() ? 'Shopify session' : 'Secure internal access'}
+            </p>
+            <h2>
+              {isShopifyEmbeddedApp()
+                ? 'Reconnect through Shopify'
+                : 'Use the internal access link'}
+            </h2>
           </div>
-          <p className="empty-state">
-            This page is live, but the shared Shopify inventory requires an internal session. Open
-            the secure internal link we issued for Trinity or launch the tool from Shopify admin.
-          </p>
+          {isShopifyEmbeddedApp() ? (
+            <>
+              <p className="empty-state">
+                Shopify did not attach a valid session to this app launch. Reconnect once to request
+                a fresh verified Shopify session.
+              </p>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={reconnectShopifySession}
+              >
+                Reconnect through Shopify
+              </button>
+            </>
+          ) : (
+            <p className="empty-state">
+              This page is live, but the shared Shopify inventory requires an internal session.
+              Open the secure internal link we issued for Trinity or launch the tool from Shopify
+              admin.
+            </p>
+          )}
         </section>
       ) : backendStatus !== 'connected' && !(crmSandboxPreviewEnabled && activeSection === 'crm') ? (
         <section className="panel inventory-panel">

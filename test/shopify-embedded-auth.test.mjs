@@ -4,10 +4,14 @@ import test from 'node:test'
 
 import {
   allowsLocalInternalAccess,
+  buildShopifySessionBounceLocation,
+  hasEmbeddedShopifyContext,
   isInternalAppShellPath,
   renderAppShell,
+  renderShopifySessionBounce,
   setShopifySessionRetryHeader,
   shopifySessionRetryHeaderName,
+  shouldRetryShopifySessionRequest,
   verifyShopifySessionToken,
 } from '../server/shopify-embedded-auth.mjs'
 
@@ -52,7 +56,13 @@ test('loopback access is never treated as authenticated in production', () => {
   assert.equal(allowsLocalInternalAccess(undefined), true)
 })
 
-test('unauthorized embedded requests instruct App Bridge to refresh and retry', () => {
+test('only invalid bearer-token requests instruct App Bridge to refresh and retry', () => {
+  assert.equal(shouldRetryShopifySessionRequest('Bearer signed-token'), true)
+  assert.equal(shouldRetryShopifySessionRequest('bearer signed-token'), true)
+  assert.equal(shouldRetryShopifySessionRequest(''), false)
+  assert.equal(shouldRetryShopifySessionRequest(undefined), false)
+  assert.equal(shouldRetryShopifySessionRequest('Basic credentials'), false)
+
   const headers = new Map()
   setShopifySessionRetryHeader({
     set(name, value) {
@@ -61,6 +71,42 @@ test('unauthorized embedded requests instruct App Bridge to refresh and retry', 
   })
 
   assert.equal(headers.get(shopifySessionRetryHeaderName), '1')
+})
+
+test('embedded Shopify launches can be identified without treating standalone links as embedded', () => {
+  assert.equal(hasEmbeddedShopifyContext({ embedded: '1' }), true)
+  assert.equal(
+    hasEmbeddedShopifyContext({ host: 'YWRtaW4uc2hvcGlmeS5jb20vc3RvcmUvdHJpbml0eQ' }),
+    true,
+  )
+  assert.equal(hasEmbeddedShopifyContext({ shop: shopDomain }), false)
+  assert.equal(hasEmbeddedShopifyContext(), false)
+})
+
+test('session-token bounce preserves launch context and removes stale tokens', () => {
+  const location = buildShopifySessionBounceLocation(
+    '/?embedded=1&host=encoded-host&id_token=stale-token&shop=trinitybatco.myshopify.com',
+  )
+  const bounce = new URL(location, 'https://trinity.local')
+
+  assert.equal(bounce.pathname, '/session-token-bounce')
+  assert.equal(bounce.searchParams.get('embedded'), '1')
+  assert.equal(bounce.searchParams.get('host'), 'encoded-host')
+  assert.equal(bounce.searchParams.get('shop'), shopDomain)
+  assert.equal(bounce.searchParams.has('id_token'), false)
+  assert.equal(
+    bounce.searchParams.get('shopify-reload'),
+    '/?embedded=1&host=encoded-host&shop=trinitybatco.myshopify.com',
+  )
+})
+
+test('session-token bounce loads only App Bridge so Shopify can immediately relaunch the app', () => {
+  const html = renderShopifySessionBounce(apiKey)
+
+  assert.match(html, /name="shopify-api-key" content="trinity-client-id"/)
+  assert.match(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
+  assert.doesNotMatch(html, /shopify-disabled-features/)
+  assert.doesNotMatch(html, /src="\/src\/main\.tsx"/)
 })
 
 test('internal app shell loads App Bridge without forcing standalone desktop redirects', () => {

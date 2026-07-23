@@ -4,6 +4,7 @@ const shopifyAppBridgePlaceholder = '<!-- TRINITY_SHOPIFY_APP_BRIDGE -->'
 const internalAppShellPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
 export const shopifySessionRetryHeaderName =
   'X-Shopify-Retry-Invalid-Session-Request'
+export const shopifySessionBouncePath = '/session-token-bounce'
 
 export function isInternalAppShellPath(pathname) {
   const normalizedPath = String(pathname ?? '').split(/[?#]/, 1)[0]
@@ -16,6 +17,46 @@ export function allowsLocalInternalAccess(nodeEnvironment) {
 
 export function setShopifySessionRetryHeader(response) {
   response.set(shopifySessionRetryHeaderName, '1')
+}
+
+export function shouldRetryShopifySessionRequest(authorizationHeader) {
+  return /^Bearer\s+\S+$/i.test(String(authorizationHeader ?? '').trim())
+}
+
+export function hasEmbeddedShopifyContext({ embedded = '', host = '' } = {}) {
+  return String(embedded) === '1' || Boolean(String(host).trim())
+}
+
+export function buildShopifySessionBounceLocation(
+  originalUrl,
+  bouncePath = shopifySessionBouncePath,
+) {
+  const original = new URL(String(originalUrl || '/'), 'https://trinity.local')
+  const searchParams = new URLSearchParams(original.search)
+  searchParams.delete('id_token')
+  searchParams.delete('shopify-reload')
+
+  const reloadQuery = searchParams.toString()
+  const reloadPath = `${original.pathname}${reloadQuery ? `?${reloadQuery}` : ''}`
+  searchParams.set('shopify-reload', reloadPath)
+
+  return `${bouncePath}?${searchParams.toString()}`
+}
+
+export function renderShopifySessionBounce(apiKey = '') {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="shopify-api-key" content="${escapeHtmlAttribute(apiKey)}" />
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+    <title>Signing in to Trinity Billet Inventory</title>
+  </head>
+  <body>
+    <p>Signing in through Shopify…</p>
+  </body>
+</html>`
 }
 
 export function renderAppShell(template, { includeShopifyAppBridge = false, apiKey = '' } = {}) {
