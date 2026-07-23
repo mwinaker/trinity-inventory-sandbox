@@ -42,6 +42,7 @@ import {
   updateBilletSuitability,
 } from './inventory-policy.ts'
 import type { BilletSuitability, BilletWorkflowStatus } from './inventory-policy.ts'
+import { shopifyAuthenticatedFetch } from './shopify-authenticated-fetch.ts'
 import {
   getOptionalWeightValue,
   isValidEditableWeightRange,
@@ -3685,6 +3686,10 @@ function getApiPath(path: string) {
   return `${path}${getEmbeddedAuthSearch()}`
 }
 
+function fetchApi(path: string, init?: RequestInit) {
+  return shopifyAuthenticatedFetch(getApiPath(path), init)
+}
+
 function getSalesOrderSuccessMessage(
   draft: SalesOrderDraft,
   payload: SalesOrderApiResponse,
@@ -4501,7 +4506,7 @@ async function uploadSalesOrderAttachment(file: File): Promise<OrderAttachment> 
     throw new Error('Attachment must be 20 MB or smaller.')
   }
 
-  const response = await fetch(getApiPath('/api/order-attachments'), {
+  const response = await fetchApi('/api/order-attachments', {
     method: 'POST',
     headers: {
       'Content-Type': file.type || 'application/octet-stream',
@@ -4631,7 +4636,7 @@ function PublicSalesOrderForm() {
 
     async function loadCatalog() {
       try {
-        const response = await fetch(getApiPath('/api/catalog'), { cache: 'no-store' })
+        const response = await fetchApi('/api/catalog', { cache: 'no-store' })
         if (!response.ok) throw new Error('Catalog unavailable')
         const payload = (await response.json()) as { products?: ShopifyCatalogProduct[] }
         if (!cancelled) {
@@ -4712,7 +4717,7 @@ function PublicSalesOrderForm() {
         sendInvoice: false,
         attachment,
       }
-      const response = await fetch(getApiPath('/api/sales-orders'), {
+      const response = await fetchApi('/api/sales-orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -4755,7 +4760,7 @@ function PublicSalesOrderForm() {
     try {
       setIsSendingInvoice(true)
       setMessage(`Sending ${pendingDraftReview.draftOrder.name ?? 'draft invoice'}...`)
-      const response = await fetch(getApiPath('/api/sales-orders/send-draft-invoice'), {
+      const response = await fetchApi('/api/sales-orders/send-draft-invoice', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -5168,7 +5173,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
       }
 
       setSyncMessage(`Syncing ${changeCount} changed record${changeCount === 1 ? '' : 's'} to Shopify...`)
-      const response = await fetch(getApiPath(stateEndpoint), {
+      const response = await fetchApi(stateEndpoint, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -5224,7 +5229,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
 
   const loadRemoteState = useEffectEvent(async (options?: { quiet?: boolean }) => {
     try {
-      const response = await fetch(getApiPath(stateEndpoint), {
+      const response = await fetchApi(stateEndpoint, {
         cache: 'no-store',
         headers: {
           'Cache-Control': 'no-store',
@@ -5367,7 +5372,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
 
     async function loadCatalog() {
       try {
-        const response = await fetch(getApiPath('/api/catalog'))
+        const response = await fetchApi('/api/catalog')
         if (!response.ok) throw new Error('Catalog unavailable')
         const payload = (await response.json()) as {
           products?: ShopifyCatalogProduct[]
@@ -6144,7 +6149,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
         ...cloneSalesOrderDraft(salesOrderDraft),
         attachment,
       }
-      const response = await fetch(getApiPath('/api/sales-orders'), {
+      const response = await fetchApi('/api/sales-orders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -6175,7 +6180,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
     try {
       setIsImportingOrders(true)
       setOrderActionMessage('Importing recent Shopify orders...')
-      const response = await fetch(getApiPath('/api/orders/import'), {
+      const response = await fetchApi('/api/orders/import', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -6214,7 +6219,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
     try {
       setIsRegisteringWebhooks(true)
       setOrderActionMessage('Registering Shopify order webhooks...')
-      const response = await fetch(getApiPath('/api/webhooks/register'), {
+      const response = await fetchApi('/api/webhooks/register', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -6243,7 +6248,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
 
     try {
       setOrderActionMessage(`Sending invoice for ${job.shopifyDraftOrderName || 'draft order'}...`)
-      const response = await fetch(getApiPath('/api/draft-orders/send-invoice'), {
+      const response = await fetchApi('/api/draft-orders/send-invoice', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -6961,7 +6966,7 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
 
     try {
       setIsIssuingTeamAccessCode(true)
-      const response = await fetch(getApiPath('/api/sales-portal/admin-login-code'), {
+      const response = await fetchApi('/api/sales-portal/admin-login-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
@@ -10838,7 +10843,7 @@ function SalesPortalApp() {
 
     async function loadPortalSession() {
       try {
-        const response = await fetch(getApiPath('/api/sales-portal/session'), { cache: 'no-store' })
+        const response = await fetchApi('/api/sales-portal/session', { cache: 'no-store' })
         const payload = (await response.json()) as SalesPortalApiResponse
         if (cancelled) return
         if (response.ok && payload.ok && payload.session) {
@@ -10869,7 +10874,7 @@ function SalesPortalApp() {
 
     async function checkCodeIssuerAccess() {
       try {
-        const response = await fetch(getApiPath('/api/internal-session'), { cache: 'no-store' })
+        const response = await fetchApi('/api/internal-session', { cache: 'no-store' })
         if (!cancelled) setCanIssueLoginCode(response.ok)
       } catch {
         if (!cancelled) setCanIssueLoginCode(false)
@@ -10892,8 +10897,8 @@ function SalesPortalApp() {
       try {
         setIsLoadingPortalData(true)
         const [stateResponse, catalogResponse] = await Promise.all([
-          fetch(getApiPath('/api/sales-portal/state'), { cache: 'no-store' }),
-          fetch(getApiPath('/api/catalog'), { cache: 'no-store' }),
+          fetchApi('/api/sales-portal/state', { cache: 'no-store' }),
+          fetchApi('/api/catalog', { cache: 'no-store' }),
         ])
         const statePayload = (await stateResponse.json()) as SalesPortalApiResponse
         const catalogPayload = (await catalogResponse.json()) as { products?: ShopifyCatalogProduct[] }
@@ -10957,7 +10962,7 @@ function SalesPortalApp() {
 
     try {
       setIsIssuingLoginCode(true)
-      const response = await fetch(getApiPath('/api/sales-portal/admin-login-code'), {
+      const response = await fetchApi('/api/sales-portal/admin-login-code', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -11004,8 +11009,8 @@ function SalesPortalApp() {
 
     try {
       const isVerifyingCode = Boolean(loginCode.trim())
-      const response = await fetch(
-        getApiPath(isVerifyingCode ? '/api/sales-portal/verify-code' : '/api/sales-portal/login-code'),
+      const response = await fetchApi(
+        isVerifyingCode ? '/api/sales-portal/verify-code' : '/api/sales-portal/login-code',
         {
           method: 'POST',
           headers: {
@@ -11044,7 +11049,7 @@ function SalesPortalApp() {
     }
 
     try {
-      await fetch(getApiPath('/api/sales-portal/logout'), { method: 'POST' })
+      await fetchApi('/api/sales-portal/logout', { method: 'POST' })
     } catch {
       // Clearing the local shell is still the right user outcome if logout cannot reach the server.
     }
@@ -11094,7 +11099,7 @@ function SalesPortalApp() {
     const merged = mergePortalCrmContactIntoList(crmContacts, contact)
 
     if (!isDemoSession) {
-      const response = await fetch(getApiPath('/api/sales-portal/state'), {
+      const response = await fetchApi('/api/sales-portal/state', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -11232,7 +11237,7 @@ function SalesPortalApp() {
           ...draft,
           attachment,
         }
-        const response = await fetch(getApiPath('/api/sales-orders'), {
+        const response = await fetchApi('/api/sales-orders', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
