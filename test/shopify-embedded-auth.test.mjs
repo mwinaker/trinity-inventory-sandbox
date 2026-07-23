@@ -6,6 +6,8 @@ import {
   allowsLocalInternalAccess,
   isInternalAppShellPath,
   renderAppShell,
+  setShopifySessionRetryHeader,
+  shopifySessionRetryHeaderName,
   verifyShopifySessionToken,
 } from '../server/shopify-embedded-auth.mjs'
 
@@ -48,6 +50,17 @@ test('loopback access is never treated as authenticated in production', () => {
   assert.equal(allowsLocalInternalAccess('PRODUCTION'), false)
   assert.equal(allowsLocalInternalAccess('development'), true)
   assert.equal(allowsLocalInternalAccess(undefined), true)
+})
+
+test('unauthorized embedded requests instruct App Bridge to refresh and retry', () => {
+  const headers = new Map()
+  setShopifySessionRetryHeader({
+    set(name, value) {
+      headers.set(name, value)
+    },
+  })
+
+  assert.equal(headers.get(shopifySessionRetryHeaderName), '1')
 })
 
 test('internal app shell loads App Bridge without forcing standalone desktop redirects', () => {

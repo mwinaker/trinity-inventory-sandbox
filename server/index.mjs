@@ -44,6 +44,7 @@ import {
   allowsLocalInternalAccess,
   isInternalAppShellPath,
   renderAppShell,
+  setShopifySessionRetryHeader,
   verifyShopifySessionToken,
 } from './shopify-embedded-auth.mjs'
 
@@ -1928,6 +1929,7 @@ async function requireInternalAccess(request, response, next) {
     return
   }
 
+  setShopifySessionRetryHeader(response)
   response.status(401).json({
     ok: false,
     message: 'Internal inventory access requires a verified Shopify session.',
@@ -2271,6 +2273,7 @@ async function requireSalesPortalAdminOrInternalAccess(request, response, next) 
       return
     }
 
+    setShopifySessionRetryHeader(response)
     response.status(401).json({
       ok: false,
       message: 'Admin access is required to issue sales portal access codes.',

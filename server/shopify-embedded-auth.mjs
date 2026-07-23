@@ -2,6 +2,8 @@ import crypto from 'node:crypto'
 
 const shopifyAppBridgePlaceholder = '<!-- TRINITY_SHOPIFY_APP_BRIDGE -->'
 const internalAppShellPaths = new Set(['/', '/internal-tool', '/inventory-tool'])
+export const shopifySessionRetryHeaderName =
+  'X-Shopify-Retry-Invalid-Session-Request'
 
 export function isInternalAppShellPath(pathname) {
   const normalizedPath = String(pathname ?? '').split(/[?#]/, 1)[0]
@@ -10,6 +12,10 @@ export function isInternalAppShellPath(pathname) {
 
 export function allowsLocalInternalAccess(nodeEnvironment) {
   return String(nodeEnvironment ?? '').toLowerCase() !== 'production'
+}
+
+export function setShopifySessionRetryHeader(response) {
+  response.set(shopifySessionRetryHeaderName, '1')
 }
 
 export function renderAppShell(template, { includeShopifyAppBridge = false, apiKey = '' } = {}) {

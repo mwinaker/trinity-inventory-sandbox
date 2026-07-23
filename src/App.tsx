@@ -5332,11 +5332,11 @@ function InternalApp({ accessSession = null, onSignOut }: InternalAppProps = {})
   }, [crmSandboxPreviewEnabled])
 
   useEffect(() => {
-    if (backendStatus !== 'offline') return
+    if (backendStatus !== 'offline' && backendStatus !== 'unauthorized') return
     if (crmSandboxPreviewEnabled) return
 
     const retry = window.setInterval(() => {
-      if (hasPendingLocalSync.current) {
+      if (backendStatus === 'offline' && hasPendingLocalSync.current) {
         void syncRemoteState()
       } else {
         void loadRemoteState()
