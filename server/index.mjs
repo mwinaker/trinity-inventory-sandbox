@@ -40,6 +40,12 @@ import {
   createOrderPrinterProDraftPdfConfig,
   downloadOrderPrinterProPdfAttachment,
 } from './order-printer-pro.mjs'
+import {
+  allowsLocalInternalAccess,
+  isInternalAppShellPath,
+  renderAppShell,
+  verifyShopifySessionToken,
+} from './shopify-embedded-auth.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -177,6 +183,7 @@ const publicSalesOrderFormPaths = [
   '/trinity-order-from',
 ]
 const salesPortalPaths = ['/sales-portal', '/sales-crm', '/team-tool']
+const internalToolPaths = ['/', '/internal-tool', '/inventory-tool']
 const publicStaticAssetPaths = [
   '/favicon.svg',
   '/icons.svg',
@@ -1799,8 +1806,10 @@ app.post('/api/webhooks/register', requireSalesPortalAdminOrInternalAccess, asyn
   }
 })
 
-app.get(publicSalesOrderFormPaths, serveAppShell)
-app.get(salesPortalPaths, serveAppShell)
+app.get(publicSalesOrderFormPaths, servePublicAppShell)
+app.get(salesPortalPaths, servePublicAppShell)
+app.get(internalToolPaths, serveInternalAppShell)
+app.get(['/apps', '/apps/{*path}'], serveInternalAppShell)
 app.use('/assets', express.static(path.join(rootDir, 'dist', 'assets')))
 app.get(publicStaticAssetPaths, (request, response) => {
   response.sendFile(path.join(rootDir, 'dist', path.basename(request.path)))
@@ -1810,6 +1819,7 @@ app.use(requireInternalAccess)
 
 app.use(
   express.static(path.join(rootDir, 'dist'), {
+    index: false,
     setHeaders(response, filePath) {
       if (filePath.endsWith('index.html')) {
         response.setHeader('Cache-Control', 'no-store')
@@ -1818,17 +1828,28 @@ app.use(
   }),
 )
 
-app.get('/{*path}', (_request, response) => {
-  serveAppShell(_request, response)
-})
+app.get('/{*path}', serveInternalAppShell)
 
 app.listen(port, () => {
   console.log(`Trinity billet server listening on http://127.0.0.1:${port}`)
 })
 
-function serveAppShell(_request, response) {
+function servePublicAppShell(_request, response) {
+  serveAppShell(response, false)
+}
+
+function serveInternalAppShell(request, response) {
+  serveAppShell(response, isInternalAppShellPath(request.path))
+}
+
+function serveAppShell(response, includeShopifyAppBridge) {
   response.set('Cache-Control', 'no-store')
-  response.sendFile(path.join(rootDir, 'dist', 'index.html'))
+  response.type('html').send(
+    renderAppShell(fs.readFileSync(path.join(rootDir, 'dist', 'index.html'), 'utf8'), {
+      includeShopifyAppBridge,
+      apiKey: shopifyApiKey,
+    }),
+  )
 }
 
 function establishInternalSession(request, response, next) {
@@ -1970,40 +1991,11 @@ function hasValidBearerSession(request) {
 }
 
 function hasValidShopifySessionToken(token) {
-  if (!shopifyApiSecret || !token) return false
-
-  const parts = token.split('.')
-  if (parts.length !== 3) return false
-
-  try {
-    const [encodedHeader, encodedPayload, signature] = parts
-    const header = JSON.parse(decodeBase64Url(encodedHeader))
-    const payload = JSON.parse(decodeBase64Url(encodedPayload))
-
-    if (header.alg !== 'HS256') return false
-
-    const expectedSignature = crypto
-      .createHmac('sha256', shopifyApiSecret)
-      .update(`${encodedHeader}.${encodedPayload}`)
-      .digest('base64url')
-
-    if (!safeEqual(expectedSignature, signature, 'utf8')) return false
-
-    const nowInSeconds = Math.floor(Date.now() / 1000)
-    if (typeof payload.exp !== 'number' || payload.exp < nowInSeconds) return false
-    if (typeof payload.nbf === 'number' && payload.nbf > nowInSeconds) return false
-    if (shopifyApiKey && payload.aud !== shopifyApiKey) return false
-
-    if (shopDomain) {
-      const dest = String(payload.dest ?? '')
-      const issuer = String(payload.iss ?? '')
-      if (!dest.includes(shopDomain) && !issuer.includes(shopDomain)) return false
-    }
-
-    return true
-  } catch {
-    return false
-  }
+  return verifyShopifySessionToken(token, {
+    apiSecret: shopifyApiSecret,
+    apiKey: shopifyApiKey,
+    shopDomain,
+  })
 }
 
 function createInternalSessionToken() {
@@ -2096,6 +2088,8 @@ function isSecureRequest(request) {
 }
 
 function isLocalRequest(request) {
+  if (!allowsLocalInternalAccess(process.env.NODE_ENV)) return false
+
   const remoteAddress = cleanString(request.socket?.remoteAddress).replace(/^::ffff:/, '')
   return remoteAddress === '127.0.0.1' || remoteAddress === '::1'
 }
