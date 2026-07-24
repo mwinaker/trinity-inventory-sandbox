@@ -6823,7 +6823,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
-  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const proOrderNotificationLabel = hasProOrder
     ? buildProOrderNotificationLabel(payload, payer)
     : ''
@@ -6848,7 +6847,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
-    internalAttachment ? `Internal attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
     salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
@@ -6906,14 +6904,6 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_billing_phone: payer.phone,
       trinity_billing_company: payer.company,
       trinity_billing_relationship: payer.relationship,
-      trinity_internal_attachment_id: internalAttachment?.id ?? '',
-      trinity_internal_attachment_file_id: internalAttachment?.shopifyFileId ?? '',
-      trinity_internal_attachment_name: internalAttachment?.filename ?? '',
-      trinity_internal_attachment_url: internalAttachment?.downloadUrl ?? '',
-      trinity_internal_attachment_type: internalAttachment?.contentType ?? '',
-      trinity_internal_attachment_bytes: internalAttachment?.bytes
-        ? String(internalAttachment.bytes)
-        : '',
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines
@@ -6972,7 +6962,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
-  const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
@@ -6994,7 +6983,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     billingDifferent && payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Billing relationship: ${payer.relationship}` : '',
-    internalAttachment ? `Internal attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     salesRep ? `Sales rep: ${salesRep}` : '',
     salesRepEmail ? `Sales rep email: ${salesRepEmail}` : '',
     orderSubmittedAt ? `Order submitted: ${orderSubmittedAt}` : '',
@@ -7046,14 +7034,6 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_billing_phone: payer.phone,
       trinity_billing_company: payer.company,
       trinity_billing_relationship: payer.relationship,
-      trinity_internal_attachment_id: internalAttachment?.id ?? '',
-      trinity_internal_attachment_file_id: internalAttachment?.shopifyFileId ?? '',
-      trinity_internal_attachment_name: internalAttachment?.filename ?? '',
-      trinity_internal_attachment_url: internalAttachment?.downloadUrl ?? '',
-      trinity_internal_attachment_type: internalAttachment?.contentType ?? '',
-      trinity_internal_attachment_bytes: internalAttachment?.bytes
-        ? String(internalAttachment.bytes)
-        : '',
       trinity_staff_notification_recipients: internalOrderNotificationEmails.join(', '),
     }),
     lineItems: lines
