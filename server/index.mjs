@@ -40,6 +40,7 @@ import {
   createOrderPrinterProDraftPdfConfig,
   downloadOrderPrinterProPdfAttachment,
 } from './order-printer-pro.mjs'
+import { downloadUploadedOrderEmailAttachment } from './order-attachment-email.mjs'
 import {
   allowsLocalInternalAccess,
   buildShopifySessionBounceLocation,
@@ -164,6 +165,14 @@ const stateCacheFilePath =
 const catalogCacheTtlMs = 10 * 60 * 1000
 const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
 const maxOrderAttachmentBytes = 20 * 1024 * 1024
+const orderAttachmentFileUrlMaxAttempts = readPositiveIntegerEnv(
+  'TRINITY_ATTACHMENT_FILE_URL_MAX_ATTEMPTS',
+  8,
+)
+const orderAttachmentFileUrlPollMs = readPositiveIntegerEnv(
+  'TRINITY_ATTACHMENT_FILE_URL_POLL_MS',
+  750,
+)
 const orderAttachmentTransportRateLimiter = createFixedWindowRateLimiter({
   max: 30,
   windowMs: 15 * 60 * 1000,
@@ -1633,6 +1642,9 @@ app.post('/api/sales-orders', async (request, response) => {
         internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
         internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
         internalOrderPdfAttached: Boolean(internalOrderNotification.pdfAttached),
+        internalOrderUploadedAttachmentAttached: Boolean(
+          internalOrderNotification.uploadedAttachmentAttached,
+        ),
         internalOrderNotificationError: internalOrderNotification.error,
         payerNotificationSent: Boolean(payerInvoiceNotification.sentAt),
         payerNotificationRecipient: payerInvoiceNotification.recipient,
@@ -1697,6 +1709,9 @@ app.post('/api/sales-orders', async (request, response) => {
       internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
       internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
       internalOrderPdfAttached: Boolean(internalOrderNotification.pdfAttached),
+      internalOrderUploadedAttachmentAttached: Boolean(
+        internalOrderNotification.uploadedAttachmentAttached,
+      ),
       internalOrderNotificationError: internalOrderNotification.error,
       payerNotificationRecipient: payerEmail,
       salesRepSubmissionNotificationSent: Boolean(
@@ -3020,7 +3035,14 @@ async function trySendInternalOrderCopyNotification({
 }) {
   const recipients = buildInternalOrderCopyRecipients(payload)
   if (recipients.length === 0) {
-    return { sentAt: '', recipients: [], deliveryMethod: '', pdfAttached: false, error: '' }
+    return {
+      sentAt: '',
+      recipients: [],
+      deliveryMethod: '',
+      pdfAttached: false,
+      uploadedAttachmentAttached: false,
+      error: '',
+    }
   }
 
   try {
@@ -3046,6 +3068,7 @@ async function trySendInternalOrderCopyNotification({
       subject,
       text,
       orderPrinterPdfUrl,
+      uploadedAttachment: normalizeOrderAttachment(payload.attachment),
     })
 
     return {
@@ -3053,6 +3076,7 @@ async function trySendInternalOrderCopyNotification({
       recipients,
       deliveryMethod: delivery.method,
       pdfAttached: delivery.pdfAttached,
+      uploadedAttachmentAttached: delivery.uploadedAttachmentAttached,
       error: '',
     }
   } catch (error) {
@@ -3063,6 +3087,7 @@ async function trySendInternalOrderCopyNotification({
       recipients,
       deliveryMethod: '',
       pdfAttached: false,
+      uploadedAttachmentAttached: false,
       error: message,
     }
   }
@@ -3202,21 +3227,25 @@ async function sendInternalOrderCopyEmail({
   subject,
   text,
   orderPrinterPdfUrl = '',
+  uploadedAttachment = null,
 }) {
   if (internalEmailProviderApiKey && internalEmailFrom) {
     const pdfAttachment = await tryDownloadOrderPrinterProPdfAttachment({
       draftOrder,
       orderPrinterPdfUrl,
     })
+    const uploadedEmailAttachment = await tryDownloadUploadedOrderEmailAttachment(uploadedAttachment)
+    const attachments = [pdfAttachment, uploadedEmailAttachment].filter(Boolean)
     await sendInternalEmail({
       to: recipients,
       subject,
       text,
-      attachments: pdfAttachment ? [pdfAttachment] : [],
+      attachments,
     })
     return {
       method: 'internal_email_provider',
       pdfAttached: Boolean(pdfAttachment),
+      uploadedAttachmentAttached: Boolean(uploadedEmailAttachment),
     }
   }
 
@@ -3227,7 +3256,11 @@ async function sendInternalOrderCopyEmail({
       subject,
       text,
     })
-    return { method: 'shopify_draft_order_email', pdfAttached: false }
+    return {
+      method: 'shopify_draft_order_email',
+      pdfAttached: false,
+      uploadedAttachmentAttached: false,
+    }
   }
 
   if (order?.id) {
@@ -3237,7 +3270,11 @@ async function sendInternalOrderCopyEmail({
       subject,
       text,
     })
-    return { method: 'shopify_order_email', pdfAttached: false }
+    return {
+      method: 'shopify_order_email',
+      pdfAttached: false,
+      uploadedAttachmentAttached: false,
+    }
   }
 
   throw new Error('No order was available for internal order-copy email.')
@@ -3256,6 +3293,21 @@ async function tryDownloadOrderPrinterProPdfAttachment({ draftOrder, orderPrinte
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown PDF download error.'
     console.warn(`Order Printer Pro attachment skipped: ${message}`)
+    return null
+  }
+}
+
+async function tryDownloadUploadedOrderEmailAttachment(attachment) {
+  if (!attachment?.downloadUrl) return null
+
+  try {
+    return await downloadUploadedOrderEmailAttachment({
+      attachment,
+      maxBytes: maxOrderAttachmentBytes,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown attachment download error.'
+    console.warn(`Uploaded order attachment skipped: ${message}`)
     return null
   }
 }
@@ -3416,11 +3468,52 @@ async function createShopifyGenericFile({ filename, originalSource }) {
   }
 
   const file = result?.data?.fileCreate?.files?.[0]
-  if (!file?.id || !file?.url) {
+  if (!file?.id) {
+    throw new Error('Shopify did not return an attachment file.')
+  }
+
+  const readyFile = file.url ? file : await waitForShopifyGenericFileUrl(file)
+  if (!readyFile?.url) {
     throw new Error('Shopify did not return an attachment file URL.')
   }
 
-  return file
+  return readyFile
+}
+
+async function waitForShopifyGenericFileUrl(file) {
+  let currentFile = file
+  for (let attempt = 1; attempt < orderAttachmentFileUrlMaxAttempts; attempt += 1) {
+    if (currentFile?.url) return currentFile
+    if (cleanString(currentFile?.fileStatus).toUpperCase() === 'FAILED') {
+      throw new Error('Shopify attachment file processing failed.')
+    }
+
+    await sleep(orderAttachmentFileUrlPollMs)
+    currentFile = await getShopifyGenericFile(file.id)
+  }
+
+  return currentFile
+}
+
+async function getShopifyGenericFile(fileId) {
+  const result = await shopifyGraphQL(
+    `
+      query GetAttachmentFile($id: ID!) {
+        node(id: $id) {
+          ... on GenericFile {
+            id
+            fileStatus
+            alt
+            createdAt
+            url
+          }
+        }
+      }
+    `,
+    { id: fileId },
+  )
+
+  return result?.data?.node ?? null
 }
 
 function normalizeOrderAttachment(attachment) {

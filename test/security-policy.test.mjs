@@ -127,15 +127,37 @@ test('team reporting keeps sales totals while removing customer and CRM details'
     playerName: 'Private Player',
     billingPhone: '555-555-1212',
     notes: 'Private note',
+    internalAttachment: {
+      id: 'attachment-1',
+      shopifyFileId: 'gid://shopify/GenericFile/1',
+      filename: 'swing notes.pdf',
+      downloadUrl: 'https://cdn.shopify.com/s/files/1/0000/files/swing-notes.pdf',
+      contentType: 'application/pdf',
+      bytes: '1234',
+      uploadedAt: '2026-07-19T18:01:00.000Z',
+      fileStatus: 'READY',
+      uploadToken: 'secret-token',
+    },
   })
 
   assert.equal(sanitized.salesRep, 'Shane Telfer')
   assert.equal(sanitized.totalPrice, '159.00')
+  assert.deepEqual(sanitized.internalAttachment, {
+    id: 'attachment-1',
+    filename: 'swing notes.pdf',
+    downloadUrl: 'https://cdn.shopify.com/s/files/1/0000/files/swing-notes.pdf',
+    contentType: 'application/pdf',
+    bytes: 1234,
+    uploadedAt: '2026-07-19T18:01:00.000Z',
+    fileStatus: 'READY',
+  })
   assert.equal('customerName' in sanitized, false)
   assert.equal('customerEmail' in sanitized, false)
   assert.equal('playerName' in sanitized, false)
   assert.equal('billingPhone' in sanitized, false)
   assert.equal('notes' in sanitized, false)
+  assert.equal('shopifyFileId' in sanitized.internalAttachment, false)
+  assert.equal('uploadToken' in sanitized.internalAttachment, false)
 })
 
 test('attachment policy accepts common business files and rejects executable web content', () => {

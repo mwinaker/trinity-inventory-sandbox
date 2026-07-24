@@ -144,8 +144,27 @@ export function sanitizeOrderJobForTeamReporting(job) {
     salesRepPaidNotificationSentAt: cleanString(job?.salesRepPaidNotificationSentAt),
     totalPrice: cleanString(job?.totalPrice),
     currency: cleanString(job?.currency),
+    internalAttachment: sanitizeOrderAttachmentForTeamReporting(job?.internalAttachment),
     createdAt: cleanString(job?.createdAt),
     updatedAt: cleanString(job?.updatedAt),
+  }
+}
+
+function sanitizeOrderAttachmentForTeamReporting(attachment) {
+  if (!attachment || typeof attachment !== 'object') return null
+
+  const filename = cleanString(attachment.filename)
+  const downloadUrl = cleanString(attachment.downloadUrl || attachment.url)
+  if (!filename || !isAllowedShopifyAttachmentUrl(downloadUrl)) return null
+
+  return {
+    id: cleanString(attachment.id),
+    filename,
+    downloadUrl,
+    contentType: cleanString(attachment.contentType),
+    bytes: Number(attachment.bytes) || 0,
+    uploadedAt: cleanString(attachment.uploadedAt),
+    fileStatus: cleanString(attachment.fileStatus),
   }
 }
 
