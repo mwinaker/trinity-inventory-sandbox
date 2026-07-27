@@ -2118,7 +2118,9 @@ function getOrderJobLineSummaries(job: OrderJob) {
   }
 
   if (job.itemType === 'misc') {
-    return [job.productTitle || job.specs.model || 'Miscellaneous product']
+    return [
+      `${job.quantity} × ${job.productTitle || job.specs.model || 'Miscellaneous product'}`,
+    ]
   }
 
   const dimensions = [
@@ -4413,7 +4415,7 @@ function SalesOrderFormFields({
                 </>
               )}
 
-              <div className={`form-row ${line.itemType === 'misc' ? 'single-field-row' : ''}`}>
+              <div className="form-row">
                 <label>
                   {line.itemType === 'misc' ? 'Price' : 'Unit price'}
                   <input
@@ -4423,19 +4425,17 @@ function SalesOrderFormFields({
                     onChange={(event) => updateLine(line.id, { unitPrice: event.target.value })}
                   />
                 </label>
-                {line.itemType !== 'misc' ? (
-                  <label>
-                    Quantity
-                    <input
-                      type="number"
-                      min="1"
-                      value={line.quantity}
-                      onChange={(event) =>
-                        updateLine(line.id, { quantity: Number(event.target.value) })
-                      }
-                    />
-                  </label>
-                ) : null}
+                <label>
+                  Quantity
+                  <input
+                    type="number"
+                    min="1"
+                    value={line.quantity}
+                    onChange={(event) =>
+                      updateLine(line.id, { quantity: Number(event.target.value) })
+                    }
+                  />
+                </label>
               </div>
 
               {line.itemType === 'bat' ? (

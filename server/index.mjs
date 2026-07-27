@@ -6400,9 +6400,6 @@ function validateSalesOrderPayload(payload) {
     if (!Number.isInteger(quantity) || quantity < 1) {
       return `Line ${index + 1} needs a quantity of at least 1.`
     }
-    if (itemType === 'misc' && quantity !== 1) {
-      return `Line ${index + 1} miscellaneous products must have a quantity of 1.`
-    }
   }
 
   return ''
@@ -6984,7 +6981,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         return {
           ...(variantId ? { variantId } : {}),
           title,
-          quantity: itemType === 'misc' ? 1 : Number(line.quantity || 1),
+          quantity: Number(line.quantity || 1),
           requiresShipping,
           taxable: false,
           ...(unitPrice ? { priceSet: unitPrice } : {}),
@@ -7120,7 +7117,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         if (variantId) {
           return {
             variantId,
-            quantity: itemType === 'misc' ? 1 : Number(line.quantity || 1),
+            quantity: Number(line.quantity || 1),
             ...(unitPrice ? { priceOverride: unitPrice } : {}),
             requiresShipping,
             taxable: false,
@@ -7134,7 +7131,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
             amount: '0',
             currencyCode: shopCurrencyCode,
           },
-          quantity: itemType === 'misc' ? 1 : Number(line.quantity || 1),
+          quantity: Number(line.quantity || 1),
           requiresShipping,
           taxable: false,
           customAttributes,
