@@ -5,7 +5,10 @@ function cleanString(value) {
 }
 
 export function normalizeSalesOrderItemType(value) {
-  return cleanString(value).toLowerCase() === 'shirt' ? 'shirt' : 'bat'
+  const itemType = cleanString(value).toLowerCase()
+  if (itemType === 'shirt') return 'shirt'
+  if (['misc', 'miscellaneous', 'miscellaneous product'].includes(itemType)) return 'misc'
+  return 'bat'
 }
 
 export function getSalesOrderProductionQuantity(payload = {}) {

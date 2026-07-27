@@ -16,7 +16,8 @@ export function getSalesOrderBatQuantity(lines = []) {
   if (!Array.isArray(lines)) return 0
 
   return lines.reduce((total, line) => {
-    if (String(line?.itemType ?? '').trim().toLowerCase() === 'shirt') return total
+    const itemType = String(line?.itemType ?? '').trim().toLowerCase()
+    if (itemType && itemType !== 'bat') return total
     return total + normalizeQuantity(line?.quantity || 1)
   }, 0)
 }

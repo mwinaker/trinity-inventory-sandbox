@@ -27,10 +27,11 @@ test('comped shipping remains free for every bat quantity', () => {
   assert.equal(getSalesOrderShippingQuote('comped', 20).amount, '0.00')
 })
 
-test('shirt quantities do not affect the shipping tier', () => {
+test('shirt and miscellaneous quantities do not affect the shipping tier', () => {
   const batQuantity = getSalesOrderBatQuantity([
     { itemType: 'bat', quantity: 3 },
     { itemType: 'shirt', quantity: 10 },
+    { itemType: 'misc', quantity: 8 },
   ])
 
   assert.equal(batQuantity, 3)

@@ -375,7 +375,7 @@ type SalesOrderLineDraft = {
   notes: string
 }
 
-type SalesOrderItemType = 'bat' | 'shirt'
+type SalesOrderItemType = 'bat' | 'shirt' | 'misc'
 type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast' | 'comped'
 type ProductionTimelineOption = 'normal' | 'rush'
 const maxSalesOrderAttachmentBytes = 20 * 1024 * 1024
@@ -1492,7 +1492,8 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
 
   return {
     id: record.id,
-    itemType: record.itemType === 'shirt' ? 'shirt' : 'bat',
+    itemType:
+      record.itemType === 'shirt' ? 'shirt' : record.itemType === 'misc' ? 'misc' : 'bat',
     origin: record.origin === 'internal_sales' ? 'internal_sales' : 'website',
     intakeId: record.intakeId ?? '',
     playerProfileId: record.playerProfileId ?? '',
@@ -2104,7 +2105,8 @@ function getManualOrderNoteLineSummaries(job: OrderJob) {
 }
 
 function getOrderJobLineSummaries(job: OrderJob) {
-  const parsedNoteSummaries = getManualOrderNoteLineSummaries(job)
+  const parsedNoteSummaries =
+    job.itemType === 'bat' ? getManualOrderNoteLineSummaries(job) : []
   if (parsedNoteSummaries.length > 0) return parsedNoteSummaries
 
   if (job.itemType === 'shirt') {
@@ -2113,6 +2115,10 @@ function getOrderJobLineSummaries(job: OrderJob) {
         job.variantTitle ? ` / ${job.variantTitle}` : ''
       }`,
     ]
+  }
+
+  if (job.itemType === 'misc') {
+    return [job.productTitle || job.specs.model || 'Miscellaneous product']
   }
 
   const dimensions = [
@@ -2343,7 +2349,14 @@ function createSalesDashboardSaleFromPortalOrder(order: SalesPortalOrder): Sales
     productSummary: order.draft.lines
       .map(
         (line) =>
-          `${line.title || (line.itemType === 'shirt' ? 'Trinity shirt' : 'Custom bat')}${
+          `${
+            line.title ||
+            (line.itemType === 'shirt'
+              ? 'Trinity shirt'
+              : line.itemType === 'misc'
+                ? 'Miscellaneous product'
+                : 'Custom bat')
+          }${
             line.variantTitle ? ` / ${line.variantTitle}` : ''
           }`,
       )
@@ -4082,7 +4095,7 @@ function SalesOrderFormFields({
           </select>
           <span className="helper-text">
             {draft.requiresShipping
-              ? `Calculated automatically from ${formatSalesOrderBatCount(shippingBatQuantity)}. Shirts do not increase the bat shipping tier.`
+              ? `Calculated automatically from ${formatSalesOrderBatCount(shippingBatQuantity)}. Shirts and miscellaneous products do not increase the bat shipping tier.`
               : 'No shipping charge for local delivery.'}
           </span>
         </label>
@@ -4223,6 +4236,8 @@ function SalesOrderFormFields({
           const lineTitle =
             line.itemType === 'shirt'
               ? lineProduct?.name || line.title || 'Shirt'
+              : line.itemType === 'misc'
+                ? line.title || 'Miscellaneous product'
               : line.isProOrder
                 ? line.title || 'Pro custom bat'
                 : lineProduct?.name || line.title || 'Custom bat'
@@ -4312,6 +4327,17 @@ function SalesOrderFormFields({
                     </p>
                   ) : null}
                 </div>
+              ) : line.itemType === 'misc' ? (
+                <div className="form-row single-field-row">
+                  <label>
+                    Description
+                    <input
+                      value={line.title}
+                      placeholder="Describe the miscellaneous product"
+                      onChange={(event) => updateLine(line.id, { title: event.target.value })}
+                    />
+                  </label>
+                </div>
               ) : (
                 <>
                   <label className="checkbox-row pro-order-toggle">
@@ -4387,9 +4413,9 @@ function SalesOrderFormFields({
                 </>
               )}
 
-              <div className="form-row">
+              <div className={`form-row ${line.itemType === 'misc' ? 'single-field-row' : ''}`}>
                 <label>
-                  Unit price
+                  {line.itemType === 'misc' ? 'Price' : 'Unit price'}
                   <input
                     inputMode="decimal"
                     value={line.unitPrice}
@@ -4397,15 +4423,19 @@ function SalesOrderFormFields({
                     onChange={(event) => updateLine(line.id, { unitPrice: event.target.value })}
                   />
                 </label>
-                <label>
-                  Quantity
-                  <input
-                    type="number"
-                    min="1"
-                    value={line.quantity}
-                    onChange={(event) => updateLine(line.id, { quantity: Number(event.target.value) })}
-                  />
-                </label>
+                {line.itemType !== 'misc' ? (
+                  <label>
+                    Quantity
+                    <input
+                      type="number"
+                      min="1"
+                      value={line.quantity}
+                      onChange={(event) =>
+                        updateLine(line.id, { quantity: Number(event.target.value) })
+                      }
+                    />
+                  </label>
+                ) : null}
               </div>
 
               {line.itemType === 'bat' ? (
@@ -4523,6 +4553,9 @@ function SalesOrderFormFields({
         </button>
         <button type="button" className="secondary-button" onClick={() => addLine('shirt')}>
           Add a shirt
+        </button>
+        <button type="button" className="secondary-button" onClick={() => addLine('misc')}>
+          Add miscellaneous product
         </button>
       </div>
 
@@ -4939,8 +4972,8 @@ function PublicSalesOrderForm() {
         </div>
         <h1>Sales order submission</h1>
         <p>
-          Submit phone, team, pro, custom bat, and shirt orders through the same Shopify workflow
-          used by the internal command center.
+          Submit phone, team, pro, custom bat, shirt, and miscellaneous product orders through the
+          same Shopify workflow used by the internal command center.
         </p>
         <span>{isLoadingCatalog ? 'Loading product catalog...' : 'Live Shopify order intake'}</span>
       </section>
@@ -5829,7 +5862,7 @@ function InternalApp({
     [billets],
   )
   const productionOrderJobs = useMemo(
-    () => orderJobs.filter((job) => job.itemType !== 'shirt'),
+    () => orderJobs.filter((job) => job.itemType === 'bat'),
     [orderJobs],
   )
   const assignedBilletIds = useMemo(

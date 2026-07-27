@@ -6386,7 +6386,11 @@ function validateSalesOrderPayload(payload) {
     const unitPrice = Number(cleanString(line?.unitPrice))
     const quantity = Number(line?.quantity)
 
-    if (!title) return `Line ${index + 1} needs a product.`
+    if (!title) {
+      return itemType === 'misc'
+        ? `Line ${index + 1} needs a description.`
+        : `Line ${index + 1} needs a product.`
+    }
     if (itemType === 'shirt' && !cleanString(line?.variantId)) {
       return `Line ${index + 1} needs a shirt size.`
     }
@@ -6395,6 +6399,9 @@ function validateSalesOrderPayload(payload) {
     }
     if (!Number.isInteger(quantity) || quantity < 1) {
       return `Line ${index + 1} needs a quantity of at least 1.`
+    }
+    if (itemType === 'misc' && quantity !== 1) {
+      return `Line ${index + 1} miscellaneous products must have a quantity of 1.`
     }
   }
 
@@ -6701,9 +6708,14 @@ async function rememberOrderJobContacts(jobs) {
 }
 
 function formatSalesLineShopifyTitle(line, isProOrder) {
+  const itemType = normalizeSalesOrderItemType(line?.itemType)
   const title =
     cleanString(line?.title || line?.model) ||
-    (normalizeSalesOrderItemType(line?.itemType) === 'shirt' ? 'Trinity shirt' : 'Custom Trinity bat')
+    (itemType === 'shirt'
+      ? 'Trinity shirt'
+      : itemType === 'misc'
+        ? 'Miscellaneous product'
+        : 'Custom Trinity bat')
   if (!isProOrder) return title
 
   return /^pro order\b/i.test(title) ? title : `Pro Order - ${title}`
@@ -6722,7 +6734,9 @@ function buildProOrderNotificationLabel(payload, payer) {
 
 function buildOrderInvoiceEmailInput(payload, order) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
-  const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
+  const hasProOrder = lines.some(
+    (line) => normalizeSalesOrderItemType(line.itemType) === 'bat' && isTruthy(line.isProOrder),
+  )
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const playerName = cleanString(payload.playerName || payload.customerName)
@@ -6820,11 +6834,14 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
 function summarizeSalesOrderLines(lines) {
   return lines
     .map((line) => {
+      const itemType = normalizeSalesOrderItemType(line?.itemType)
       const title =
         cleanString(line?.title || line?.model) ||
-        (normalizeSalesOrderItemType(line?.itemType) === 'shirt'
+        (itemType === 'shirt'
           ? 'Trinity shirt'
-          : 'Custom Trinity bat')
+          : itemType === 'misc'
+            ? 'Miscellaneous product'
+            : 'Custom Trinity bat')
       const variantTitle = cleanString(line?.variantTitle)
       const quantity = Number(line?.quantity || 1)
       return `${quantity} x ${title}${variantTitle ? ` / ${variantTitle}` : ''}`
@@ -6847,7 +6864,9 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const shippingLine = buildOrderCreateShippingLine(shippingOption)
   const productionTimeline = normalizeProductionTimeline(payload.productionTimeline)
   const rushSurchargeLine = buildOrderRushProductionSurchargeLine(payload)
-  const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
+  const hasProOrder = lines.some(
+    (line) => normalizeSalesOrderItemType(line.itemType) === 'bat' && isTruthy(line.isProOrder),
+  )
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const proOrderNotificationLabel = hasProOrder
@@ -6937,9 +6956,9 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     lineItems: lines
       .map((line) => {
         const unitPrice = toMoneyBagInput(line.unitPrice)
-        const isProOrder = isTruthy(line.isProOrder)
         const itemType = normalizeSalesOrderItemType(line.itemType)
-        const variantId = isProOrder ? '' : cleanString(line.variantId)
+        const isProOrder = itemType === 'bat' && isTruthy(line.isProOrder)
+        const variantId = isProOrder || itemType === 'misc' ? '' : cleanString(line.variantId)
         const title = formatSalesLineShopifyTitle(line, isProOrder)
         const properties = compactLineItemProperties({
           'Order type': isProOrder ? 'Pro Order' : '',
@@ -6948,16 +6967,16 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
           trinity_shirt_size: itemType === 'shirt' ? line.variantTitle : '',
           trinity_pro_order: isProOrder ? 'true' : '',
           trinity_model: cleanString(line.title || line.model),
-          trinity_length: line.length,
-          trinity_weight: line.targetWeight,
-          trinity_wood: line.wood,
-          trinity_handle_color: line.handleColor,
-          trinity_barrel_color: line.barrelColor,
-          trinity_band_color: line.bandColor,
-          trinity_logo_color: line.logoColor,
-          trinity_engraving: line.engraving,
-          trinity_cupped: line.cupped,
-          trinity_notes: line.notes,
+          trinity_length: itemType === 'bat' ? line.length : '',
+          trinity_weight: itemType === 'bat' ? line.targetWeight : '',
+          trinity_wood: itemType === 'bat' ? line.wood : '',
+          trinity_handle_color: itemType === 'bat' ? line.handleColor : '',
+          trinity_barrel_color: itemType === 'bat' ? line.barrelColor : '',
+          trinity_band_color: itemType === 'bat' ? line.bandColor : '',
+          trinity_logo_color: itemType === 'bat' ? line.logoColor : '',
+          trinity_engraving: itemType === 'bat' ? line.engraving : '',
+          trinity_cupped: itemType === 'bat' ? line.cupped : '',
+          trinity_notes: itemType === 'bat' ? line.notes : '',
           trinity_product_title: line.title,
           trinity_requires_shipping: requiresShipping ? 'true' : 'false',
         })
@@ -6965,7 +6984,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         return {
           ...(variantId ? { variantId } : {}),
           title,
-          quantity: Number(line.quantity || 1),
+          quantity: itemType === 'misc' ? 1 : Number(line.quantity || 1),
           requiresShipping,
           taxable: false,
           ...(unitPrice ? { priceSet: unitPrice } : {}),
@@ -6990,7 +7009,9 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const shippingLine = buildDraftOrderShippingLine(shippingOption)
   const productionTimeline = normalizeProductionTimeline(payload.productionTimeline)
   const rushSurchargeLine = buildDraftRushProductionSurchargeLine(payload)
-  const hasProOrder = lines.some((line) => isTruthy(line.isProOrder))
+  const hasProOrder = lines.some(
+    (line) => normalizeSalesOrderItemType(line.itemType) === 'bat' && isTruthy(line.isProOrder),
+  )
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const directAddresses = buildDirectOrderAddresses(payload)
@@ -7071,9 +7092,9 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     lineItems: lines
       .map((line) => {
         const unitPrice = toMoneyInput(line.unitPrice)
-        const isProOrder = isTruthy(line.isProOrder)
         const itemType = normalizeSalesOrderItemType(line.itemType)
-        const variantId = isProOrder ? '' : cleanString(line.variantId)
+        const isProOrder = itemType === 'bat' && isTruthy(line.isProOrder)
+        const variantId = isProOrder || itemType === 'misc' ? '' : cleanString(line.variantId)
         const title = formatSalesLineShopifyTitle(line, isProOrder)
         const customAttributes = compactAttributes({
           order_type: isProOrder ? 'Pro Order' : '',
@@ -7082,16 +7103,16 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
           trinity_shirt_size: itemType === 'shirt' ? line.variantTitle : '',
           trinity_pro_order: isProOrder ? 'true' : '',
           trinity_model: cleanString(line.title || line.model),
-          trinity_length: line.length,
-          trinity_weight: line.targetWeight,
-          trinity_wood: line.wood,
-          trinity_handle_color: line.handleColor,
-          trinity_barrel_color: line.barrelColor,
-          trinity_band_color: line.bandColor,
-          trinity_logo_color: line.logoColor,
-          trinity_engraving: line.engraving,
-          trinity_cupped: line.cupped,
-          trinity_notes: line.notes,
+          trinity_length: itemType === 'bat' ? line.length : '',
+          trinity_weight: itemType === 'bat' ? line.targetWeight : '',
+          trinity_wood: itemType === 'bat' ? line.wood : '',
+          trinity_handle_color: itemType === 'bat' ? line.handleColor : '',
+          trinity_barrel_color: itemType === 'bat' ? line.barrelColor : '',
+          trinity_band_color: itemType === 'bat' ? line.bandColor : '',
+          trinity_logo_color: itemType === 'bat' ? line.logoColor : '',
+          trinity_engraving: itemType === 'bat' ? line.engraving : '',
+          trinity_cupped: itemType === 'bat' ? line.cupped : '',
+          trinity_notes: itemType === 'bat' ? line.notes : '',
           trinity_product_title: line.title,
           trinity_requires_shipping: requiresShipping ? 'true' : 'false',
         })
@@ -7099,7 +7120,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         if (variantId) {
           return {
             variantId,
-            quantity: Number(line.quantity || 1),
+            quantity: itemType === 'misc' ? 1 : Number(line.quantity || 1),
             ...(unitPrice ? { priceOverride: unitPrice } : {}),
             requiresShipping,
             taxable: false,
@@ -7113,7 +7134,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
             amount: '0',
             currencyCode: shopCurrencyCode,
           },
-          quantity: Number(line.quantity || 1),
+          quantity: itemType === 'misc' ? 1 : Number(line.quantity || 1),
           requiresShipping,
           taxable: false,
           customAttributes,
