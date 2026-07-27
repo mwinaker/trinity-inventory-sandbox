@@ -72,6 +72,11 @@ import {
   getSalesOrderProductionQuantity,
   normalizeSalesOrderItemType,
 } from './sales-order-line-policy.mjs'
+import {
+  formatSalesOrderBatCount,
+  getSalesOrderShippingQuote,
+  normalizeSalesOrderShippingSpeed,
+} from '../shared/sales-order-shipping-policy.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -112,19 +117,11 @@ const draftOrderShippingOptions = {
         process.env.TRINITY_DRAFT_SHIPPING_STANDARD_TITLE ??
           process.env.TRINITY_DRAFT_SHIPPING_TITLE,
       ) || 'Standard Shipping',
-    amount: normalizePositiveMoneyAmount(
-      process.env.TRINITY_DRAFT_SHIPPING_STANDARD_AMOUNT ??
-        process.env.TRINITY_DRAFT_SHIPPING_AMOUNT ??
-        '15.00',
-    ),
   },
   fast: {
     key: 'fast',
     label: 'Fast',
     title: cleanString(process.env.TRINITY_DRAFT_SHIPPING_FAST_TITLE) || 'Fast Shipping',
-    amount: normalizePositiveMoneyAmount(
-      process.env.TRINITY_DRAFT_SHIPPING_FAST_AMOUNT ?? '50.00',
-    ),
   },
   really_fast: {
     key: 'really_fast',
@@ -132,17 +129,11 @@ const draftOrderShippingOptions = {
     title:
       cleanString(process.env.TRINITY_DRAFT_SHIPPING_REALLY_FAST_TITLE) ||
       'Really Fast Shipping',
-    amount: normalizePositiveMoneyAmount(
-      process.env.TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT ?? '75.00',
-    ),
   },
   comped: {
     key: 'comped',
     label: 'Comped',
     title: cleanString(process.env.TRINITY_DRAFT_SHIPPING_COMPED_TITLE) || 'Comped Shipping',
-    amount: normalizeNonNegativeMoneyAmount(
-      process.env.TRINITY_DRAFT_SHIPPING_COMPED_AMOUNT ?? '0.00',
-    ),
   },
 }
 const rushProductionSurchargeTitle =
@@ -3165,7 +3156,7 @@ function buildInternalOrderCopyMessage({
     payer.relationship ? `Relationship: ${payer.relationship}` : '',
     internalAttachment ? `Attachment: ${formatAttachmentLine(internalAttachment)}` : '',
     shippingOption
-      ? `Shipping: ${shippingOption.label} (${shippingOption.title})`
+      ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}`
       : 'Shipping: Local delivery / no shipping required',
     normalizeProductionTimeline(payload.productionTimeline) === 'rush'
       ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
@@ -6737,6 +6728,7 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const playerName = cleanString(payload.playerName || payload.customerName)
   const purchaseOrder = cleanString(payload.purchaseOrder)
   const billingCompany = cleanString(payload.billingCompany)
+  const shippingOption = resolveShippingOption(payload, requiresShippingForOrder(payload))
   const customMessage = [
     'A Trinity Sports Group invoice has been created from an internal sales order.',
     hasProOrder ? 'Order type: Pro Order' : '',
@@ -6744,6 +6736,7 @@ function buildOrderInvoiceEmailInput(payload, order) {
     playerName ? `Player: ${playerName}` : '',
     purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
+    shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
     cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
   ]
     .filter(Boolean)
@@ -6767,6 +6760,7 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
   const billingCompany = cleanString(payload.billingCompany)
   const lineSummary = summarizeSalesOrderLines(payload.lines)
   const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
+  const shippingOption = resolveShippingOption(payload, requiresShippingForOrder(payload))
   const customMessage = [
     'A Trinity Bat Company invoice has been created for your order.',
     invoiceUrl
@@ -6776,6 +6770,7 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
     purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
     lineSummary ? `Order lines: ${lineSummary}` : '',
+    shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
     cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
   ]
     .filter(Boolean)
@@ -6865,7 +6860,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
     requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
-    shippingOption ? `Shipping speed: ${shippingOption.label} (${shippingOption.title})` : '',
+    shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
     productionTimeline === 'rush'
       ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
       : 'Production timeline: Normal',
@@ -6917,6 +6912,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_shipping_speed: shippingOption?.key ?? '',
       trinity_shipping_title: shippingOption?.title ?? '',
       trinity_shipping_amount: shippingOption?.amount ?? '',
+      trinity_shipping_bat_quantity: shippingOption?.batQuantity ?? '',
       trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
       trinity_production_timeline: productionTimeline,
       trinity_rush_production_surcharge: rushSurchargeLine
@@ -7004,7 +7000,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
     requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
-    shippingOption ? `Shipping speed: ${shippingOption.label} (${shippingOption.title})` : '',
+    shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
     productionTimeline === 'rush'
       ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
       : 'Production timeline: Normal',
@@ -7050,6 +7046,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_shipping_speed: shippingOption?.key ?? '',
       trinity_shipping_title: shippingOption?.title ?? '',
       trinity_shipping_amount: shippingOption?.amount ?? '',
+      trinity_shipping_bat_quantity: shippingOption?.batQuantity ?? '',
       trinity_fulfillment_method: requiresShipping ? '' : 'Local delivery',
       trinity_production_timeline: productionTimeline,
       trinity_rush_production_surcharge: rushSurchargeLine
@@ -7158,15 +7155,27 @@ function resolveShippingOption(payload = {}, requiresShipping = true) {
   const shippingSpeed = normalizeShippingSpeed(payload.shippingSpeed)
   const option =
     draftOrderShippingOptions[shippingSpeed] ?? draftOrderShippingOptions[defaultShippingSpeed]
+  const quote = getSalesOrderShippingQuote(
+    shippingSpeed,
+    getSalesOrderProductionQuantity(payload),
+  )
 
-  return option?.amount ? option : null
+  if (!option) return null
+
+  return {
+    ...option,
+    ...quote,
+    title: `${option.title} (${formatSalesOrderBatCount(quote.batQuantity)})`,
+  }
 }
 
 function normalizeShippingSpeed(value) {
-  const key = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
-  return Object.prototype.hasOwnProperty.call(draftOrderShippingOptions, key)
-    ? key
-    : defaultShippingSpeed
+  return normalizeSalesOrderShippingSpeed(value)
+}
+
+function formatSalesOrderShippingCharge(shippingOption) {
+  if (!shippingOption) return ''
+  return `${shippingOption.title} — $${shippingOption.amount} ${shopCurrencyCode}`
 }
 
 function normalizeProductionTimeline(value) {
@@ -7842,12 +7851,6 @@ function requiresShippingForOrder(payload = {}) {
 function normalizePositiveMoneyAmount(value) {
   const amount = Number(cleanString(value))
   if (!Number.isFinite(amount) || amount <= 0) return ''
-  return amount.toFixed(2)
-}
-
-function normalizeNonNegativeMoneyAmount(value) {
-  const amount = Number(cleanString(value))
-  if (!Number.isFinite(amount) || amount < 0) return ''
   return amount.toFixed(2)
 }
 

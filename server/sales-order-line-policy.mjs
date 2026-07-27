@@ -1,3 +1,5 @@
+import { getSalesOrderBatQuantity } from '../shared/sales-order-shipping-policy.mjs'
+
 function cleanString(value) {
   return String(value ?? '').trim()
 }
@@ -7,11 +9,5 @@ export function normalizeSalesOrderItemType(value) {
 }
 
 export function getSalesOrderProductionQuantity(payload = {}) {
-  const lines = Array.isArray(payload.lines) ? payload.lines : []
-
-  return lines.reduce((total, line) => {
-    if (normalizeSalesOrderItemType(line?.itemType) === 'shirt') return total
-    const quantity = Number(line?.quantity || 1)
-    return total + (Number.isFinite(quantity) && quantity > 0 ? quantity : 0)
-  }, 0)
+  return getSalesOrderBatQuantity(payload.lines)
 }

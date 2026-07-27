@@ -34,6 +34,11 @@ import {
 } from '../shared/source-options.mjs'
 import type { BilletSource } from '../shared/source-options.mjs'
 import {
+  formatSalesOrderBatCount,
+  formatSalesOrderShippingOptionLabel,
+  getSalesOrderBatQuantity,
+} from '../shared/sales-order-shipping-policy.mjs'
+import {
   billetSuitabilityOptions,
   isValidWorkableWeightRange,
   normalizeBilletWorkflowStatus,
@@ -664,11 +669,11 @@ const sourceOptions: readonly Source[] = billetSourceOptions
 const cupOptions: ProducedBatRecord['cupped'][] = ['Yes', 'No']
 const manualCupOptions: SalesOrderLineDraft['cupped'][] = ['No', 'Yes']
 const rushProductionSurchargeUnitAmount = 50
-const shippingSpeedOptions: Array<{ value: ShippingSpeedOption; label: string }> = [
-  { value: 'standard', label: 'Standard' },
-  { value: 'fast', label: 'Fast' },
-  { value: 'really_fast', label: 'Really fast' },
-  { value: 'comped', label: 'Comped' },
+const shippingSpeedOptionValues: ShippingSpeedOption[] = [
+  'standard',
+  'fast',
+  'really_fast',
+  'comped',
 ]
 const productionTimelineOptions: Array<{ value: ProductionTimelineOption; label: string }> = [
   { value: 'normal', label: 'Normal' },
@@ -3979,6 +3984,11 @@ function SalesOrderFormFields({
 }: SalesOrderFormFieldsProps) {
   const batCatalog = shopifyCatalog.filter((product) => product.orderItemType !== 'shirt')
   const shirtCatalog = shopifyCatalog.filter((product) => product.orderItemType === 'shirt')
+  const shippingBatQuantity = getSalesOrderBatQuantity(draft.lines)
+  const shippingSpeedOptions = shippingSpeedOptionValues.map((value) => ({
+    value,
+    label: formatSalesOrderShippingOptionLabel(value, shippingBatQuantity),
+  }))
 
   return (
     <>
@@ -4057,6 +4067,7 @@ function SalesOrderFormFields({
         <label>
           Shipping speed
           <select
+            aria-label="Shipping speed"
             value={draft.shippingSpeed}
             disabled={!draft.requiresShipping}
             onChange={(event) =>
@@ -4069,6 +4080,11 @@ function SalesOrderFormFields({
               </option>
             ))}
           </select>
+          <span className="helper-text">
+            {draft.requiresShipping
+              ? `Calculated automatically from ${formatSalesOrderBatCount(shippingBatQuantity)}. Shirts do not increase the bat shipping tier.`
+              : 'No shipping charge for local delivery.'}
+          </span>
         </label>
         <label>
           Production timeline

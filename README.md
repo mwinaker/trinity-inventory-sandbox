@@ -44,10 +44,8 @@ Required environment variables:
 - `TRINITY_INTERNAL_EMAIL_REPLY_TO` (optional reply-to address when using Resend)
 - Manual-order attachments are uploaded to Shopify Files and linked from the order, production job, and internal order-copy email. Attachments must be 20 MB or smaller.
 - `SHOPIFY_CURRENCY_CODE` (optional, defaults to `USD` for manual order unit-price overrides)
-- `TRINITY_DRAFT_SHIPPING_TITLE` / `TRINITY_DRAFT_SHIPPING_AMOUNT` (optional standard shipping fallback; defaults to `Standard Shipping` / `15.00`)
-- `TRINITY_DRAFT_SHIPPING_FAST_TITLE` / `TRINITY_DRAFT_SHIPPING_FAST_AMOUNT` (optional, defaults to `Fast Shipping` / `50.00`)
-- `TRINITY_DRAFT_SHIPPING_REALLY_FAST_TITLE` / `TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT` (optional, defaults to `Really Fast Shipping` / `75.00`)
-- `TRINITY_DRAFT_SHIPPING_COMPED_TITLE` / `TRINITY_DRAFT_SHIPPING_COMPED_AMOUNT` (optional, defaults to `Comped Shipping` / `0.00`)
+- Manual-order shipping is calculated from bat quantity: standard is `$15.00` for up to 3 bats, `$30.00` for 4–6 bats, and `$50.00` for 7+ bats. Fast and really-fast shipping are `$100.00` above 3 bats; otherwise they are `$50.00` and `$75.00`. Shirts do not count toward these tiers, and comped shipping remains `$0.00`.
+- `TRINITY_DRAFT_SHIPPING_TITLE`, `TRINITY_DRAFT_SHIPPING_FAST_TITLE`, `TRINITY_DRAFT_SHIPPING_REALLY_FAST_TITLE`, and `TRINITY_DRAFT_SHIPPING_COMPED_TITLE` optionally customize the shipping-line titles without changing the quantity-based prices.
 - `TRINITY_RUSH_PRODUCTION_TITLE` / `TRINITY_RUSH_PRODUCTION_AMOUNT` (optional, defaults to `Rush Production Surcharge` / `50.00` per bat)
 - `GA4_MEASUREMENT_ID` (analytics collector only; optional, enables server-side GA4 ecommerce forwarding)
 - `GA4_API_SECRET` (analytics collector only; optional, required with `GA4_MEASUREMENT_ID`)

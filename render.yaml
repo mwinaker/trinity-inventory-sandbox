@@ -20,20 +20,12 @@ services:
         value: 2026-01
       - key: TRINITY_DRAFT_SHIPPING_TITLE
         value: Standard Shipping
-      - key: TRINITY_DRAFT_SHIPPING_AMOUNT
-        value: '15.00'
       - key: TRINITY_DRAFT_SHIPPING_FAST_TITLE
         value: Fast Shipping
-      - key: TRINITY_DRAFT_SHIPPING_FAST_AMOUNT
-        value: '50.00'
       - key: TRINITY_DRAFT_SHIPPING_REALLY_FAST_TITLE
         value: Really Fast Shipping
-      - key: TRINITY_DRAFT_SHIPPING_REALLY_FAST_AMOUNT
-        value: '75.00'
       - key: TRINITY_DRAFT_SHIPPING_COMPED_TITLE
         value: Comped Shipping
-      - key: TRINITY_DRAFT_SHIPPING_COMPED_AMOUNT
-        value: '0.00'
       - key: TRINITY_RUSH_PRODUCTION_TITLE
         value: Rush Production Surcharge
       - key: TRINITY_RUSH_PRODUCTION_AMOUNT
