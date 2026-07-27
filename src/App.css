@@ -674,6 +674,21 @@ button:hover {
   max-width: 100%;
 }
 
+.order-line-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.order-line-actions button {
+  margin: 0;
+}
+
+.shirt-selection-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .billing-toggle {
   width: fit-content;
   max-width: 100%;
@@ -2644,6 +2659,7 @@ td select {
 
 @media (max-width: 620px) {
   .form-row,
+  .order-line-actions,
   .build-grid,
   .filters,
   .billet-classification-row {

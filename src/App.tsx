@@ -238,6 +238,7 @@ type ShopifyCatalogProduct = {
   status: string
   tags: string[]
   imageUrl: string
+  orderItemType?: SalesOrderItemType
   variants: {
     id: string
     title: string
@@ -294,6 +295,7 @@ type OrderAttachment = {
 
 type OrderJob = {
   id: string
+  itemType: SalesOrderItemType
   origin: OrderOrigin
   intakeId: string
   playerProfileId: string
@@ -348,9 +350,11 @@ type OrderJob = {
 
 type SalesOrderLineDraft = {
   id: string
+  itemType: SalesOrderItemType
   isProOrder: boolean
   productId: string
   variantId: string
+  variantTitle: string
   title: string
   quantity: number
   unitPrice: string
@@ -366,6 +370,7 @@ type SalesOrderLineDraft = {
   notes: string
 }
 
+type SalesOrderItemType = 'bat' | 'shirt'
 type ShippingSpeedOption = 'standard' | 'fast' | 'really_fast' | 'comped'
 type ProductionTimelineOption = 'normal' | 'rush'
 const maxSalesOrderAttachmentBytes = 20 * 1024 * 1024
@@ -1141,11 +1146,13 @@ const emptyProducedBat: Omit<ProducedBatRecord, 'id' | 'createdAt'> = {
   modifications: '',
 }
 
-const emptySalesLine = (): SalesOrderLineDraft => ({
+const emptySalesLine = (itemType: SalesOrderItemType = 'bat'): SalesOrderLineDraft => ({
   id: createId('sales-line'),
+  itemType,
   isProOrder: false,
   productId: '',
   variantId: '',
+  variantTitle: '',
   title: '',
   quantity: 1,
   unitPrice: '',
@@ -1480,6 +1487,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
 
   return {
     id: record.id,
+    itemType: record.itemType === 'shirt' ? 'shirt' : 'bat',
     origin: record.origin === 'internal_sales' ? 'internal_sales' : 'website',
     intakeId: record.intakeId ?? '',
     playerProfileId: record.playerProfileId ?? '',
@@ -2094,6 +2102,14 @@ function getOrderJobLineSummaries(job: OrderJob) {
   const parsedNoteSummaries = getManualOrderNoteLineSummaries(job)
   if (parsedNoteSummaries.length > 0) return parsedNoteSummaries
 
+  if (job.itemType === 'shirt') {
+    return [
+      `${job.quantity} × ${job.productTitle || 'Trinity shirt'}${
+        job.variantTitle ? ` / ${job.variantTitle}` : ''
+      }`,
+    ]
+  }
+
   const dimensions = [
     job.specs.length ? `${job.specs.length}"` : '',
     job.specs.targetWeight ? `${job.specs.targetWeight} oz` : '',
@@ -2319,7 +2335,14 @@ function createSalesDashboardSaleFromPortalOrder(order: SalesPortalOrder): Sales
     total: order.total,
     quantity: order.draft.lines.reduce((total, line) => total + line.quantity, 0),
     lineCount: order.draft.lines.length,
-    productSummary: order.draft.lines.map((line) => line.title || 'Custom bat').join(', '),
+    productSummary: order.draft.lines
+      .map(
+        (line) =>
+          `${line.title || (line.itemType === 'shirt' ? 'Trinity shirt' : 'Custom bat')}${
+            line.variantTitle ? ` / ${line.variantTitle}` : ''
+          }`,
+      )
+      .join(', '),
   }
 }
 
@@ -3747,6 +3770,7 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   const hasInvalidLine = draft.lines.some(
     (line) =>
       !line.title.trim() ||
+      (line.itemType === 'shirt' && (!line.productId || !line.variantId)) ||
       !line.unitPrice.trim() ||
       !Number.isFinite(Number(line.unitPrice)) ||
       Number(line.unitPrice) < 0 ||
@@ -3917,7 +3941,7 @@ type SalesOrderFormFieldsProps = {
   setDraft: Dispatch<SetStateAction<SalesOrderDraft>>
   updateField: SalesOrderDraftFieldUpdater
   updateLine: (id: string, patch: Partial<SalesOrderLineDraft>) => void
-  addLine: () => void
+  addLine: (itemType?: SalesOrderItemType) => void
   removeLine: (id: string) => void
   shopifyCatalog: ShopifyCatalogProduct[]
   productDatalistId: string
@@ -3953,6 +3977,9 @@ function SalesOrderFormFields({
   hideSalesRepFields = false,
   draftOnly = false,
 }: SalesOrderFormFieldsProps) {
+  const batCatalog = shopifyCatalog.filter((product) => product.orderItemType !== 'shirt')
+  const shirtCatalog = shopifyCatalog.filter((product) => product.orderItemType === 'shirt')
+
   return (
     <>
       <div className={`form-row ${draft.billingDifferent ? 'single-field-row' : ''}`}>
@@ -4173,12 +4200,16 @@ function SalesOrderFormFields({
       <div className="sales-line-list">
         {draft.lines.map((line, index) => {
           const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
+          const lineVariant = lineProduct?.variants.find((variant) => variant.id === line.variantId)
           const productInputValue = line.isProOrder
             ? line.title
             : (lineProduct?.name ?? line.title)
-          const lineTitle = line.isProOrder
-            ? line.title || 'Pro custom bat'
-            : lineProduct?.name || line.title || 'Custom bat'
+          const lineTitle =
+            line.itemType === 'shirt'
+              ? lineProduct?.name || line.title || 'Shirt'
+              : line.isProOrder
+                ? line.title || 'Pro custom bat'
+                : lineProduct?.name || line.title || 'Custom bat'
 
           return (
             <article className="sales-line-card" key={line.id}>
@@ -4198,74 +4229,147 @@ function SalesOrderFormFields({
                 ) : null}
               </div>
 
-              <label className="checkbox-row pro-order-toggle">
-                <input
-                  type="checkbox"
-                  checked={line.isProOrder}
-                  onChange={(event) => {
-                    const isProOrder = event.target.checked
-                    if (isProOrder) {
-                      updateLine(line.id, {
-                        isProOrder,
-                        productId: '',
-                        variantId: '',
-                        title: line.title || lineProduct?.name || '',
-                      })
-                      return
-                    }
-
-                    updateLine(line.id, {
-                      isProOrder,
-                      ...getTypedBatModelPatch(shopifyCatalog, line.title, line),
-                    })
-                  }}
-                />
-                <span>MLB/MILB Order</span>
-              </label>
-
-              <div className="form-row">
-                <label>
-                  Bat model
-                  <input
-                    list={line.isProOrder ? undefined : productDatalistId}
-                    value={productInputValue}
-                    placeholder={
-                      line.isProOrder
-                        ? 'Example: T141 pro custom'
-                        : 'Type a model or choose a Shopify product'
-                    }
-                    onChange={(event) => {
-                      const typedProduct = event.target.value
-                      if (line.isProOrder) {
+              {line.itemType === 'shirt' ? (
+                <div className="form-row shirt-order-fields">
+                  <label>
+                    Shirt
+                    <select
+                      value={line.productId}
+                      onChange={(event) => {
+                        const product = shirtCatalog.find(
+                          (catalogProduct) => catalogProduct.id === event.target.value,
+                        )
+                        const firstVariant = product?.variants[0]
                         updateLine(line.id, {
-                          productId: '',
-                          variantId: '',
-                          title: typedProduct,
+                          isProOrder: false,
+                          productId: product?.id ?? '',
+                          variantId: firstVariant?.id ?? '',
+                          variantTitle: firstVariant?.title ?? '',
+                          title: product?.name ?? '',
+                          unitPrice: firstVariant?.price ?? '',
                         })
-                        return
-                      }
+                      }}
+                    >
+                      <option value="">Select a shirt</option>
+                      {shirtCatalog.map((product) => (
+                        <option key={product.id} value={product.id}>
+                          {product.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Size
+                    <select
+                      value={line.variantId}
+                      disabled={!lineProduct}
+                      onChange={(event) => {
+                        const variant = lineProduct?.variants.find(
+                          (productVariant) => productVariant.id === event.target.value,
+                        )
+                        updateLine(line.id, {
+                          variantId: variant?.id ?? '',
+                          variantTitle: variant?.title ?? '',
+                          unitPrice: variant?.price ?? line.unitPrice,
+                        })
+                      }}
+                    >
+                      <option value="">Select a size</option>
+                      {lineProduct?.variants.map((variant) => (
+                        <option key={variant.id} value={variant.id}>
+                          {variant.title}
+                          {variant.inventoryQuantity > 0
+                            ? ` · ${variant.inventoryQuantity} in stock`
+                            : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {lineProduct && lineVariant ? (
+                    <p className="helper-text shirt-selection-summary">
+                      {lineProduct.name} · {lineVariant.title}
+                    </p>
+                  ) : null}
+                  {shirtCatalog.length === 0 ? (
+                    <p className="helper-text shirt-selection-summary">
+                      No live Shopify shirts are available right now.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <>
+                  <label className="checkbox-row pro-order-toggle">
+                    <input
+                      type="checkbox"
+                      checked={line.isProOrder}
+                      onChange={(event) => {
+                        const isProOrder = event.target.checked
+                        if (isProOrder) {
+                          updateLine(line.id, {
+                            isProOrder,
+                            productId: '',
+                            variantId: '',
+                            variantTitle: '',
+                            title: line.title || lineProduct?.name || '',
+                          })
+                          return
+                        }
 
-                      updateLine(line.id, getTypedBatModelPatch(shopifyCatalog, typedProduct, line))
-                    }}
-                  />
-                </label>
-                <label>
-                  Wood species
-                  <select
-                    value={line.wood}
-                    onChange={(event) =>
-                      updateLine(line.id, {
-                        wood: event.target.value as SalesOrderLineDraft['wood'],
-                      })
-                    }
-                  >
-                    {speciesOptions.map((species) => (
-                      <option key={species}>{species}</option>
-                    ))}
-                    <option>Other</option>
-                  </select>
-                </label>
-              </div>
+                        updateLine(line.id, {
+                          isProOrder,
+                          ...getTypedBatModelPatch(batCatalog, line.title, line),
+                        })
+                      }}
+                    />
+                    <span>MLB/MILB Order</span>
+                  </label>
+
+                  <div className="form-row">
+                    <label>
+                      Bat model
+                      <input
+                        list={line.isProOrder ? undefined : productDatalistId}
+                        value={productInputValue}
+                        placeholder={
+                          line.isProOrder
+                            ? 'Example: T141 pro custom'
+                            : 'Type a model or choose a Shopify product'
+                        }
+                        onChange={(event) => {
+                          const typedProduct = event.target.value
+                          if (line.isProOrder) {
+                            updateLine(line.id, {
+                              productId: '',
+                              variantId: '',
+                              variantTitle: '',
+                              title: typedProduct,
+                            })
+                            return
+                          }
+
+                          updateLine(line.id, getTypedBatModelPatch(batCatalog, typedProduct, line))
+                        }}
+                      />
+                    </label>
+                    <label>
+                      Wood species
+                      <select
+                        value={line.wood}
+                        onChange={(event) =>
+                          updateLine(line.id, {
+                            wood: event.target.value as SalesOrderLineDraft['wood'],
+                          })
+                        }
+                      >
+                        {speciesOptions.map((species) => (
+                          <option key={species}>{species}</option>
+                        ))}
+                        <option>Other</option>
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
 
               <div className="form-row">
                 <label>
@@ -4288,114 +4392,123 @@ function SalesOrderFormFields({
                 </label>
               </div>
 
-              <div className="form-row">
-                <label>
-                  Length
-                  <input
-                    value={line.length}
-                    placeholder="Example: 34"
-                    onChange={(event) => updateLine(line.id, { length: event.target.value })}
-                  />
-                </label>
-                <label>
-                  Weight
-                  <input
-                    value={line.targetWeight}
-                    placeholder="Example: 31.5"
-                    onChange={(event) => updateLine(line.id, { targetWeight: event.target.value })}
-                  />
-                </label>
-              </div>
+              {line.itemType === 'bat' ? (
+                <>
+                  <div className="form-row">
+                    <label>
+                      Length
+                      <input
+                        value={line.length}
+                        placeholder="Example: 34"
+                        onChange={(event) => updateLine(line.id, { length: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Weight
+                      <input
+                        value={line.targetWeight}
+                        placeholder="Example: 31.5"
+                        onChange={(event) => updateLine(line.id, { targetWeight: event.target.value })}
+                      />
+                    </label>
+                  </div>
 
-              <div className="form-row">
-                <label>
-                  Handle color
-                  <select
-                    value={line.handleColor}
-                    onChange={(event) => updateLine(line.id, { handleColor: event.target.value })}
-                  >
-                    <option value="">Select handle color</option>
-                    {handleColorOptions.map((color) => (
-                      <option key={color}>{color}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Barrel color
-                  <select
-                    value={line.barrelColor}
-                    onChange={(event) => updateLine(line.id, { barrelColor: event.target.value })}
-                  >
-                    <option value="">Select barrel color</option>
-                    {barrelColorOptions.map((color) => (
-                      <option key={color}>{color}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+                  <div className="form-row">
+                    <label>
+                      Handle color
+                      <select
+                        value={line.handleColor}
+                        onChange={(event) => updateLine(line.id, { handleColor: event.target.value })}
+                      >
+                        <option value="">Select handle color</option>
+                        {handleColorOptions.map((color) => (
+                          <option key={color}>{color}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Barrel color
+                      <select
+                        value={line.barrelColor}
+                        onChange={(event) => updateLine(line.id, { barrelColor: event.target.value })}
+                      >
+                        <option value="">Select barrel color</option>
+                        {barrelColorOptions.map((color) => (
+                          <option key={color}>{color}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
 
-              <div className="form-row">
-                <label>
-                  Band color
-                  <select
-                    value={line.bandColor}
-                    onChange={(event) => updateLine(line.id, { bandColor: event.target.value })}
-                  >
-                    <option value="">Select band color</option>
-                    {bandColorOptions.map((color) => (
-                      <option key={color}>{color}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Logo color
-                  <select
-                    value={line.logoColor}
-                    onChange={(event) => updateLine(line.id, { logoColor: event.target.value })}
-                  >
-                    <option value="">Select logo color</option>
-                    {logoColorOptions.map((color) => (
-                      <option key={color}>{color}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+                  <div className="form-row">
+                    <label>
+                      Band color
+                      <select
+                        value={line.bandColor}
+                        onChange={(event) => updateLine(line.id, { bandColor: event.target.value })}
+                      >
+                        <option value="">Select band color</option>
+                        {bandColorOptions.map((color) => (
+                          <option key={color}>{color}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Logo color
+                      <select
+                        value={line.logoColor}
+                        onChange={(event) => updateLine(line.id, { logoColor: event.target.value })}
+                      >
+                        <option value="">Select logo color</option>
+                        {logoColorOptions.map((color) => (
+                          <option key={color}>{color}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
 
-              <div className="form-row">
-                <label>
-                  Cup
-                  <select
-                    value={line.cupped}
-                    onChange={(event) =>
-                      updateLine(line.id, {
-                        cupped: event.target.value as SalesOrderLineDraft['cupped'],
-                      })
-                    }
-                  >
-                    {manualCupOptions.map((cup) => (
-                      <option key={cup} value={cup}>
-                        {cup === 'Yes' ? 'Cup' : 'No cup'}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Engraving
-                  <input
-                    value={line.engraving}
-                    placeholder="Player name, signature, or custom text"
-                    onChange={(event) => updateLine(line.id, { engraving: event.target.value })}
-                  />
-                </label>
-              </div>
+                  <div className="form-row">
+                    <label>
+                      Cup
+                      <select
+                        value={line.cupped}
+                        onChange={(event) =>
+                          updateLine(line.id, {
+                            cupped: event.target.value as SalesOrderLineDraft['cupped'],
+                          })
+                        }
+                      >
+                        {manualCupOptions.map((cup) => (
+                          <option key={cup} value={cup}>
+                            {cup === 'Yes' ? 'Cup' : 'No cup'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Engraving
+                      <input
+                        value={line.engraving}
+                        placeholder="Player name, signature, or custom text"
+                        onChange={(event) => updateLine(line.id, { engraving: event.target.value })}
+                      />
+                    </label>
+                  </div>
+                </>
+              ) : null}
             </article>
           )
         })}
       </div>
 
-      <button type="button" className="secondary-button" onClick={addLine}>
-        Add new product
-      </button>
+      <div className="order-line-actions">
+        <button type="button" className="secondary-button" onClick={() => addLine('bat')}>
+          Add another bat
+        </button>
+        <button type="button" className="secondary-button" onClick={() => addLine('shirt')}>
+          Add a shirt
+        </button>
+      </div>
 
       <div className="attachment-field">
         <label>
@@ -4483,7 +4596,11 @@ function findShopifyCatalogProductByName(
   const normalizedModelName = typedModelName.trim().toLowerCase()
   if (!normalizedModelName) return undefined
 
-  return catalog.find((product) => product.name.trim().toLowerCase() === normalizedModelName)
+  return catalog.find(
+    (product) =>
+      product.orderItemType !== 'shirt' &&
+      product.name.trim().toLowerCase() === normalizedModelName,
+  )
 }
 
 function getTypedBatModelPatch(
@@ -4497,6 +4614,7 @@ function getTypedBatModelPatch(
   return {
     productId: product?.id ?? '',
     variantId: '',
+    variantTitle: '',
     title: product?.name ?? typedModelName,
     unitPrice: firstVariant?.price ?? currentLine.unitPrice,
   }
@@ -4648,7 +4766,7 @@ function PublicSalesOrderForm() {
 
     async function loadCatalog() {
       try {
-        const response = await fetchApi('/api/catalog', { cache: 'no-store' })
+        const response = await fetchApi('/api/catalog?scope=sales-order', { cache: 'no-store' })
         if (!response.ok) throw new Error('Catalog unavailable')
         const payload = (await response.json()) as { products?: ShopifyCatalogProduct[] }
         if (!cancelled) {
@@ -4685,10 +4803,10 @@ function PublicSalesOrderForm() {
     }))
   }
 
-  function addSalesLine() {
+  function addSalesLine(itemType: SalesOrderItemType = 'bat') {
     setSalesOrderDraft((current) => ({
       ...current,
-      lines: [...current.lines, emptySalesLine()],
+      lines: [...current.lines, emptySalesLine(itemType)],
     }))
   }
 
@@ -4704,7 +4822,7 @@ function PublicSalesOrderForm() {
 
     if (hasInvalidSalesOrderDraft(salesOrderDraft)) {
       setMessage(
-        'Add the player, payer phone, shipping address, bat model, unit price, and complete each line before submitting. If entered, the payer email must be valid.',
+        'Add the player, payer phone, shipping address, product, unit price, and complete each line before submitting. Shirts also need a style and size. If entered, the payer email must be valid.',
       )
       return
     }
@@ -4805,8 +4923,8 @@ function PublicSalesOrderForm() {
         </div>
         <h1>Sales order submission</h1>
         <p>
-          Submit phone, team, pro, and custom bat orders into the same Shopify and production
-          queue used by the internal command center.
+          Submit phone, team, pro, custom bat, and shirt orders through the same Shopify workflow
+          used by the internal command center.
         </p>
         <span>{isLoadingCatalog ? 'Loading product catalog...' : 'Live Shopify order intake'}</span>
       </section>
@@ -4930,7 +5048,7 @@ function PublicSalesOrderForm() {
       <section className="panel public-order-panel">
         <form className="bat-form order-intake-form public-order-form" onSubmit={submitSalesOrder}>
           <datalist id="public-shopify-bat-products">
-            {shopifyCatalog.map((product) => (
+            {shopifyCatalog.filter((product) => product.orderItemType !== 'shirt').map((product) => (
               <option key={product.id} value={product.name} />
             ))}
           </datalist>
@@ -5163,6 +5281,7 @@ function InternalApp({
   const [costSourceFilter, setCostSourceFilter] = useState<'all' | Source>('all')
   const [costSpeciesFilter, setCostSpeciesFilter] = useState<'all' | Species>('all')
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
+  const [salesOrderCatalog, setSalesOrderCatalog] = useState<ShopifyCatalogProduct[]>([])
   const [backendStatus, setBackendStatus] = useState<
     'connecting' | 'connected' | 'offline' | 'unauthorized'
   >(
@@ -5468,16 +5587,34 @@ function InternalApp({
 
     async function loadCatalog() {
       try {
-        const response = await fetchApi('/api/catalog')
-        if (!response.ok) throw new Error('Catalog unavailable')
-        const payload = (await response.json()) as {
+        const [catalogResponse, salesOrderCatalogResponse] = await Promise.all([
+          fetchApi('/api/catalog'),
+          fetchApi('/api/catalog?scope=sales-order'),
+        ])
+        if (!catalogResponse.ok || !salesOrderCatalogResponse.ok) {
+          throw new Error('Catalog unavailable')
+        }
+        const catalogPayload = (await catalogResponse.json()) as {
           products?: ShopifyCatalogProduct[]
         }
-        if (!cancelled && Array.isArray(payload.products)) {
-          setShopifyCatalog(payload.products)
+        const salesOrderCatalogPayload = (await salesOrderCatalogResponse.json()) as {
+          products?: ShopifyCatalogProduct[]
+        }
+        if (!cancelled) {
+          setShopifyCatalog(
+            Array.isArray(catalogPayload.products) ? catalogPayload.products : [],
+          )
+          setSalesOrderCatalog(
+            Array.isArray(salesOrderCatalogPayload.products)
+              ? salesOrderCatalogPayload.products
+              : [],
+          )
         }
       } catch {
-        if (!cancelled) setShopifyCatalog([])
+        if (!cancelled) {
+          setShopifyCatalog([])
+          setSalesOrderCatalog([])
+        }
       }
     }
 
@@ -5675,9 +5812,13 @@ function InternalApp({
     () => new Map(billets.map((billet) => [billet.id, billet])),
     [billets],
   )
-  const assignedBilletIds = useMemo(
-    () => new Set(orderJobs.map((job) => job.assignedBilletId).filter(Boolean)),
+  const productionOrderJobs = useMemo(
+    () => orderJobs.filter((job) => job.itemType !== 'shirt'),
     [orderJobs],
+  )
+  const assignedBilletIds = useMemo(
+    () => new Set(productionOrderJobs.map((job) => job.assignedBilletId).filter(Boolean)),
+    [productionOrderJobs],
   )
   const selectedProducedBatModel = useMemo(
     () => allBatModels.find((model) => model.id === producedBatDraft.modelId) ?? null,
@@ -5700,22 +5841,22 @@ function InternalApp({
   )
   const openOrderJobs = useMemo(
     () =>
-      orderJobs.filter(
+      productionOrderJobs.filter(
         (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
       ),
-    [orderJobs],
+    [productionOrderJobs],
   )
   const readyOrderJobs = useMemo(
     () =>
-      orderJobs.filter(
+      productionOrderJobs.filter(
         (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
       ),
-    [orderJobs],
+    [productionOrderJobs],
   )
   const normalizedOrderQuery = orderQuery.toLowerCase()
   const filteredOrderJobs = useMemo(
     () =>
-      orderJobs.filter((job) => {
+      productionOrderJobs.filter((job) => {
         const matchesStatus =
           orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
         if (!matchesStatus) return false
@@ -5766,7 +5907,7 @@ function InternalApp({
 
         return searchable.includes(normalizedOrderQuery)
       }),
-    [billetById, normalizedOrderQuery, orderJobs, orderStatusFilter],
+    [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs],
   )
   const salesDashboardAllSales = useMemo(() => buildSalesDashboardSales(orderJobs), [orderJobs])
   const salesDashboardRepOptions = useMemo(
@@ -6141,10 +6282,10 @@ function InternalApp({
     }))
   }
 
-  function addSalesLine() {
+  function addSalesLine(itemType: SalesOrderItemType = 'bat') {
     setSalesOrderDraft((current) => ({
       ...current,
-      lines: [...current.lines, emptySalesLine()],
+      lines: [...current.lines, emptySalesLine(itemType)],
     }))
   }
 
@@ -6207,6 +6348,7 @@ function InternalApp({
     const hasInvalidLine = salesOrderDraft.lines.some(
       (line) =>
         !line.title.trim() ||
+        (line.itemType === 'shirt' && (!line.productId || !line.variantId)) ||
         !line.unitPrice.trim() ||
         !Number.isFinite(Number(line.unitPrice)) ||
         Number(line.unitPrice) < 0 ||
@@ -6223,7 +6365,7 @@ function InternalApp({
       hasInvalidLine
     ) {
       setOrderActionMessage(
-        'Add the player, payer phone, shipping address, bat model, unit price, and complete each line before creating the order. If entered, the payer email must be valid.',
+        'Add the player, payer phone, shipping address, product, unit price, and complete each line before creating the order. Shirts also need a style and size. If entered, the payer email must be valid.',
       )
       return
     }
@@ -8072,7 +8214,8 @@ function InternalApp({
                 <p>
                   Sales reps can enter phone, team, or custom orders here. The app creates
                   the Shopify order, triggers the same staff order notifications as the site,
-                  sends the invoice when selected, and drops each line into the production queue.
+                  sends the invoice when selected, and drops each bat line into the production
+                  queue.
                 </p>
               </div>
 
@@ -8083,9 +8226,11 @@ function InternalApp({
               </datalist>
 
               <datalist id="shopify-bat-products">
-                {shopifyCatalog.map((product) => (
+                {salesOrderCatalog
+                  .filter((product) => product.orderItemType !== 'shirt')
+                  .map((product) => (
                   <option key={product.id} value={product.name} />
-                ))}
+                  ))}
               </datalist>
 
               <datalist id="billing-contact-options">
@@ -8101,7 +8246,7 @@ function InternalApp({
                 updateLine={updateSalesLine}
                 addLine={addSalesLine}
                 removeLine={removeSalesLine}
-                shopifyCatalog={shopifyCatalog}
+                shopifyCatalog={salesOrderCatalog}
                 productDatalistId="shopify-bat-products"
                 playerNameDatalistId="player-name-options"
                 billingContactDatalistId="billing-contact-options"
@@ -8129,11 +8274,15 @@ function InternalApp({
             </article>
             <article>
               <span>Website jobs</span>
-              <strong>{orderJobs.filter((job) => job.origin === 'website').length}</strong>
+              <strong>
+                {productionOrderJobs.filter((job) => job.origin === 'website').length}
+              </strong>
             </article>
             <article>
               <span>Sales intake</span>
-              <strong>{orderJobs.filter((job) => job.origin === 'internal_sales').length}</strong>
+              <strong>
+                {productionOrderJobs.filter((job) => job.origin === 'internal_sales').length}
+              </strong>
             </article>
           </section>
 
@@ -11070,7 +11219,7 @@ function SalesPortalApp() {
         setIsLoadingPortalData(true)
         const [stateResponse, catalogResponse] = await Promise.all([
           fetchApi('/api/sales-portal/state', { cache: 'no-store' }),
-          fetchApi('/api/catalog', { cache: 'no-store' }),
+          fetchApi('/api/catalog?scope=sales-order', { cache: 'no-store' }),
         ])
         const statePayload = (await stateResponse.json()) as SalesPortalApiResponse
         const catalogPayload = (await catalogResponse.json()) as { products?: ShopifyCatalogProduct[] }
@@ -11388,7 +11537,7 @@ function SalesPortalApp() {
     }
     if (hasInvalidSalesOrderDraft(draft)) {
       setPortalMessage(
-        'Add player, payer phone, shipping info, bat model, and price. If entered, the payer email must be valid.',
+        'Add player, payer phone, shipping info, product, and price. Shirts also need a style and size. If entered, the payer email must be valid.',
       )
       return
     }
@@ -11990,7 +12139,7 @@ function SalesPortalApp() {
               <h2>Sales order</h2>
             </div>
             <datalist id="portal-shopify-bat-products">
-              {shopifyCatalog.map((product) => (
+              {shopifyCatalog.filter((product) => product.orderItemType !== 'shirt').map((product) => (
                 <option key={product.id} value={product.name} />
               ))}
             </datalist>
@@ -12004,10 +12153,10 @@ function SalesPortalApp() {
               setDraft={setOrderDraft}
               updateField={updatePortalSalesDraftField}
               updateLine={updatePortalSalesLine}
-              addLine={() =>
+              addLine={(itemType = 'bat') =>
                 setOrderDraft((current) => ({
                   ...current,
-                  lines: [...current.lines, emptySalesLine()],
+                  lines: [...current.lines, emptySalesLine(itemType)],
                 }))
               }
               removeLine={(id) =>

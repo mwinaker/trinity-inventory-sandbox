@@ -227,7 +227,8 @@ export function getSalesOrderBoundsError(payload) {
     }
 
     const lineTextFields = [
-      ['bat model', line?.title || line?.model, 200],
+      ['product', line?.title || line?.model, 200],
+      ['variant', line?.variantTitle, 200],
       ['engraving', line?.engraving, 500],
       ['notes', line?.notes, 2000],
     ]

@@ -63,6 +63,15 @@ import {
   needsSalesRepPlayerEmailProtection,
   protectSalesRepPlayerEmail,
 } from './sales-order-contact-policy.mjs'
+import {
+  isBatProductLike,
+  isSalesOrderCatalogProduct,
+  isShirtProductLike,
+} from './product-catalog-policy.mjs'
+import {
+  getSalesOrderProductionQuantity,
+  normalizeSalesOrderItemType,
+} from './sales-order-line-policy.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -1354,7 +1363,7 @@ app.get('/api/billets/game-model-matches', requireSalesPortalAdminOrInternalAcce
   }
 })
 
-app.get('/api/catalog', async (_request, response) => {
+app.get('/api/catalog', async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
       response.status(503).json({
@@ -1364,7 +1373,10 @@ app.get('/api/catalog', async (_request, response) => {
       return
     }
 
-    const { products, cacheStatus } = await getCatalogProducts()
+    const { products, cacheStatus } =
+      cleanString(request.query.scope) === 'sales-order'
+        ? await getSalesOrderCatalogProducts()
+        : await getCatalogProducts()
     response.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=600')
     response.set('X-Trinity-Catalog-Cache', cacheStatus)
     response.json({ ok: true, products })
@@ -3987,7 +3999,7 @@ function primeCatalogCache(products) {
   catalogCachePromise = null
 }
 
-async function getCatalogProducts() {
+async function getCatalogSourceProducts() {
   const now = Date.now()
   if (catalogCacheValue && catalogCacheExpiresAt > now) {
     return { products: catalogCacheValue, cacheStatus: 'hit' }
@@ -4013,6 +4025,16 @@ async function getCatalogProducts() {
 
     throw error
   }
+}
+
+async function getCatalogProducts() {
+  const { products, cacheStatus } = await getCatalogSourceProducts()
+  return { products: products.filter(isBatProductLike), cacheStatus }
+}
+
+async function getSalesOrderCatalogProducts() {
+  const { products, cacheStatus } = await getCatalogSourceProducts()
+  return { products: products.filter(isSalesOrderCatalogProduct), cacheStatus }
 }
 
 async function loadSharedState() {
@@ -4962,9 +4984,7 @@ async function listCatalogProducts() {
     const connection = result?.data?.products
     const nodes = connection?.nodes ?? []
     allProducts.push(
-      ...nodes
-        .filter(isBatProductLike)
-        .map((product) => ({
+      ...nodes.map((product) => ({
           id: product.id,
           name: product.title,
           category: product.productType || 'Uncategorized',
@@ -4973,6 +4993,7 @@ async function listCatalogProducts() {
           status: product.status,
           tags: product.tags ?? [],
           imageUrl: product.featuredImage?.url ?? '',
+          orderItemType: isShirtProductLike(product) ? 'shirt' : 'bat',
           variants: (product.variants?.nodes ?? []).map((variant) => ({
             id: variant.id,
             title: variant.title,
@@ -6370,10 +6391,14 @@ function validateSalesOrderPayload(payload) {
 
   for (const [index, line] of lines.entries()) {
     const title = cleanString(line?.title || line?.model)
+    const itemType = normalizeSalesOrderItemType(line?.itemType)
     const unitPrice = Number(cleanString(line?.unitPrice))
     const quantity = Number(line?.quantity)
 
-    if (!title) return `Line ${index + 1} needs a bat model.`
+    if (!title) return `Line ${index + 1} needs a product.`
+    if (itemType === 'shirt' && !cleanString(line?.variantId)) {
+      return `Line ${index + 1} needs a shirt size.`
+    }
     if (!Number.isFinite(unitPrice) || unitPrice < 0) {
       return `Line ${index + 1} needs a valid unit price.`
     }
@@ -6685,7 +6710,9 @@ async function rememberOrderJobContacts(jobs) {
 }
 
 function formatSalesLineShopifyTitle(line, isProOrder) {
-  const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+  const title =
+    cleanString(line?.title || line?.model) ||
+    (normalizeSalesOrderItemType(line?.itemType) === 'shirt' ? 'Trinity shirt' : 'Custom Trinity bat')
   if (!isProOrder) return title
 
   return /^pro order\b/i.test(title) ? title : `Pro Order - ${title}`
@@ -6798,9 +6825,14 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
 function summarizeSalesOrderLines(lines) {
   return lines
     .map((line) => {
-      const title = cleanString(line?.title || line?.model) || 'Custom Trinity bat'
+      const title =
+        cleanString(line?.title || line?.model) ||
+        (normalizeSalesOrderItemType(line?.itemType) === 'shirt'
+          ? 'Trinity shirt'
+          : 'Custom Trinity bat')
+      const variantTitle = cleanString(line?.variantTitle)
       const quantity = Number(line?.quantity || 1)
-      return `${quantity} x ${title}`
+      return `${quantity} x ${title}${variantTitle ? ` / ${variantTitle}` : ''}`
     })
     .filter(Boolean)
     .join(', ')
@@ -6910,11 +6942,14 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       .map((line) => {
         const unitPrice = toMoneyBagInput(line.unitPrice)
         const isProOrder = isTruthy(line.isProOrder)
+        const itemType = normalizeSalesOrderItemType(line.itemType)
         const variantId = isProOrder ? '' : cleanString(line.variantId)
         const title = formatSalesLineShopifyTitle(line, isProOrder)
         const properties = compactLineItemProperties({
           'Order type': isProOrder ? 'Pro Order' : '',
           trinity_player_name: playerName,
+          trinity_item_type: itemType,
+          trinity_shirt_size: itemType === 'shirt' ? line.variantTitle : '',
           trinity_pro_order: isProOrder ? 'true' : '',
           trinity_model: cleanString(line.title || line.model),
           trinity_length: line.length,
@@ -7040,11 +7075,14 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       .map((line) => {
         const unitPrice = toMoneyInput(line.unitPrice)
         const isProOrder = isTruthy(line.isProOrder)
+        const itemType = normalizeSalesOrderItemType(line.itemType)
         const variantId = isProOrder ? '' : cleanString(line.variantId)
         const title = formatSalesLineShopifyTitle(line, isProOrder)
         const customAttributes = compactAttributes({
           order_type: isProOrder ? 'Pro Order' : '',
           trinity_player_name: playerName,
+          trinity_item_type: itemType,
+          trinity_shirt_size: itemType === 'shirt' ? line.variantTitle : '',
           trinity_pro_order: isProOrder ? 'true' : '',
           trinity_model: cleanString(line.title || line.model),
           trinity_length: line.length,
@@ -7136,7 +7174,7 @@ function normalizeProductionTimeline(value) {
 }
 
 function buildDraftRushProductionSurchargeLine(payload = {}) {
-  const quantity = getSalesOrderQuantity(payload)
+  const quantity = getSalesOrderProductionQuantity(payload)
   if (
     normalizeProductionTimeline(payload.productionTimeline) !== 'rush' ||
     !rushProductionSurchargeAmount ||
@@ -7163,7 +7201,7 @@ function buildDraftRushProductionSurchargeLine(payload = {}) {
 }
 
 function buildOrderRushProductionSurchargeLine(payload = {}) {
-  const quantity = getSalesOrderQuantity(payload)
+  const quantity = getSalesOrderProductionQuantity(payload)
   const priceSet = toMoneyBagInput(rushProductionSurchargeAmount)
   if (
     normalizeProductionTimeline(payload.productionTimeline) !== 'rush' ||
@@ -7185,15 +7223,6 @@ function buildOrderRushProductionSurchargeLine(payload = {}) {
       trinity_surcharge_unit_amount: rushProductionSurchargeAmount,
     }),
   }
-}
-
-function getSalesOrderQuantity(payload = {}) {
-  const lines = Array.isArray(payload.lines) ? payload.lines : []
-
-  return lines.reduce((total, line) => {
-    const quantity = Number(line?.quantity || 1)
-    return total + (Number.isFinite(quantity) && quantity > 0 ? quantity : 0)
-  }, 0)
 }
 
 function specsFromSalesLine(line = {}) {
@@ -7256,6 +7285,7 @@ function mapDraftOrderToJobs(
 
     return {
       id: `draft-${extractNumericId(draftOrder.id)}-line-${index + 1}`,
+      itemType: normalizeSalesOrderItemType(line.itemType),
       origin: 'internal_sales',
       intakeId,
       playerProfileId: '',
@@ -7389,6 +7419,9 @@ function mapGraphQLOrderToJobs(order) {
     const variant = line.variant ?? null
     const product = variant?.product ?? null
     const specs = extractSpecs(orderAttributes, lineAttributes)
+    const itemType = normalizeSalesOrderItemType(
+      lineAttributes.trinity_item_type || (isShirtProductLike(product) ? 'shirt' : 'bat'),
+    )
     const identity = extractOrderIdentity(
       orderAttributes,
       lineAttributes,
@@ -7400,6 +7433,7 @@ function mapGraphQLOrderToJobs(order) {
 
     return {
       id: `order-${extractNumericId(order.id)}-line-${extractNumericId(line.id)}`,
+      itemType,
       origin,
       intakeId: orderAttributes.trinity_intake_id ?? '',
       playerProfileId: '',
@@ -7500,6 +7534,16 @@ function mapOrderWebhookToJobs(order, topic) {
     const lineAttributes = attributesToRecord(line.properties)
     const lineItemId = line.admin_graphql_api_id ?? toShopifyGid('LineItem', line.id)
     const specs = extractSpecs(orderAttributes, lineAttributes)
+    const itemType = normalizeSalesOrderItemType(
+      lineAttributes.trinity_item_type ||
+        (isShirtProductLike({
+          title: line.title ?? line.name,
+          productType: line.product_type,
+          tags: line.tags,
+        })
+          ? 'shirt'
+          : 'bat'),
+    )
     const identity = extractOrderIdentity(
       orderAttributes,
       lineAttributes,
@@ -7515,6 +7559,7 @@ function mapOrderWebhookToJobs(order, topic) {
 
     return {
       id: `order-${extractNumericId(orderId)}-line-${extractNumericId(lineItemId)}`,
+      itemType,
       origin,
       intakeId: orderAttributes.trinity_intake_id ?? '',
       playerProfileId: '',
@@ -7809,47 +7854,6 @@ function normalizeNonNegativeMoneyAmount(value) {
 function readPositiveIntegerEnv(name, fallback) {
   const value = Number(process.env[name])
   return Number.isInteger(value) && value > 0 ? value : fallback
-}
-
-function isBatProductLike(product) {
-  const title = cleanString(product?.title ?? product?.name).toLowerCase()
-  const productType = cleanString(product?.productType ?? product?.category).toLowerCase()
-  const tags = Array.isArray(product?.tags)
-    ? product.tags.map((tag) => cleanString(tag).toLowerCase())
-    : cleanString(product?.tags)
-        .split(',')
-        .map((tag) => tag.trim().toLowerCase())
-        .filter(Boolean)
-  const text = [title, productType, ...tags].join(' ')
-
-  if (
-    productType.includes('apparel') ||
-    text.includes('accessor') ||
-    title.includes('shirt') ||
-    title.includes('hat') ||
-    title.includes('sleeve') ||
-    title.includes('grip') ||
-    title.includes('glove')
-  ) {
-    return false
-  }
-
-  return (
-    productType.includes('series') ||
-    title.includes('bat') ||
-    title.includes('pro model') ||
-    title.includes('pro select') ||
-    title.includes('birch') ||
-    title.includes('maple') ||
-    title.includes('ash') ||
-    /\b[a-z]{1,5}\d+(?:\.\d+)?[a-z]*\b/i.test(title) ||
-    title.includes('fungo') ||
-    title.includes('trainer') ||
-    title.includes('boom stick') ||
-    title.includes('platinum') ||
-    title.includes('scvbb') ||
-    tags.some((tag) => ['ash', 'birch', 'maple', 'stock', 'custom', 'semi custom'].includes(tag))
-  )
 }
 
 function isGraphQLSurchargeLine(line) {
