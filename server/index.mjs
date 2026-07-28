@@ -41,6 +41,7 @@ import {
   downloadOrderPrinterProPdfAttachment,
 } from './order-printer-pro.mjs'
 import { downloadUploadedOrderEmailAttachment } from './order-attachment-email.mjs'
+import { formatOrderAttachmentUploadError } from './order-attachment-errors.mjs'
 import {
   allowsLocalInternalAccess,
   buildShopifySessionBounceLocation,
@@ -836,9 +837,11 @@ app.post(
         },
       })
     } catch (error) {
-      response.status(500).json({
+      const failure = formatOrderAttachmentUploadError(error)
+      console.error(`Order attachment upload failed: ${failure.internalMessage}`)
+      response.status(failure.status).json({
         ok: false,
-        message: error instanceof Error ? error.message : 'Unknown attachment upload error.',
+        message: failure.message,
       })
     }
   },

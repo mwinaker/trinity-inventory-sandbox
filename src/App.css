@@ -740,6 +740,16 @@ button:hover {
   font-weight: 800;
 }
 
+.order-submit-message {
+  margin: 0;
+  border: 1px solid rgba(47, 76, 50, 0.24);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 250, 240, 0.92);
+  color: #3e2e22;
+  font-weight: 800;
+}
+
 .order-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -3973,6 +3973,7 @@ type SalesOrderFormFieldsProps = {
   attachmentFile: File | null
   setAttachmentFile: Dispatch<SetStateAction<File | null>>
   isSubmitting: boolean
+  submissionMessage?: string
   hideSalesRepFields?: boolean
   draftOnly?: boolean
 }
@@ -3994,6 +3995,7 @@ function SalesOrderFormFields({
   attachmentFile,
   setAttachmentFile,
   isSubmitting,
+  submissionMessage = '',
   hideSalesRepFields = false,
   draftOnly = false,
 }: SalesOrderFormFieldsProps) {
@@ -4625,6 +4627,12 @@ function SalesOrderFormFields({
         </label>
       ) : null}
 
+      {submissionMessage ? (
+        <p className="order-submit-message" role="status" aria-live="polite">
+          {submissionMessage}
+        </p>
+      ) : null}
+
       <button type="submit" disabled={isSubmitting}>
         {isSubmitting
           ? draft.createDraftOrder
@@ -5119,6 +5127,7 @@ function PublicSalesOrderForm() {
             attachmentFile={salesOrderAttachmentFile}
             setAttachmentFile={setSalesOrderAttachmentFile}
             isSubmitting={isSubmitting}
+            submissionMessage={message}
             draftOnly
           />
         </form>
@@ -8305,6 +8314,7 @@ function InternalApp({
                 attachmentFile={salesOrderAttachmentFile}
                 setAttachmentFile={setSalesOrderAttachmentFile}
                 isSubmitting={isCreatingDraftOrder}
+                submissionMessage={orderActionMessage}
                 hideSalesRepFields={!hasAdminAccess}
               />
             </form>
@@ -12220,6 +12230,7 @@ function SalesPortalApp() {
               attachmentFile={orderAttachmentFile}
               setAttachmentFile={setOrderAttachmentFile}
               isSubmitting={isSubmittingPortalOrder}
+              submissionMessage={portalMessage}
               hideSalesRepFields
             />
           </form>
