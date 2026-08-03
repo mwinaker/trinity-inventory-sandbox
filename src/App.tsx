@@ -2644,11 +2644,6 @@ function formatSalesDashboardSyncTime(value: string) {
   })
 }
 
-function formatSalesDashboardPercent(value: number, total: number) {
-  if (!total) return '0%'
-  return `${Math.round((value / total) * 100)}%`
-}
-
 function parseSalesDashboardAmount(value: string) {
   const normalized = String(value ?? '').replace(/[^0-9.-]/g, '')
   const amount = Number(normalized)
@@ -6196,10 +6191,8 @@ function InternalApp({
     return buildTeamSalesRows(trailingMonthSales, seedCrmOwnerOptions)
   }, [hasTeamToolSession, orderJobs, teamLeaderboardRows])
   const {
-    paidSales: salesDashboardPaidSales,
     openSales: salesDashboardOpenSales,
     submittedValue: salesDashboardSubmittedValue,
-    paidValue: salesDashboardPaidValue,
     openValue: salesDashboardOpenValue,
   } = useMemo(() => {
     const paidSales: SalesDashboardSale[] = []
@@ -8902,17 +8895,12 @@ function InternalApp({
               <strong>{formatSalesOrderMoney(salesDashboardSubmittedValue)}</strong>
             </article>
             <article>
-              <span>Paid value</span>
-              <strong>{formatSalesOrderMoney(salesDashboardPaidValue)}</strong>
+              <span>Paid invoices (30d)</span>
+              <strong>{salesDashboardTrailingPayments.length}</strong>
             </article>
             <article>
-              <span>Paid rate</span>
-              <strong>
-                {formatSalesDashboardPercent(
-                  salesDashboardPaidSales.length,
-                  salesDashboardSales.length,
-                )}
-              </strong>
+              <span>Paid invoice value (30d)</span>
+              <strong>{formatSalesOrderMoney(salesDashboardTrailingPaymentValue)}</strong>
             </article>
           </section>
 
