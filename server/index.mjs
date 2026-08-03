@@ -78,6 +78,7 @@ import {
   getSalesOrderShippingQuote,
   normalizeSalesOrderShippingSpeed,
 } from '../shared/sales-order-shipping-policy.mjs'
+import { getSuccessfulPaymentTimestamp } from '../shared/sales-payment-reconciliation.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -164,6 +165,8 @@ const stateCacheStaleMaxAgeMs = 24 * 60 * 60 * 1000
 const stateCacheFilePath =
   process.env.TRINITY_STATE_CACHE_PATH ?? path.join('/tmp', 'trinity-inventory-state-cache.json')
 const catalogCacheTtlMs = 10 * 60 * 1000
+const salesPaymentReconciliationCacheTtlMs = 5 * 60 * 1000
+const salesPaymentReconciliationWindowDays = 30
 const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
 const maxOrderAttachmentBytes = 20 * 1024 * 1024
 const orderAttachmentFileUrlMaxAttempts = readPositiveIntegerEnv(
@@ -734,6 +737,9 @@ let stateCachePromise = null
 let catalogCacheValue = null
 let catalogCacheExpiresAt = 0
 let catalogCachePromise = null
+let salesPaymentReconciliationCacheValue = null
+let salesPaymentReconciliationCacheExpiresAt = 0
+let salesPaymentReconciliationCachePromise = null
 let stateWriteQueue = Promise.resolve()
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
@@ -761,6 +767,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
         Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
         rememberOrderJobContacts(mergedJobs),
       ])
+      invalidateSalesPaymentReconciliationCache()
     }
 
     response.status(200).json({ ok: true, jobs: mappedIncomingJobs.length })
@@ -1172,6 +1179,37 @@ app.get('/api/team-tool/state', requireSalesPortalAccess, async (request, respon
     })
   }
 })
+
+app.get(
+  '/api/sales-dashboard/payment-reconciliation',
+  requireSalesDashboardAccess,
+  async (request, response) => {
+    try {
+      if (!shopDomain || !adminToken) {
+        response.status(503).json({
+          ok: false,
+          message: 'Shopify credentials are not configured on this server.',
+        })
+        return
+      }
+
+      response.set('Cache-Control', 'no-store')
+      const report = await getSalesPaymentReconciliation()
+      response.json({
+        ...report,
+        orders: filterSalesPaymentsForSession(report.orders, request.salesPortalSession),
+      })
+    } catch (error) {
+      response.status(500).json({
+        ok: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Unknown sales payment reconciliation error.',
+      })
+    }
+  },
+)
 
 app.patch('/api/team-tool/state', requireSalesPortalAccess, async (request, response) => {
   try {
@@ -1836,6 +1874,7 @@ app.post('/api/orders/import', requireSalesPortalAdminOrInternalAccess, async (r
       rememberOrderJobContacts(mergedJobs),
       Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
     ])
+    invalidateSalesPaymentReconciliationCache()
 
     response.json({
       ok: true,
@@ -2348,6 +2387,35 @@ async function requireSalesPortalAccess(request, response, next) {
   }
 }
 
+async function requireSalesDashboardAccess(request, response, next) {
+  try {
+    if (hasVerifiedInternalAccess(request)) {
+      next()
+      return
+    }
+
+    const session = await getValidatedSalesPortalSession(request)
+    if (session) {
+      request.salesPortalSession = session
+      next()
+      return
+    }
+
+    if (shouldRetryShopifySessionRequest(request.get('authorization'))) {
+      setShopifySessionRetryHeader(response)
+    }
+    response.status(401).json({
+      ok: false,
+      message: 'Trinity tool sign-in required.',
+    })
+  } catch (error) {
+    response.status(503).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not validate Trinity tool access.',
+    })
+  }
+}
+
 async function requireSalesPortalAdminOrInternalAccess(request, response, next) {
   if (getSalesPortalSessionPayload(request)) {
     try {
@@ -2755,6 +2823,18 @@ function filterFullToolStateForSession(state, session) {
     teamLeaderboardRows,
     teamMembers: salesPortalTeamMembers,
   }
+}
+
+function filterSalesPaymentsForSession(payments, session) {
+  const rows = arrayFromPayload(payments)
+  if (!session || session.isAdmin) return rows
+
+  const owner = getSalesPortalOwnerForEmail(session.email)
+  if (!owner || session.role === 'production') return []
+
+  return rows.filter(
+    (payment) => getSalesPortalOwnerKey(payment?.salesRep, payment?.salesRepEmail) === owner.key,
+  )
 }
 
 async function prepareFullToolStatePatchForSession(payload, session) {
@@ -5343,6 +5423,211 @@ async function sendOrderInvoice(orderId, emailInput) {
   if (errors.length > 0) {
     throw new Error(`Order invoice send error: ${errors.map((item) => item.message).join(', ')}`)
   }
+}
+
+async function listOrdersUpdatedSince(sinceDate) {
+  const rows = []
+  let cursor = null
+  let hasNextPage = true
+  const query = `updated_at:>=${sinceDate.toISOString().slice(0, 10)}`
+
+  while (hasNextPage) {
+    const result = await shopifyGraphQL(
+      `
+        query SalesPaymentReconciliation($after: String, $query: String!) {
+          orders(
+            first: 100
+            after: $after
+            query: $query
+            sortKey: UPDATED_AT
+            reverse: true
+          ) {
+            nodes {
+              id
+              name
+              email
+              createdAt
+              updatedAt
+              displayFinancialStatus
+              tags
+              customAttributes {
+                key
+                value
+              }
+              currentTotalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              totalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              customer {
+                displayName
+                email
+              }
+              billingAddress {
+                name
+                company
+              }
+              transactions(first: 100) {
+                id
+                kind
+                status
+                processedAt
+                amountSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      `,
+      { after: cursor, query },
+    )
+
+    const connection = result?.data?.orders
+    rows.push(...(connection?.nodes ?? []))
+    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
+    cursor = connection?.pageInfo?.endCursor ?? null
+  }
+
+  return rows
+}
+
+function getSalesPaymentOrderJobs(order, orderJobs, orderAttributes) {
+  const orderId = extractNumericId(order?.id)
+  const orderName = cleanString(order?.name)
+  const intakeId = cleanString(orderAttributes?.trinity_intake_id)
+
+  return arrayFromPayload(orderJobs).filter((job) => {
+    if (job?.origin !== 'internal_sales') return false
+
+    const matchesOrderId = orderId && extractNumericId(job?.shopifyOrderId) === orderId
+    const matchesOrderName = orderName && cleanString(job?.shopifyOrderName) === orderName
+    const matchesIntake = intakeId && cleanString(job?.intakeId) === intakeId
+    return Boolean(matchesOrderId || matchesOrderName || matchesIntake)
+  })
+}
+
+function isInternalSalesPaymentOrder(order, orderAttributes, matchingJobs) {
+  if (orderAttributes?.trinity_origin === 'internal_sales') return true
+  if (matchingJobs.length > 0) return true
+
+  return arrayFromPayload(order?.tags).some((tag) =>
+    ['internal sales', 'trinity intake'].includes(cleanString(tag).toLowerCase()),
+  )
+}
+
+function mapOrderToSalesPayment(order, orderJobs) {
+  const orderAttributes = attributesToRecord(order?.customAttributes)
+  const matchingJobs = getSalesPaymentOrderJobs(order, orderJobs, orderAttributes)
+  if (!isInternalSalesPaymentOrder(order, orderAttributes, matchingJobs)) return null
+
+  const money =
+    order?.currentTotalPriceSet?.shopMoney ?? order?.totalPriceSet?.shopMoney ?? {}
+  const total = Number(money.amount)
+  const paidAt = getSuccessfulPaymentTimestamp(order?.transactions, total)
+  if (!paidAt) return null
+
+  const firstJob = matchingJobs[0] ?? {}
+  const submittedAt = getEarlierOrderTimestamp(
+    orderAttributes.trinity_order_submitted_at,
+    ...matchingJobs.flatMap((job) => [job?.orderSubmittedAt, job?.createdAt]),
+    order?.createdAt,
+  )
+
+  return {
+    orderId: cleanString(order?.id),
+    orderName: cleanString(order?.name),
+    draftOrderId:
+      cleanString(firstJob?.shopifyDraftOrderId) ||
+      cleanString(orderAttributes.trinity_draft_order_id),
+    draftOrderName: cleanString(firstJob?.shopifyDraftOrderName),
+    intakeId: cleanString(firstJob?.intakeId) || cleanString(orderAttributes.trinity_intake_id),
+    salesRep: cleanString(orderAttributes.trinity_sales_rep) || cleanString(firstJob?.salesRep),
+    salesRepEmail:
+      normalizeEmail(orderAttributes.trinity_sales_rep_email) ||
+      normalizeEmail(firstJob?.salesRepEmail),
+    customerName:
+      cleanString(firstJob?.playerName) ||
+      cleanString(firstJob?.customerName) ||
+      cleanString(order?.customer?.displayName),
+    payerName:
+      cleanString(firstJob?.billingName) ||
+      cleanString(order?.billingAddress?.name) ||
+      cleanString(order?.billingAddress?.company) ||
+      cleanString(order?.customer?.displayName),
+    submittedAt,
+    paidAt,
+    total: Number.isFinite(total) ? total : 0,
+    currency: cleanString(money.currencyCode) || shopCurrencyCode,
+    financialStatus: cleanString(order?.displayFinancialStatus),
+  }
+}
+
+async function getSalesPaymentReconciliation() {
+  const now = Date.now()
+  if (
+    salesPaymentReconciliationCacheValue &&
+    salesPaymentReconciliationCacheExpiresAt > now
+  ) {
+    return salesPaymentReconciliationCacheValue
+  }
+  if (salesPaymentReconciliationCachePromise) return salesPaymentReconciliationCachePromise
+
+  salesPaymentReconciliationCachePromise = (async () => {
+    const through = new Date()
+    const since = new Date(
+      through.getTime() - salesPaymentReconciliationWindowDays * 24 * 60 * 60 * 1000,
+    )
+    const [orders, state] = await Promise.all([
+      listOrdersUpdatedSince(since),
+      getSharedState(),
+    ])
+    const payments = orders
+      .map((order) => mapOrderToSalesPayment(order, state.orderJobs))
+      .filter((payment) => {
+        const paidTimestamp = Date.parse(payment?.paidAt ?? '')
+        return paidTimestamp >= since.getTime() && paidTimestamp <= through.getTime()
+      })
+      .sort((first, second) => Date.parse(second.paidAt) - Date.parse(first.paidAt))
+
+    const report = {
+      ok: true,
+      windowDays: salesPaymentReconciliationWindowDays,
+      since: since.toISOString(),
+      through: through.toISOString(),
+      refreshedAt: new Date().toISOString(),
+      source: 'shopify_successful_sale_capture_transactions',
+      orders: payments,
+    }
+    salesPaymentReconciliationCacheValue = report
+    salesPaymentReconciliationCacheExpiresAt = Date.now() + salesPaymentReconciliationCacheTtlMs
+    return report
+  })()
+
+  try {
+    return await salesPaymentReconciliationCachePromise
+  } finally {
+    salesPaymentReconciliationCachePromise = null
+  }
+}
+
+function invalidateSalesPaymentReconciliationCache() {
+  salesPaymentReconciliationCacheValue = null
+  salesPaymentReconciliationCacheExpiresAt = 0
 }
 
 async function listRecentOrders(first) {

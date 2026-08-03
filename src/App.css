@@ -847,6 +847,56 @@ button:hover {
   gap: 18px;
 }
 
+.sales-payment-reconciliation {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.sales-payment-reconciliation > .section-heading {
+  margin-bottom: 0;
+}
+
+.payment-reconciliation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  min-width: 0;
+}
+
+.payment-reconciliation-panel {
+  align-content: start;
+  min-width: 0;
+}
+
+.payment-reconciliation-table {
+  min-width: 760px;
+}
+
+.payment-reconciliation-table td:first-child,
+.payment-reconciliation-table td:last-child {
+  white-space: nowrap;
+}
+
+.reconciliation-reference strong,
+.reconciliation-reference span,
+.reconciliation-date {
+  display: block;
+}
+
+.reconciliation-reference span,
+.reconciliation-date {
+  margin-top: 5px;
+  color: #746353;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.reconciliation-message {
+  margin: 0 0 14px;
+  color: #8b2f2f;
+}
+
 .sales-rep-panel,
 .sales-aging-panel,
 .sales-activity-panel {
@@ -2556,6 +2606,7 @@ td select {
   .sales-dashboard-toolbar,
   .dashboard-controls,
   .sales-dashboard-grid,
+  .payment-reconciliation-grid,
   .sales-dashboard-card,
   .activity-card,
   .crm-toolbar,

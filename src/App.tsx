@@ -473,6 +473,33 @@ type SalesDashboardSale = {
   productSummary: string
 }
 
+type SalesPaymentReconciliationOrder = {
+  orderId: string
+  orderName: string
+  draftOrderId: string
+  draftOrderName: string
+  intakeId: string
+  salesRep: string
+  salesRepEmail: string
+  customerName: string
+  payerName: string
+  submittedAt: string
+  paidAt: string
+  total: number
+  currency: string
+  financialStatus: string
+}
+
+type SalesPaymentReconciliationReport = {
+  ok: boolean
+  windowDays: number
+  since: string
+  through: string
+  refreshedAt: string
+  source: string
+  orders: SalesPaymentReconciliationOrder[]
+}
+
 type SalesRepSummary = {
   key: string
   label: string
@@ -2770,10 +2797,6 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
     if (jobIsPaid) {
       existing.isPaid = true
       existing.invoiceStatus = 'paid'
-      existing.paidAt = getLaterDate(
-        existing.paidAt,
-        job.salesRepPaidNotificationSentAt || job.updatedAt || job.createdAt,
-      )
     }
 
     sales.set(key, existing)
@@ -2810,6 +2833,51 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
       const second = getDateTimestamp(b.paidAt || b.submittedAt)
       return second - first
     })
+}
+
+function getSalesPaymentMatchKeys(
+  record: Pick<
+    SalesPaymentReconciliationOrder,
+    'orderId' | 'orderName' | 'draftOrderId' | 'draftOrderName' | 'intakeId'
+  >,
+) {
+  return [
+    record.orderId,
+    record.orderName,
+    record.draftOrderId,
+    record.draftOrderName,
+    record.intakeId,
+  ]
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function applySalesPaymentTimestamps(
+  sales: SalesDashboardSale[],
+  payments: SalesPaymentReconciliationOrder[],
+) {
+  const paymentsByKey = new Map<string, SalesPaymentReconciliationOrder>()
+  for (const payment of payments) {
+    for (const key of getSalesPaymentMatchKeys(payment)) paymentsByKey.set(key, payment)
+  }
+
+  return sales.map((sale) => {
+    const payment = [sale.key, sale.draftOrderName, sale.paidOrderName]
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean)
+      .map((key) => paymentsByKey.get(key))
+      .find(Boolean)
+    if (!payment) return sale
+
+    return {
+      ...sale,
+      isPaid: true,
+      invoiceStatus: 'paid' as InvoiceStatus,
+      paidAt: payment.paidAt,
+      paidOrderName: sale.paidOrderName || payment.orderName,
+      draftOrderName: sale.draftOrderName || payment.draftOrderName,
+    }
+  })
 }
 
 function buildSalesRepSummaries(sales: SalesDashboardSale[]): SalesRepSummary[] {
@@ -5276,6 +5344,11 @@ function InternalApp({
   const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState(
     accessOwner?.key ?? 'all',
   )
+  const [salesPaymentReconciliation, setSalesPaymentReconciliation] =
+    useState<SalesPaymentReconciliationReport | null>(null)
+  const [salesPaymentReconciliationError, setSalesPaymentReconciliationError] = useState('')
+  const [isLoadingSalesPaymentReconciliation, setIsLoadingSalesPaymentReconciliation] =
+    useState(true)
   const [activeCrmView, setActiveCrmView] = useState<CrmWorkspaceView>('new_contact')
   const [crmQuery, setCrmQuery] = useState('')
   const [crmStageFilter, setCrmStageFilter] = useState<'all' | CrmStage>('all')
@@ -5639,6 +5712,46 @@ function InternalApp({
   }, [backendStatus])
 
   useEffect(() => {
+    if (activeSection !== 'sales' || backendStatus !== 'connected') return
+    if (crmSandboxPreviewEnabled) return
+
+    let cancelled = false
+
+    async function loadSalesPaymentReconciliation() {
+      try {
+        const response = await fetchApi('/api/sales-dashboard/payment-reconciliation', {
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-store' },
+        })
+        const payload = (await response.json().catch(() => ({}))) as Partial<
+          SalesPaymentReconciliationReport
+        > & { message?: string }
+        if (!response.ok || !payload.ok || !Array.isArray(payload.orders)) {
+          throw new Error(payload.message || 'Payment reconciliation is unavailable.')
+        }
+
+        if (!cancelled) {
+          setSalesPaymentReconciliation(payload as SalesPaymentReconciliationReport)
+          setSalesPaymentReconciliationError('')
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSalesPaymentReconciliationError(
+            error instanceof Error ? error.message : 'Payment reconciliation is unavailable.',
+          )
+        }
+      } finally {
+        if (!cancelled) setIsLoadingSalesPaymentReconciliation(false)
+      }
+    }
+
+    void loadSalesPaymentReconciliation()
+    return () => {
+      cancelled = true
+    }
+  }, [activeSection, backendStatus, crmSandboxPreviewEnabled, lastLiveRefreshAt])
+
+  useEffect(() => {
     if (backendStatus !== 'connected') return
 
     let cancelled = false
@@ -5967,7 +6080,14 @@ function InternalApp({
       }),
     [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs],
   )
-  const salesDashboardAllSales = useMemo(() => buildSalesDashboardSales(orderJobs), [orderJobs])
+  const salesDashboardAllSales = useMemo(
+    () =>
+      applySalesPaymentTimestamps(
+        buildSalesDashboardSales(orderJobs),
+        salesPaymentReconciliation?.orders ?? [],
+      ),
+    [orderJobs, salesPaymentReconciliation],
+  )
   const salesDashboardRepOptions = useMemo(
     () => buildSalesRepSummaries(salesDashboardAllSales),
     [salesDashboardAllSales],
@@ -5987,6 +6107,48 @@ function InternalApp({
   const salesDashboardSummaries = useMemo(
     () => buildSalesRepSummaries(salesDashboardSales),
     [salesDashboardSales],
+  )
+  const salesDashboardTrailingSubmissions = useMemo(() => {
+    const through =
+      getDateTimestamp(salesPaymentReconciliation?.through ?? '') || Date.now()
+    const since =
+      getDateTimestamp(salesPaymentReconciliation?.since ?? '') ||
+      through - 30 * 24 * 60 * 60 * 1000
+
+    return salesDashboardAllSales
+      .filter((sale) => {
+        const submittedAt = getDateTimestamp(sale.submittedAt)
+        const matchesRep =
+          salesDashboardRepFilter === 'all' ||
+          getSalesRepSummaryKey(sale) === salesDashboardRepFilter
+        return submittedAt >= since && submittedAt <= through && matchesRep
+      })
+      .sort(
+        (first, second) =>
+          getDateTimestamp(second.submittedAt) - getDateTimestamp(first.submittedAt),
+      )
+  }, [salesDashboardAllSales, salesDashboardRepFilter, salesPaymentReconciliation])
+  const salesDashboardTrailingPayments = useMemo(
+    () =>
+      [...(salesPaymentReconciliation?.orders ?? [])]
+        .filter(
+          (payment) =>
+            salesDashboardRepFilter === 'all' ||
+            getSalesRepSummaryKey(payment) === salesDashboardRepFilter,
+        )
+        .sort(
+          (first, second) =>
+            getDateTimestamp(second.paidAt) - getDateTimestamp(first.paidAt),
+        ),
+    [salesDashboardRepFilter, salesPaymentReconciliation],
+  )
+  const salesDashboardTrailingSubmissionValue = salesDashboardTrailingSubmissions.reduce(
+    (total, sale) => total + sale.total,
+    0,
+  )
+  const salesDashboardTrailingPaymentValue = salesDashboardTrailingPayments.reduce(
+    (total, payment) => total + payment.total,
+    0,
   )
   const trailingMonthLeaderboardRows = useMemo(() => {
     if (hasTeamToolSession) return teamLeaderboardRows
@@ -8717,6 +8879,142 @@ function InternalApp({
             </article>
           </section>
 
+          <section className="sales-payment-reconciliation">
+            <div className="section-heading">
+              <p className="eyebrow">Payment reconciliation</p>
+              <h2>Trailing 30-day submissions vs. payments</h2>
+              <p className="helper-text">
+                The submission table is based on when the order was entered. The payment table is
+                based on the successful Shopify transaction, regardless of the original submission
+                date. Both use the selected sales rep above.
+              </p>
+            </div>
+
+            <div className="payment-reconciliation-grid">
+              <section className="panel payment-reconciliation-panel">
+                <div className="split-heading">
+                  <div className="section-heading">
+                    <p className="eyebrow">Submitted in the window</p>
+                    <h2>Orders submitted</h2>
+                  </div>
+                  <div className="dashboard-total-chip">
+                    <span>{salesDashboardTrailingSubmissions.length} orders</span>
+                    <strong>
+                      {formatSalesOrderMoney(salesDashboardTrailingSubmissionValue)}
+                    </strong>
+                  </div>
+                </div>
+
+                {salesDashboardTrailingSubmissions.length === 0 ? (
+                  <p className="empty-state">No orders were submitted in this 30-day window.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="payment-reconciliation-table">
+                      <thead>
+                        <tr>
+                          <th>Submitted</th>
+                          <th>Invoice</th>
+                          <th>Sales rep</th>
+                          <th>Customer</th>
+                          <th>Paid?</th>
+                          <th>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {salesDashboardTrailingSubmissions.map((sale) => (
+                          <tr key={sale.key}>
+                            <td>{formatSalesDashboardDate(sale.submittedAt)}</td>
+                            <td className="reconciliation-reference">
+                              <strong>
+                                {sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}
+                              </strong>
+                              {sale.paidOrderName && sale.paidOrderName !== sale.draftOrderName ? (
+                                <span>Paid order {sale.paidOrderName}</span>
+                              ) : null}
+                            </td>
+                            <td>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</td>
+                            <td>{sale.payerName || sale.customerName || 'No payer saved'}</td>
+                            <td>
+                              <span className={`pill ${sale.isPaid ? 'yes' : ''}`}>
+                                {sale.isPaid ? 'Paid' : 'Not paid'}
+                              </span>
+                              {sale.isPaid && sale.paidAt ? (
+                                <span className="reconciliation-date">
+                                  {formatSalesDashboardDate(sale.paidAt)}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td>{formatSalesOrderMoney(sale.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              <section className="panel payment-reconciliation-panel">
+                <div className="split-heading">
+                  <div className="section-heading">
+                    <p className="eyebrow">Paid in the window</p>
+                    <h2>Invoices paid</h2>
+                  </div>
+                  <div className="dashboard-total-chip">
+                    <span>{salesDashboardTrailingPayments.length} orders</span>
+                    <strong>{formatSalesOrderMoney(salesDashboardTrailingPaymentValue)}</strong>
+                  </div>
+                </div>
+
+                {salesPaymentReconciliationError ? (
+                  <p className="helper-text reconciliation-message" role="alert">
+                    Shopify payment timing could not be refreshed: {salesPaymentReconciliationError}
+                  </p>
+                ) : null}
+                {isLoadingSalesPaymentReconciliation && !salesPaymentReconciliation ? (
+                  <p className="empty-state" aria-live="polite">
+                    Checking successful Shopify payment transactions…
+                  </p>
+                ) : salesDashboardTrailingPayments.length === 0 ? (
+                  <p className="empty-state">No invoices were paid in this 30-day window.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="payment-reconciliation-table">
+                      <thead>
+                        <tr>
+                          <th>Paid</th>
+                          <th>Invoice</th>
+                          <th>Sales rep</th>
+                          <th>Customer</th>
+                          <th>Originally submitted</th>
+                          <th>Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {salesDashboardTrailingPayments.map((payment) => (
+                          <tr key={payment.orderId || payment.orderName}>
+                            <td>{formatSalesDashboardDate(payment.paidAt)}</td>
+                            <td className="reconciliation-reference">
+                              <strong>{payment.orderName || 'Unnumbered order'}</strong>
+                              {payment.draftOrderName ? (
+                                <span>Original draft {payment.draftOrderName}</span>
+                              ) : null}
+                            </td>
+                            <td>{payment.salesRep || payment.salesRepEmail || 'Unassigned'}</td>
+                            <td>
+                              {payment.payerName || payment.customerName || 'No payer saved'}
+                            </td>
+                            <td>{formatSalesDashboardDate(payment.submittedAt)}</td>
+                            <td>{formatSalesOrderMoney(payment.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            </div>
+          </section>
+
           <section className="sales-dashboard-grid">
             <section className="panel sales-rep-panel">
               <div className="split-heading">
@@ -8833,7 +9131,9 @@ function InternalApp({
                       <span>Paid Shopify order: {sale.paidOrderName || 'N/A'}</span>
                       <span>
                         {sale.isPaid
-                          ? `Paid ${formatSalesDashboardDate(sale.paidAt)}`
+                          ? sale.paidAt
+                            ? `Paid ${formatSalesDashboardDate(sale.paidAt)}`
+                            : 'Payment confirmed; date unavailable'
                           : `Submitted ${formatSalesDashboardDate(sale.submittedAt)}`}
                       </span>
                     </div>
