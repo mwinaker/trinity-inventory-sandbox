@@ -80,6 +80,7 @@ import {
   normalizeSalesOrderShippingSpeed,
 } from '../shared/sales-order-shipping-policy.mjs'
 import {
+  classifyPaidInvoiceSource,
   getSuccessfulPaymentTimestamp,
   isWebsiteOrderSource,
 } from '../shared/sales-payment-reconciliation.mjs'
@@ -5519,6 +5520,60 @@ async function listOrdersUpdatedSince(sinceDate) {
   return rows
 }
 
+async function listCompletedDraftOrdersUpdatedSince(sinceDate) {
+  const rows = []
+  let cursor = null
+  let hasNextPage = true
+  const query = `status:completed updated_at:>=${sinceDate.toISOString().slice(0, 10)}`
+
+  try {
+    while (hasNextPage) {
+      const result = await shopifyGraphQL(
+        `
+          query SalesPaymentDraftOrders($after: String, $query: String!) {
+            draftOrders(
+              first: 100
+              after: $after
+              query: $query
+              sortKey: UPDATED_AT
+              reverse: true
+            ) {
+              nodes {
+                id
+                name
+                createdAt
+                completedAt
+                order {
+                  id
+                  name
+                }
+              }
+              pageInfo {
+                hasNextPage
+                endCursor
+              }
+            }
+          }
+        `,
+        { after: cursor, query },
+      )
+
+      const connection = result?.data?.draftOrders
+      rows.push(...(connection?.nodes ?? []))
+      hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
+      cursor = connection?.pageInfo?.endCursor ?? null
+    }
+  } catch (error) {
+    console.warn(
+      `Completed draft history could not be added to sales reconciliation: ${
+        error instanceof Error ? error.message : 'Unknown Shopify error'
+      }`,
+    )
+  }
+
+  return rows
+}
+
 function getSalesPaymentOrderJobs(order, orderJobs, orderAttributes) {
   const orderId = extractNumericId(order?.id)
   const orderName = cleanString(order?.name)
@@ -5534,7 +5589,7 @@ function getSalesPaymentOrderJobs(order, orderJobs, orderAttributes) {
   })
 }
 
-function isInternalSalesPaymentOrder(order, orderAttributes, matchingJobs) {
+function hasInventorySalesPaymentMarker(order, orderAttributes, matchingJobs) {
   if (orderAttributes?.trinity_origin === 'internal_sales') return true
   if (matchingJobs.length > 0) return true
 
@@ -5543,10 +5598,16 @@ function isInternalSalesPaymentOrder(order, orderAttributes, matchingJobs) {
   )
 }
 
-function mapOrderToSalesPayment(order, orderJobs) {
+function mapOrderToSalesPayment(order, orderJobs, completedDraftOrder) {
   const orderAttributes = attributesToRecord(order?.customAttributes)
   const matchingJobs = getSalesPaymentOrderJobs(order, orderJobs, orderAttributes)
-  if (!isInternalSalesPaymentOrder(order, orderAttributes, matchingJobs)) return null
+  const hasInventoryMarker = hasInventorySalesPaymentMarker(
+    order,
+    orderAttributes,
+    matchingJobs,
+  )
+  const paymentSource = classifyPaidInvoiceSource(order?.sourceName, hasInventoryMarker)
+  if (!paymentSource) return null
 
   const money =
     order?.currentTotalPriceSet?.shopMoney ?? order?.totalPriceSet?.shopMoney ?? {}
@@ -5558,6 +5619,7 @@ function mapOrderToSalesPayment(order, orderJobs) {
   const submittedAt = getEarlierOrderTimestamp(
     orderAttributes.trinity_order_submitted_at,
     ...matchingJobs.flatMap((job) => [job?.orderSubmittedAt, job?.createdAt]),
+    completedDraftOrder?.createdAt,
     order?.createdAt,
   )
 
@@ -5566,8 +5628,10 @@ function mapOrderToSalesPayment(order, orderJobs) {
     orderName: cleanString(order?.name),
     draftOrderId:
       cleanString(firstJob?.shopifyDraftOrderId) ||
-      cleanString(orderAttributes.trinity_draft_order_id),
-    draftOrderName: cleanString(firstJob?.shopifyDraftOrderName),
+      cleanString(orderAttributes.trinity_draft_order_id) ||
+      cleanString(completedDraftOrder?.id),
+    draftOrderName:
+      cleanString(firstJob?.shopifyDraftOrderName) || cleanString(completedDraftOrder?.name),
     intakeId: cleanString(firstJob?.intakeId) || cleanString(orderAttributes.trinity_intake_id),
     salesRep: cleanString(orderAttributes.trinity_sales_rep) || cleanString(firstJob?.salesRep),
     salesRepEmail:
@@ -5587,6 +5651,7 @@ function mapOrderToSalesPayment(order, orderJobs) {
     total: Number.isFinite(total) ? total : 0,
     currency: cleanString(money.currencyCode) || shopCurrencyCode,
     financialStatus: cleanString(order?.displayFinancialStatus),
+    paymentSource,
   }
 }
 
@@ -5628,12 +5693,24 @@ async function getSalesPaymentReconciliation() {
     const since = new Date(
       through.getTime() - salesPaymentReconciliationWindowDays * 24 * 60 * 60 * 1000,
     )
-    const [orders, state] = await Promise.all([
+    const [orders, state, completedDraftOrders] = await Promise.all([
       listOrdersUpdatedSince(since),
       getSharedState(),
+      listCompletedDraftOrdersUpdatedSince(since),
     ])
+    const completedDraftsByOrderId = new Map(
+      completedDraftOrders
+        .filter((draftOrder) => cleanString(draftOrder?.order?.id))
+        .map((draftOrder) => [cleanString(draftOrder.order.id), draftOrder]),
+    )
     const payments = orders
-      .map((order) => mapOrderToSalesPayment(order, state.orderJobs))
+      .map((order) =>
+        mapOrderToSalesPayment(
+          order,
+          state.orderJobs,
+          completedDraftsByOrderId.get(cleanString(order?.id)),
+        ),
+      )
       .filter((payment) => {
         const paidTimestamp = Date.parse(payment?.paidAt ?? '')
         return paidTimestamp >= since.getTime() && paidTimestamp <= through.getTime()

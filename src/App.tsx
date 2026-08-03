@@ -488,6 +488,7 @@ type SalesPaymentReconciliationOrder = {
   total: number
   currency: string
   financialStatus: string
+  paymentSource: 'inventory' | 'shopify_draft_order'
 }
 
 type SalesWebsiteOrder = {
@@ -8924,6 +8925,8 @@ function InternalApp({
                 based on the successful Shopify transaction, regardless of the original submission
                 date. Both use the selected sales rep above. Submitted amounts show order-form
                 items; paid amounts show the full Shopify invoice, including shipping and fees.
+                Paid invoices include both Inventory-tool orders and Shopify Draft Orders. Draft
+                Orders without saved rep data are shown as unassigned instead of being omitted.
                 {hasAdminAccess
                   ? ' The admin-only website table below is separate and is not affected by the sales rep filter.'
                   : ''}
@@ -9023,6 +9026,7 @@ function InternalApp({
                         <tr>
                           <th>Paid</th>
                           <th>Invoice</th>
+                          <th>Source</th>
                           <th>Sales rep</th>
                           <th>Customer</th>
                           <th>Originally submitted</th>
@@ -9038,6 +9042,11 @@ function InternalApp({
                               {payment.draftOrderName ? (
                                 <span>Original draft {payment.draftOrderName}</span>
                               ) : null}
+                            </td>
+                            <td>
+                              {payment.paymentSource === 'shopify_draft_order'
+                                ? 'Shopify Draft Orders'
+                                : 'Inventory tool'}
                             </td>
                             <td>{payment.salesRep || payment.salesRepEmail || 'Unassigned'}</td>
                             <td>

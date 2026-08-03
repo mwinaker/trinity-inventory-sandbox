@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  classifyPaidInvoiceSource,
   getSuccessfulPaymentTimestamp,
+  isShopifyDraftOrderSource,
   isWebsiteOrderSource,
 } from '../shared/sales-payment-reconciliation.mjs'
 
@@ -59,4 +61,19 @@ test('only classifies Shopify Online Store orders as direct website orders', () 
   assert.equal(isWebsiteOrderSource('shopify_draft_order'), false)
   assert.equal(isWebsiteOrderSource('pos'), false)
   assert.equal(isWebsiteOrderSource(''), false)
+})
+
+test('only classifies Shopify draft-order-source orders as draft orders', () => {
+  assert.equal(isShopifyDraftOrderSource('shopify_draft_order'), true)
+  assert.equal(isShopifyDraftOrderSource('SHOPIFY_DRAFT_ORDER'), true)
+  assert.equal(isShopifyDraftOrderSource('web'), false)
+  assert.equal(isShopifyDraftOrderSource('pos'), false)
+  assert.equal(isShopifyDraftOrderSource(''), false)
+})
+
+test('includes Inventory-tagged and Shopify Draft Orders in paid invoice reporting', () => {
+  assert.equal(classifyPaidInvoiceSource('shopify_draft_order', true), 'inventory')
+  assert.equal(classifyPaidInvoiceSource('shopify_draft_order', false), 'shopify_draft_order')
+  assert.equal(classifyPaidInvoiceSource('web', false), '')
+  assert.equal(classifyPaidInvoiceSource('pos', false), '')
 })

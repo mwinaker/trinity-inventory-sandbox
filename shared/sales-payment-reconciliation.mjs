@@ -19,6 +19,16 @@ export function isWebsiteOrderSource(sourceName) {
   return cleanString(sourceName).toLowerCase() === 'web'
 }
 
+export function isShopifyDraftOrderSource(sourceName) {
+  return cleanString(sourceName).toLowerCase() === 'shopify_draft_order'
+}
+
+export function classifyPaidInvoiceSource(sourceName, hasInventoryMarker) {
+  if (hasInventoryMarker) return 'inventory'
+  if (isShopifyDraftOrderSource(sourceName)) return 'shopify_draft_order'
+  return ''
+}
+
 export function getSuccessfulPaymentTimestamp(transactions, orderTotal) {
   const requiredAmount = Number(orderTotal)
   if (!Number.isFinite(requiredAmount) || requiredAmount <= 0) return ''
