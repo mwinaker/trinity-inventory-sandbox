@@ -8886,7 +8886,8 @@ function InternalApp({
               <p className="helper-text">
                 The submission table is based on when the order was entered. The payment table is
                 based on the successful Shopify transaction, regardless of the original submission
-                date. Both use the selected sales rep above.
+                date. Both use the selected sales rep above. Submitted amounts show order-form
+                items; paid amounts show the full Shopify invoice, including shipping and fees.
               </p>
             </div>
 
@@ -8898,7 +8899,7 @@ function InternalApp({
                     <h2>Orders submitted</h2>
                   </div>
                   <div className="dashboard-total-chip">
-                    <span>{salesDashboardTrailingSubmissions.length} orders</span>
+                    <span>{salesDashboardTrailingSubmissions.length} orders · item value</span>
                     <strong>
                       {formatSalesOrderMoney(salesDashboardTrailingSubmissionValue)}
                     </strong>
@@ -8917,7 +8918,7 @@ function InternalApp({
                           <th>Sales rep</th>
                           <th>Customer</th>
                           <th>Paid?</th>
-                          <th>Amount</th>
+                          <th>Item value</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -8960,7 +8961,7 @@ function InternalApp({
                     <h2>Invoices paid</h2>
                   </div>
                   <div className="dashboard-total-chip">
-                    <span>{salesDashboardTrailingPayments.length} orders</span>
+                    <span>{salesDashboardTrailingPayments.length} orders · invoice total</span>
                     <strong>{formatSalesOrderMoney(salesDashboardTrailingPaymentValue)}</strong>
                   </div>
                 </div>
@@ -8986,7 +8987,7 @@ function InternalApp({
                           <th>Sales rep</th>
                           <th>Customer</th>
                           <th>Originally submitted</th>
-                          <th>Amount</th>
+                          <th>Invoice total</th>
                         </tr>
                       </thead>
                       <tbody>
