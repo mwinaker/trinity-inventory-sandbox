@@ -6022,15 +6022,14 @@ function InternalApp({
 
     return { paidSales, openSales, submittedValue, paidValue, openValue }
   }, [salesDashboardSales])
-  const salesDashboardRecentSales = useMemo(
+  const salesDashboardActivitySales = useMemo(
     () =>
       [...salesDashboardSales]
         .sort(
           (first, second) =>
             getDateTimestamp(second.paidAt || second.submittedAt) -
             getDateTimestamp(first.paidAt || first.submittedAt),
-        )
-        .slice(0, 8),
+        ),
     [salesDashboardSales],
   )
   const salesDashboardAwaitingPayment = useMemo(
@@ -8814,10 +8813,10 @@ function InternalApp({
             </div>
 
             <div className="sales-dashboard-list activity-list">
-              {salesDashboardRecentSales.length === 0 ? (
+              {salesDashboardActivitySales.length === 0 ? (
                 <p className="empty-state">No sales activity matches this view yet.</p>
               ) : (
-                salesDashboardRecentSales.map((sale) => (
+                salesDashboardActivitySales.map((sale) => (
                   <article className="sales-dashboard-card activity-card" key={sale.key}>
                     <div>
                       <span className={`pill ${sale.isPaid ? 'yes' : ''}`}>
