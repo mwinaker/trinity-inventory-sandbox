@@ -259,6 +259,10 @@ export function isAllowedShopifyAttachmentUrl(value) {
   }
 }
 
+export function filterAdminOnlySalesRows(rows, hasAdminAccess) {
+  return hasAdminAccess && Array.isArray(rows) ? rows : []
+}
+
 export function createFixedWindowRateLimiter({ max, windowMs, message }) {
   const buckets = new Map()
   let requestCount = 0

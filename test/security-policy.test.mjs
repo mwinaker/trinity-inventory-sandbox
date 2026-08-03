@@ -5,6 +5,7 @@ import {
   canAssignCrmContactOwner,
   canUpdateOwnedRecord,
   enforcePublicDraftOrderPolicy,
+  filterAdminOnlySalesRows,
   getAllowedOrderAttachmentContentType,
   getDerivedCrmContactDeleteIds,
   getSalesOrderBoundsError,
@@ -15,6 +16,14 @@ import {
   isSalesPortalSessionCurrent,
   sanitizeOrderJobForTeamReporting,
 } from '../server/security-policy.mjs'
+
+test('website sales rows are returned only to admin profiles', () => {
+  const rows = [{ orderName: '#TBC1286' }]
+
+  assert.deepEqual(filterAdminOnlySalesRows(rows, true), rows)
+  assert.deepEqual(filterAdminOnlySalesRows(rows, false), [])
+  assert.deepEqual(filterAdminOnlySalesRows(null, true), [])
+})
 
 test('Shopify launch timestamps must be recent and cannot be far in the future', () => {
   const now = Date.UTC(2026, 6, 19, 12, 0, 0)

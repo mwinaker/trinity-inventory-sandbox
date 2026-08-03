@@ -15,6 +15,10 @@ function transactionTimestamp(transaction) {
   return Number.isFinite(timestamp) ? timestamp : 0
 }
 
+export function isWebsiteOrderSource(sourceName) {
+  return cleanString(sourceName).toLowerCase() === 'web'
+}
+
 export function getSuccessfulPaymentTimestamp(transactions, orderTotal) {
   const requiredAmount = Number(orderTotal)
   if (!Number.isFinite(requiredAmount) || requiredAmount <= 0) return ''

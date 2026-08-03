@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { getSuccessfulPaymentTimestamp } from '../shared/sales-payment-reconciliation.mjs'
+import {
+  getSuccessfulPaymentTimestamp,
+  isWebsiteOrderSource,
+} from '../shared/sales-payment-reconciliation.mjs'
 
 function transaction(kind, status, amount, processedAt) {
   return {
@@ -48,4 +51,12 @@ test('ignores failed sales and does not report a partially paid invoice as paid'
 
 test('does not treat a zero-dollar order as a paid transaction', () => {
   assert.equal(getSuccessfulPaymentTimestamp([], 0), '')
+})
+
+test('only classifies Shopify Online Store orders as direct website orders', () => {
+  assert.equal(isWebsiteOrderSource('web'), true)
+  assert.equal(isWebsiteOrderSource('WEB'), true)
+  assert.equal(isWebsiteOrderSource('shopify_draft_order'), false)
+  assert.equal(isWebsiteOrderSource('pos'), false)
+  assert.equal(isWebsiteOrderSource(''), false)
 })

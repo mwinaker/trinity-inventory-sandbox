@@ -9,6 +9,7 @@ import {
   canUpdateOwnedRecord,
   createFixedWindowRateLimiter,
   enforcePublicDraftOrderPolicy,
+  filterAdminOnlySalesRows,
   getAllowedOrderAttachmentContentType,
   getDerivedCrmContactDeleteIds,
   getSalesOrderBoundsError,
@@ -78,7 +79,10 @@ import {
   getSalesOrderShippingQuote,
   normalizeSalesOrderShippingSpeed,
 } from '../shared/sales-order-shipping-policy.mjs'
-import { getSuccessfulPaymentTimestamp } from '../shared/sales-payment-reconciliation.mjs'
+import {
+  getSuccessfulPaymentTimestamp,
+  isWebsiteOrderSource,
+} from '../shared/sales-payment-reconciliation.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -1198,6 +1202,10 @@ app.get(
       response.json({
         ...report,
         orders: filterSalesPaymentsForSession(report.orders, request.salesPortalSession),
+        websiteOrders: filterWebsiteOrdersForSession(
+          report.websiteOrders,
+          request.salesPortalSession,
+        ),
       })
     } catch (error) {
       response.status(500).json({
@@ -2835,6 +2843,10 @@ function filterSalesPaymentsForSession(payments, session) {
   return rows.filter(
     (payment) => getSalesPortalOwnerKey(payment?.salesRep, payment?.salesRepEmail) === owner.key,
   )
+}
+
+function filterWebsiteOrdersForSession(orders, session) {
+  return filterAdminOnlySalesRows(arrayFromPayload(orders), !session || Boolean(session.isAdmin))
 }
 
 async function prepareFullToolStatePatchForSession(payload, session) {
@@ -5448,6 +5460,7 @@ async function listOrdersUpdatedSince(sinceDate) {
               email
               createdAt
               updatedAt
+              sourceName
               displayFinancialStatus
               tags
               customAttributes {
@@ -5577,6 +5590,29 @@ function mapOrderToSalesPayment(order, orderJobs) {
   }
 }
 
+function mapOrderToWebsiteOrder(order) {
+  if (!isWebsiteOrderSource(order?.sourceName)) return null
+
+  const money =
+    order?.currentTotalPriceSet?.shopMoney ?? order?.totalPriceSet?.shopMoney ?? {}
+  const total = Number(money.amount)
+
+  return {
+    orderId: cleanString(order?.id),
+    orderName: cleanString(order?.name),
+    sourceName: cleanString(order?.sourceName),
+    customerName:
+      cleanString(order?.customer?.displayName) ||
+      cleanString(order?.billingAddress?.name) ||
+      cleanString(order?.email),
+    orderedAt: cleanString(order?.createdAt),
+    paidAt: getSuccessfulPaymentTimestamp(order?.transactions, total),
+    total: Number.isFinite(total) ? total : 0,
+    currency: cleanString(money.currencyCode) || shopCurrencyCode,
+    financialStatus: cleanString(order?.displayFinancialStatus),
+  }
+}
+
 async function getSalesPaymentReconciliation() {
   const now = Date.now()
   if (
@@ -5603,6 +5639,13 @@ async function getSalesPaymentReconciliation() {
         return paidTimestamp >= since.getTime() && paidTimestamp <= through.getTime()
       })
       .sort((first, second) => Date.parse(second.paidAt) - Date.parse(first.paidAt))
+    const websiteOrders = orders
+      .map((order) => mapOrderToWebsiteOrder(order))
+      .filter((order) => {
+        const orderedTimestamp = Date.parse(order?.orderedAt ?? '')
+        return orderedTimestamp >= since.getTime() && orderedTimestamp <= through.getTime()
+      })
+      .sort((first, second) => Date.parse(second.orderedAt) - Date.parse(first.orderedAt))
 
     const report = {
       ok: true,
@@ -5612,6 +5655,7 @@ async function getSalesPaymentReconciliation() {
       refreshedAt: new Date().toISOString(),
       source: 'shopify_successful_sale_capture_transactions',
       orders: payments,
+      websiteOrders,
     }
     salesPaymentReconciliationCacheValue = report
     salesPaymentReconciliationCacheExpiresAt = Date.now() + salesPaymentReconciliationCacheTtlMs

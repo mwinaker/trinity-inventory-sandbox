@@ -490,6 +490,18 @@ type SalesPaymentReconciliationOrder = {
   financialStatus: string
 }
 
+type SalesWebsiteOrder = {
+  orderId: string
+  orderName: string
+  sourceName: string
+  customerName: string
+  orderedAt: string
+  paidAt: string
+  total: number
+  currency: string
+  financialStatus: string
+}
+
 type SalesPaymentReconciliationReport = {
   ok: boolean
   windowDays: number
@@ -498,6 +510,7 @@ type SalesPaymentReconciliationReport = {
   refreshedAt: string
   source: string
   orders: SalesPaymentReconciliationOrder[]
+  websiteOrders: SalesWebsiteOrder[]
 }
 
 type SalesRepSummary = {
@@ -2611,6 +2624,12 @@ function formatSalesDashboardDate(value: string) {
     month: 'short',
     day: 'numeric',
   })
+}
+
+function formatShopifyFinancialStatus(value: string) {
+  const normalized = value.trim().toLowerCase().replace(/_/g, ' ')
+  if (!normalized) return 'Unknown'
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function formatSalesDashboardSyncTime(value: string) {
@@ -5726,7 +5745,12 @@ function InternalApp({
         const payload = (await response.json().catch(() => ({}))) as Partial<
           SalesPaymentReconciliationReport
         > & { message?: string }
-        if (!response.ok || !payload.ok || !Array.isArray(payload.orders)) {
+        if (
+          !response.ok ||
+          !payload.ok ||
+          !Array.isArray(payload.orders) ||
+          !Array.isArray(payload.websiteOrders)
+        ) {
           throw new Error(payload.message || 'Payment reconciliation is unavailable.')
         }
 
@@ -6142,12 +6166,24 @@ function InternalApp({
         ),
     [salesDashboardRepFilter, salesPaymentReconciliation],
   )
+  const salesDashboardWebsiteOrders = useMemo(
+    () =>
+      [...(salesPaymentReconciliation?.websiteOrders ?? [])].sort(
+        (first, second) =>
+          getDateTimestamp(second.orderedAt) - getDateTimestamp(first.orderedAt),
+      ),
+    [salesPaymentReconciliation],
+  )
   const salesDashboardTrailingSubmissionValue = salesDashboardTrailingSubmissions.reduce(
     (total, sale) => total + sale.total,
     0,
   )
   const salesDashboardTrailingPaymentValue = salesDashboardTrailingPayments.reduce(
     (total, payment) => total + payment.total,
+    0,
+  )
+  const salesDashboardWebsiteOrderValue = salesDashboardWebsiteOrders.reduce(
+    (total, order) => total + order.total,
     0,
   )
   const trailingMonthLeaderboardRows = useMemo(() => {
@@ -8888,6 +8924,9 @@ function InternalApp({
                 based on the successful Shopify transaction, regardless of the original submission
                 date. Both use the selected sales rep above. Submitted amounts show order-form
                 items; paid amounts show the full Shopify invoice, including shipping and fees.
+                {hasAdminAccess
+                  ? ' The admin-only website table below is separate and is not affected by the sales rep filter.'
+                  : ''}
               </p>
             </div>
 
@@ -9014,6 +9053,79 @@ function InternalApp({
                 )}
               </section>
             </div>
+
+            {hasAdminAccess ? (
+              <section className="panel website-orders-panel">
+                <div className="split-heading">
+                  <div className="section-heading">
+                    <p className="eyebrow">Admin only · Website sales</p>
+                    <h2>Orders placed through the Online Store</h2>
+                  </div>
+                  <div className="dashboard-total-chip">
+                    <span>{salesDashboardWebsiteOrders.length} orders · invoice total</span>
+                    <strong>{formatSalesOrderMoney(salesDashboardWebsiteOrderValue)}</strong>
+                  </div>
+                </div>
+                <p className="helper-text">
+                  Direct website orders from the trailing 30 days. Manual orders, draft invoices,
+                  and point-of-sale orders are excluded.
+                </p>
+
+                {salesPaymentReconciliationError ? (
+                  <p className="helper-text reconciliation-message" role="alert">
+                    Shopify website orders could not be refreshed:{' '}
+                    {salesPaymentReconciliationError}
+                  </p>
+                ) : null}
+                {isLoadingSalesPaymentReconciliation && !salesPaymentReconciliation ? (
+                  <p className="empty-state" aria-live="polite">
+                    Checking Shopify Online Store orders…
+                  </p>
+                ) : salesDashboardWebsiteOrders.length === 0 ? (
+                  <p className="empty-state">
+                    No Online Store orders were placed in this 30-day window.
+                  </p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="payment-reconciliation-table website-orders-table">
+                      <thead>
+                        <tr>
+                          <th>Ordered</th>
+                          <th>Shopify order</th>
+                          <th>Customer</th>
+                          <th>Payment status</th>
+                          <th>Paid in full</th>
+                          <th>Invoice total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {salesDashboardWebsiteOrders.map((order) => (
+                          <tr key={order.orderId || order.orderName}>
+                            <td>{formatSalesDashboardDate(order.orderedAt)}</td>
+                            <td className="reconciliation-reference">
+                              <strong>{order.orderName || 'Unnumbered order'}</strong>
+                              <span>Online Store</span>
+                            </td>
+                            <td>{order.customerName || 'No customer saved'}</td>
+                            <td>
+                              <span className={`pill ${order.paidAt ? 'yes' : ''}`}>
+                                {formatShopifyFinancialStatus(order.financialStatus)}
+                              </span>
+                            </td>
+                            <td>
+                              {order.paidAt
+                                ? formatSalesDashboardDate(order.paidAt)
+                                : 'Not fully paid'}
+                            </td>
+                            <td>{formatSalesOrderMoney(order.total)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            ) : null}
           </section>
 
           <section className="sales-dashboard-grid">
