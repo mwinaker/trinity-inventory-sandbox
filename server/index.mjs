@@ -23,7 +23,10 @@ import {
   getKnownProPlayerAffiliation,
   normalizePlayerNameKey,
 } from '../shared/pro-player-affiliations.mjs'
-import { buildTrailingSalesLeaderboard } from './team-leaderboard.mjs'
+import {
+  buildSalesLeaderboardForWindow,
+  buildTrailingSalesLeaderboard,
+} from './team-leaderboard.mjs'
 import {
   isAdminTeamMember,
   isSalesTeamMember,
@@ -84,6 +87,10 @@ import {
   getSuccessfulPaymentTimestamp,
   isWebsiteOrderSource,
 } from '../shared/sales-payment-reconciliation.mjs'
+import {
+  isTimestampInsideSalesDashboardWindow,
+  resolveSalesDashboardWindow,
+} from '../shared/sales-dashboard-window.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -171,7 +178,6 @@ const stateCacheFilePath =
   process.env.TRINITY_STATE_CACHE_PATH ?? path.join('/tmp', 'trinity-inventory-state-cache.json')
 const catalogCacheTtlMs = 10 * 60 * 1000
 const salesPaymentReconciliationCacheTtlMs = 5 * 60 * 1000
-const salesPaymentReconciliationWindowDays = 30
 const shopifyGraphqlMaxAttempts = readPositiveIntegerEnv('TRINITY_SHOPIFY_GRAPHQL_MAX_ATTEMPTS', 20)
 const maxOrderAttachmentBytes = 20 * 1024 * 1024
 const orderAttachmentFileUrlMaxAttempts = readPositiveIntegerEnv(
@@ -742,9 +748,8 @@ let stateCachePromise = null
 let catalogCacheValue = null
 let catalogCacheExpiresAt = 0
 let catalogCachePromise = null
-let salesPaymentReconciliationCacheValue = null
-let salesPaymentReconciliationCacheExpiresAt = 0
-let salesPaymentReconciliationCachePromise = null
+const salesPaymentReconciliationCache = new Map()
+const salesPaymentReconciliationPromises = new Map()
 let stateWriteQueue = Promise.resolve()
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
@@ -1199,7 +1204,12 @@ app.get(
       }
 
       response.set('Cache-Control', 'no-store')
-      const report = await getSalesPaymentReconciliation()
+      const requestedWindow = resolveSalesDashboardWindow({
+        range: getQueryParam(request, 'range') || '30',
+        since: getQueryParam(request, 'since'),
+        through: getQueryParam(request, 'through'),
+      })
+      const report = await getSalesPaymentReconciliation(requestedWindow)
       response.json({
         ...report,
         orders: filterSalesPaymentsForSession(report.orders, request.salesPortalSession),
@@ -1209,7 +1219,7 @@ app.get(
         ),
       })
     } catch (error) {
-      response.status(500).json({
+      response.status(error instanceof RangeError ? 400 : 500).json({
         ok: false,
         message:
           error instanceof Error
@@ -5442,12 +5452,12 @@ async function listOrdersUpdatedSince(sinceDate) {
   const rows = []
   let cursor = null
   let hasNextPage = true
-  const query = `updated_at:>=${sinceDate.toISOString().slice(0, 10)}`
+  const query = sinceDate ? `updated_at:>=${sinceDate.toISOString().slice(0, 10)}` : null
 
   while (hasNextPage) {
     const result = await shopifyGraphQL(
       `
-        query SalesPaymentReconciliation($after: String, $query: String!) {
+        query SalesPaymentReconciliation($after: String, $query: String) {
           orders(
             first: 100
             after: $after
@@ -5524,7 +5534,9 @@ async function listCompletedDraftOrdersUpdatedSince(sinceDate) {
   const rows = []
   let cursor = null
   let hasNextPage = true
-  const query = `status:completed updated_at:>=${sinceDate.toISOString().slice(0, 10)}`
+  const query = sinceDate
+    ? `status:completed updated_at:>=${sinceDate.toISOString().slice(0, 10)}`
+    : 'status:completed'
 
   try {
     while (hasNextPage) {
@@ -5678,21 +5690,24 @@ function mapOrderToWebsiteOrder(order) {
   }
 }
 
-async function getSalesPaymentReconciliation() {
+async function getSalesPaymentReconciliation(
+  requestedWindow = resolveSalesDashboardWindow({ range: '30' }),
+) {
   const now = Date.now()
-  if (
-    salesPaymentReconciliationCacheValue &&
-    salesPaymentReconciliationCacheExpiresAt > now
-  ) {
-    return salesPaymentReconciliationCacheValue
+  const cacheKey = requestedWindow.cacheKey
+  const cached = salesPaymentReconciliationCache.get(cacheKey)
+  if (cached?.expiresAt > now) return cached.report
+  if (salesPaymentReconciliationPromises.has(cacheKey)) {
+    return salesPaymentReconciliationPromises.get(cacheKey)
   }
-  if (salesPaymentReconciliationCachePromise) return salesPaymentReconciliationCachePromise
 
-  salesPaymentReconciliationCachePromise = (async () => {
-    const through = new Date()
-    const since = new Date(
-      through.getTime() - salesPaymentReconciliationWindowDays * 24 * 60 * 60 * 1000,
-    )
+  for (const [key, entry] of salesPaymentReconciliationCache) {
+    if (entry.expiresAt <= now) salesPaymentReconciliationCache.delete(key)
+  }
+
+  const reportPromise = (async () => {
+    const through = new Date(requestedWindow.through)
+    const since = requestedWindow.since ? new Date(requestedWindow.since) : null
     const [orders, state, completedDraftOrders] = await Promise.all([
       listOrdersUpdatedSince(since),
       getSharedState(),
@@ -5711,44 +5726,58 @@ async function getSalesPaymentReconciliation() {
           completedDraftsByOrderId.get(cleanString(order?.id)),
         ),
       )
-      .filter((payment) => {
-        const paidTimestamp = Date.parse(payment?.paidAt ?? '')
-        return paidTimestamp >= since.getTime() && paidTimestamp <= through.getTime()
-      })
+      .filter((payment) =>
+        isTimestampInsideSalesDashboardWindow(payment?.paidAt, requestedWindow),
+      )
       .sort((first, second) => Date.parse(second.paidAt) - Date.parse(first.paidAt))
     const websiteOrders = orders
       .map((order) => mapOrderToWebsiteOrder(order))
-      .filter((order) => {
-        const orderedTimestamp = Date.parse(order?.orderedAt ?? '')
-        return orderedTimestamp >= since.getTime() && orderedTimestamp <= through.getTime()
-      })
+      .filter((order) =>
+        isTimestampInsideSalesDashboardWindow(order?.orderedAt, requestedWindow),
+      )
       .sort((first, second) => Date.parse(second.orderedAt) - Date.parse(first.orderedAt))
+    const teamLeaderboardRows = buildSalesLeaderboardForWindow(
+      state.orderJobs,
+      salesPortalTeamMembers,
+      {
+        sinceMs: since ? since.getTime() : Number.NEGATIVE_INFINITY,
+        throughMs: through.getTime(),
+      },
+    )
 
     const report = {
       ok: true,
-      windowDays: salesPaymentReconciliationWindowDays,
-      since: since.toISOString(),
+      range: requestedWindow.range,
+      windowKey: cacheKey,
+      windowDays: requestedWindow.windowDays,
+      since: since?.toISOString() ?? '',
       through: through.toISOString(),
       refreshedAt: new Date().toISOString(),
       source: 'shopify_successful_sale_capture_transactions',
       orders: payments,
       websiteOrders,
+      teamLeaderboardRows,
     }
-    salesPaymentReconciliationCacheValue = report
-    salesPaymentReconciliationCacheExpiresAt = Date.now() + salesPaymentReconciliationCacheTtlMs
+    salesPaymentReconciliationCache.set(cacheKey, {
+      report,
+      expiresAt: Date.now() + salesPaymentReconciliationCacheTtlMs,
+    })
     return report
   })()
+  salesPaymentReconciliationPromises.set(cacheKey, reportPromise)
 
   try {
-    return await salesPaymentReconciliationCachePromise
+    return await reportPromise
   } finally {
-    salesPaymentReconciliationCachePromise = null
+    if (salesPaymentReconciliationPromises.get(cacheKey) === reportPromise) {
+      salesPaymentReconciliationPromises.delete(cacheKey)
+    }
   }
 }
 
 function invalidateSalesPaymentReconciliationCache() {
-  salesPaymentReconciliationCacheValue = null
-  salesPaymentReconciliationCacheExpiresAt = 0
+  salesPaymentReconciliationCache.clear()
+  salesPaymentReconciliationPromises.clear()
 }
 
 async function listRecentOrders(first) {

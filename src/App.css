@@ -810,6 +810,19 @@ button:hover {
   align-items: end;
 }
 
+.dashboard-custom-dates {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.dashboard-custom-dates .reconciliation-message {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .live-sync-stamp,
 .dashboard-total-chip {
   display: grid;
@@ -2605,6 +2618,7 @@ td select {
   .sales-portal-report-layout,
   .sales-dashboard-toolbar,
   .dashboard-controls,
+  .dashboard-custom-dates,
   .sales-dashboard-grid,
   .payment-reconciliation-grid,
   .sales-dashboard-card,

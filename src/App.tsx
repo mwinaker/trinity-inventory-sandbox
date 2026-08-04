@@ -39,6 +39,10 @@ import {
   getSalesOrderBatQuantity,
 } from '../shared/sales-order-shipping-policy.mjs'
 import {
+  isTimestampInsideSalesDashboardWindow,
+  resolveSalesDashboardWindow,
+} from '../shared/sales-dashboard-window.mjs'
+import {
   billetSuitabilityOptions,
   isValidWorkableWeightRange,
   normalizeBilletWorkflowStatus,
@@ -453,7 +457,15 @@ type RemoteStatePatch = Partial<RemoteState> & {
   deletes?: RemoteStateDeletes
 }
 
-type SalesDashboardRange = '30' | '90' | 'all'
+type SalesDashboardRange = '30' | '90' | 'all' | 'custom'
+
+type SalesDashboardWindow = {
+  range: SalesDashboardRange
+  windowDays: number | null
+  since: string
+  through: string
+  cacheKey: string
+}
 
 type SalesDashboardSale = {
   key: string
@@ -505,13 +517,16 @@ type SalesWebsiteOrder = {
 
 type SalesPaymentReconciliationReport = {
   ok: boolean
-  windowDays: number
+  range: SalesDashboardRange
+  windowKey: string
+  windowDays: number | null
   since: string
   through: string
   refreshedAt: string
   source: string
   orders: SalesPaymentReconciliationOrder[]
   websiteOrders: SalesWebsiteOrder[]
+  teamLeaderboardRows: TeamLeaderboardRow[]
 }
 
 type SalesRepSummary = {
@@ -727,6 +742,7 @@ const salesDashboardRangeOptions: Array<{ value: SalesDashboardRange; label: str
   { value: '30', label: 'Last 30 days' },
   { value: '90', label: 'Last 90 days' },
   { value: 'all', label: 'All time' },
+  { value: 'custom', label: 'Custom dates' },
 ]
 const crmStageOptions: Array<{ value: CrmStage; label: string }> = [
   { value: 'lead', label: 'Lead' },
@@ -2644,6 +2660,60 @@ function formatSalesDashboardSyncTime(value: string) {
   })
 }
 
+function formatSalesDashboardDateInput(value = new Date()) {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getDefaultSalesDashboardCustomStart() {
+  const date = new Date()
+  date.setDate(date.getDate() - 29)
+  return formatSalesDashboardDateInput(date)
+}
+
+function getSalesDashboardCustomBoundary(value: string, endOfDay: boolean) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return ''
+
+  const year = Number(match[1])
+  const month = Number(match[2]) - 1
+  const day = Number(match[3])
+  const date = endOfDay
+    ? new Date(year, month, day, 23, 59, 59, 999)
+    : new Date(year, month, day, 0, 0, 0, 0)
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day
+  ) {
+    return ''
+  }
+
+  return date.toISOString()
+}
+
+function formatSalesDashboardWindowDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+function getSalesDashboardWindowLabel(window: SalesDashboardWindow | null) {
+  if (!window) return 'Selected window'
+  if (window.range === '30') return 'Last 30 days'
+  if (window.range === '90') return 'Last 90 days'
+  if (window.range === 'all') return 'All time'
+  return `${formatSalesDashboardWindowDate(window.since)} – ${formatSalesDashboardWindowDate(
+    window.through,
+  )}`
+}
+
 function parseSalesDashboardAmount(value: string) {
   const normalized = String(value ?? '').replace(/[^0-9.-]/g, '')
   const amount = Number(normalized)
@@ -2978,14 +3048,77 @@ function buildTeamSalesRows(
     )
 }
 
-function isSaleInsideDashboardRange(sale: SalesDashboardSale, range: SalesDashboardRange) {
-  if (range === 'all') return true
+function buildSalesDashboardWindowSummaries(
+  submissions: SalesDashboardSale[],
+  payments: SalesPaymentReconciliationOrder[],
+  owners: CrmOwnerOption[],
+) {
+  const summaries = new Map<string, SalesRepSummary & { daysToPay: number[] }>()
 
-  const days = Number(range)
-  const submittedAt = getDateTimestamp(sale.submittedAt)
-  if (!submittedAt) return true
+  function ensureSummary(
+    record: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>,
+  ) {
+    const key = getSalesRepSummaryKey(record)
+    const existing = summaries.get(key)
+    if (existing) return existing
 
-  return submittedAt >= Date.now() - days * 24 * 60 * 60 * 1000
+    const summary = {
+      key,
+      label: getSalesRepSummaryLabel(record),
+      email: getSalesRepSummaryEmail(record),
+      submittedCount: 0,
+      submittedValue: 0,
+      paidCount: 0,
+      paidValue: 0,
+      openCount: 0,
+      openValue: 0,
+      averageDaysToPay: null,
+      daysToPay: [],
+    } satisfies SalesRepSummary & { daysToPay: number[] }
+    summaries.set(key, summary)
+    return summary
+  }
+
+  for (const owner of owners) {
+    ensureSummary({ salesRep: owner.name, salesRepEmail: owner.email })
+  }
+
+  for (const sale of submissions) {
+    const summary = ensureSummary(sale)
+    summary.submittedCount += 1
+    summary.submittedValue += sale.total
+    if (!sale.isPaid) {
+      summary.openCount += 1
+      summary.openValue += sale.total
+    }
+  }
+
+  for (const payment of payments) {
+    const summary = ensureSummary(payment)
+    summary.paidCount += 1
+    summary.paidValue += payment.total
+
+    const submittedAt = getDateTimestamp(payment.submittedAt)
+    const paidAt = getDateTimestamp(payment.paidAt)
+    if (submittedAt && paidAt && paidAt >= submittedAt) {
+      summary.daysToPay.push((paidAt - submittedAt) / (1000 * 60 * 60 * 24))
+    }
+  }
+
+  return Array.from(summaries.values())
+    .map(({ daysToPay, ...summary }) => ({
+      ...summary,
+      averageDaysToPay:
+        daysToPay.length > 0
+          ? daysToPay.reduce((total, days) => total + days, 0) / daysToPay.length
+          : null,
+    }))
+    .sort(
+      (first, second) =>
+        second.submittedValue - first.submittedValue ||
+        second.paidValue - first.paidValue ||
+        compareText(first.label, second.label),
+    )
 }
 
 function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
@@ -5336,7 +5469,6 @@ function InternalApp({
     const stored = window.localStorage.getItem(orderJobStorageKey)
     return stored ? (JSON.parse(stored) as OrderJob[]).map((job) => normalizeOrderJob(job)) : []
   })
-  const [teamLeaderboardRows, setTeamLeaderboardRows] = useState<TeamLeaderboardRow[]>([])
   const [billingContacts, setBillingContacts] = useState<BillingContact[]>(() => {
     const stored = window.localStorage.getItem(billingContactStorageKey)
     const parsed = stored ? (JSON.parse(stored) as BillingContact[]) : []
@@ -5356,6 +5488,12 @@ function InternalApp({
   }))
   const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
   const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
+  const [salesDashboardCustomStart, setSalesDashboardCustomStart] = useState(
+    getDefaultSalesDashboardCustomStart,
+  )
+  const [salesDashboardCustomEnd, setSalesDashboardCustomEnd] = useState(
+    formatSalesDashboardDateInput,
+  )
   const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState(
     accessOwner?.key ?? 'all',
   )
@@ -5601,10 +5739,7 @@ function InternalApp({
         return false
       }
       if (!response.ok) throw new Error('Shopify sync is not ready on this host.')
-      const remote = (await response.json()) as Partial<RemoteState> & {
-        ok?: boolean
-        teamLeaderboardRows?: TeamLeaderboardRow[]
-      }
+      const remote = (await response.json()) as Partial<RemoteState> & { ok?: boolean }
 
       const remoteBillets = Array.isArray(remote.billets)
         ? remote.billets.map((billet) => normalizeBillet(billet))
@@ -5622,9 +5757,6 @@ function InternalApp({
         : []
       const remoteOrderJobs = Array.isArray(remote.orderJobs)
         ? remote.orderJobs.map((job) => normalizeOrderJob(job))
-        : []
-      const remoteTeamLeaderboardRows = Array.isArray(remote.teamLeaderboardRows)
-        ? remote.teamLeaderboardRows
         : []
       const remoteBillingContacts = Array.isArray(remote.billingContacts)
         ? remote.billingContacts.map((contact) => normalizeBillingContact(contact))
@@ -5653,7 +5785,6 @@ function InternalApp({
       setProducedBats(remoteState.producedBats)
       setCustomBatModels(remoteState.customBatModels)
       setOrderJobs(remoteState.orderJobs)
-      setTeamLeaderboardRows(remoteTeamLeaderboardRows)
       setBillingContacts(remoteState.billingContacts)
       setCrmContacts(remoteState.crmContacts)
       setLastLiveRefreshAt(new Date().toISOString())
@@ -5726,18 +5857,63 @@ function InternalApp({
     return () => window.clearInterval(refresh)
   }, [backendStatus])
 
+  const salesDashboardRequestedWindowResult = useMemo(() => {
+    try {
+      const since =
+        salesDashboardRange === 'custom'
+          ? getSalesDashboardCustomBoundary(salesDashboardCustomStart, false)
+          : undefined
+      const through =
+        salesDashboardRange === 'custom'
+          ? getSalesDashboardCustomBoundary(salesDashboardCustomEnd, true)
+          : undefined
+      return {
+        window: resolveSalesDashboardWindow({
+          range: salesDashboardRange,
+          since,
+          through,
+        }) as SalesDashboardWindow,
+        error: '',
+      }
+    } catch (error) {
+      return {
+        window: null,
+        error: error instanceof Error ? error.message : 'Choose a valid reporting window.',
+      }
+    }
+  }, [salesDashboardCustomEnd, salesDashboardCustomStart, salesDashboardRange])
+
   useEffect(() => {
     if (activeSection !== 'sales' || backendStatus !== 'connected') return
     if (crmSandboxPreviewEnabled) return
 
+    const requestedWindow = salesDashboardRequestedWindowResult.window
+    if (!requestedWindow) {
+      return
+    }
+
     let cancelled = false
 
-    async function loadSalesPaymentReconciliation() {
+    async function loadSalesPaymentReconciliation(requestWindow: SalesDashboardWindow) {
+      setIsLoadingSalesPaymentReconciliation(true)
+      setSalesPaymentReconciliation((current) =>
+        current?.windowKey === requestWindow.cacheKey ? current : null,
+      )
+      setSalesPaymentReconciliationError('')
+
       try {
-        const response = await fetchApi('/api/sales-dashboard/payment-reconciliation', {
-          cache: 'no-store',
-          headers: { 'Cache-Control': 'no-store' },
-        })
+        const query = new URLSearchParams({ range: requestWindow.range })
+        if (requestWindow.range === 'custom') {
+          query.set('since', requestWindow.since)
+          query.set('through', requestWindow.through)
+        }
+        const response = await fetchApi(
+          `/api/sales-dashboard/payment-reconciliation?${query.toString()}`,
+          {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-store' },
+          },
+        )
         const payload = (await response.json().catch(() => ({}))) as Partial<
           SalesPaymentReconciliationReport
         > & { message?: string }
@@ -5745,7 +5921,9 @@ function InternalApp({
           !response.ok ||
           !payload.ok ||
           !Array.isArray(payload.orders) ||
-          !Array.isArray(payload.websiteOrders)
+          !Array.isArray(payload.websiteOrders) ||
+          !Array.isArray(payload.teamLeaderboardRows) ||
+          payload.windowKey !== requestWindow.cacheKey
         ) {
           throw new Error(payload.message || 'Payment reconciliation is unavailable.')
         }
@@ -5765,11 +5943,17 @@ function InternalApp({
       }
     }
 
-    void loadSalesPaymentReconciliation()
+    void loadSalesPaymentReconciliation(requestedWindow)
     return () => {
       cancelled = true
     }
-  }, [activeSection, backendStatus, crmSandboxPreviewEnabled, lastLiveRefreshAt])
+  }, [
+    activeSection,
+    backendStatus,
+    crmSandboxPreviewEnabled,
+    lastLiveRefreshAt,
+    salesDashboardRequestedWindowResult,
+  ])
 
   useEffect(() => {
     if (backendStatus !== 'connected') return
@@ -6100,81 +6284,126 @@ function InternalApp({
       }),
     [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs],
   )
+  const activeSalesPaymentReconciliation = useMemo(() => {
+    const requestedWindow = salesDashboardRequestedWindowResult.window
+    return requestedWindow &&
+      salesPaymentReconciliation?.windowKey === requestedWindow.cacheKey
+      ? salesPaymentReconciliation
+      : null
+  }, [salesDashboardRequestedWindowResult, salesPaymentReconciliation])
+  const salesDashboardPresentationWindow = useMemo<SalesDashboardWindow | null>(() => {
+    if (!activeSalesPaymentReconciliation) {
+      return salesDashboardRequestedWindowResult.window
+    }
+    return {
+      range: activeSalesPaymentReconciliation.range,
+      windowDays: activeSalesPaymentReconciliation.windowDays,
+      since: activeSalesPaymentReconciliation.since,
+      through: activeSalesPaymentReconciliation.through,
+      cacheKey: activeSalesPaymentReconciliation.windowKey,
+    }
+  }, [activeSalesPaymentReconciliation, salesDashboardRequestedWindowResult])
+  const salesDashboardWindowLabel = getSalesDashboardWindowLabel(
+    salesDashboardPresentationWindow,
+  )
+  const salesDashboardReconciliationMessage =
+    salesDashboardRequestedWindowResult.error || salesPaymentReconciliationError
   const salesDashboardAllSales = useMemo(
     () =>
       applySalesPaymentTimestamps(
         buildSalesDashboardSales(orderJobs),
-        salesPaymentReconciliation?.orders ?? [],
+        activeSalesPaymentReconciliation?.orders ?? [],
       ),
-    [orderJobs, salesPaymentReconciliation],
+    [activeSalesPaymentReconciliation, orderJobs],
   )
   const salesDashboardRepOptions = useMemo(
-    () => buildSalesRepSummaries(salesDashboardAllSales),
-    [salesDashboardAllSales],
-  )
-  const salesDashboardSales = useMemo(
     () =>
-      salesDashboardAllSales.filter((sale) => {
-        const matchesRange = isSaleInsideDashboardRange(sale, salesDashboardRange)
-        const matchesRep =
-          salesDashboardRepFilter === 'all' ||
-          getSalesRepSummaryKey(sale) === salesDashboardRepFilter
-
-        return matchesRange && matchesRep
-      }),
-    [salesDashboardAllSales, salesDashboardRange, salesDashboardRepFilter],
+      buildSalesDashboardWindowSummaries(
+        salesDashboardAllSales,
+        activeSalesPaymentReconciliation?.orders ?? [],
+        seedCrmOwnerOptions,
+      ),
+    [activeSalesPaymentReconciliation, salesDashboardAllSales],
   )
-  const salesDashboardSummaries = useMemo(
-    () => buildSalesRepSummaries(salesDashboardSales),
-    [salesDashboardSales],
-  )
-  const salesDashboardTrailingSubmissions = useMemo(() => {
-    const through =
-      getDateTimestamp(salesPaymentReconciliation?.through ?? '') || Date.now()
-    const since =
-      getDateTimestamp(salesPaymentReconciliation?.since ?? '') ||
-      through - 30 * 24 * 60 * 60 * 1000
+  const salesDashboardWindowSubmissions = useMemo(() => {
+    if (!salesDashboardPresentationWindow) return []
 
     return salesDashboardAllSales
       .filter((sale) => {
-        const submittedAt = getDateTimestamp(sale.submittedAt)
+        const matchesWindow =
+          (salesDashboardPresentationWindow.range === 'all' && !sale.submittedAt) ||
+          isTimestampInsideSalesDashboardWindow(
+            sale.submittedAt,
+            salesDashboardPresentationWindow,
+          )
         const matchesRep =
           salesDashboardRepFilter === 'all' ||
           getSalesRepSummaryKey(sale) === salesDashboardRepFilter
-        return submittedAt >= since && submittedAt <= through && matchesRep
+        return matchesWindow && matchesRep
       })
       .sort(
         (first, second) =>
           getDateTimestamp(second.submittedAt) - getDateTimestamp(first.submittedAt),
       )
-  }, [salesDashboardAllSales, salesDashboardRepFilter, salesPaymentReconciliation])
-  const salesDashboardTrailingPayments = useMemo(
-    () =>
-      [...(salesPaymentReconciliation?.orders ?? [])]
-        .filter(
-          (payment) =>
-            salesDashboardRepFilter === 'all' ||
-            getSalesRepSummaryKey(payment) === salesDashboardRepFilter,
-        )
-        .sort(
-          (first, second) =>
-            getDateTimestamp(second.paidAt) - getDateTimestamp(first.paidAt),
+  }, [salesDashboardAllSales, salesDashboardPresentationWindow, salesDashboardRepFilter])
+  const salesDashboardWindowPayments = useMemo(() => {
+    if (!salesDashboardPresentationWindow) return []
+
+    return [...(activeSalesPaymentReconciliation?.orders ?? [])]
+      .filter(
+        (payment) =>
+          isTimestampInsideSalesDashboardWindow(
+            payment.paidAt,
+            salesDashboardPresentationWindow,
+          ) &&
+          (salesDashboardRepFilter === 'all' ||
+            getSalesRepSummaryKey(payment) === salesDashboardRepFilter),
+      )
+      .sort(
+        (first, second) =>
+          getDateTimestamp(second.paidAt) - getDateTimestamp(first.paidAt),
+      )
+  }, [
+    activeSalesPaymentReconciliation,
+    salesDashboardPresentationWindow,
+    salesDashboardRepFilter,
+  ])
+  const salesDashboardWebsiteOrders = useMemo(() => {
+    if (!salesDashboardPresentationWindow) return []
+
+    return [...(activeSalesPaymentReconciliation?.websiteOrders ?? [])]
+      .filter((order) =>
+        isTimestampInsideSalesDashboardWindow(
+          order.orderedAt,
+          salesDashboardPresentationWindow,
         ),
-    [salesDashboardRepFilter, salesPaymentReconciliation],
-  )
-  const salesDashboardWebsiteOrders = useMemo(
-    () =>
-      [...(salesPaymentReconciliation?.websiteOrders ?? [])].sort(
+      )
+      .sort(
         (first, second) =>
           getDateTimestamp(second.orderedAt) - getDateTimestamp(first.orderedAt),
+      )
+  }, [activeSalesPaymentReconciliation, salesDashboardPresentationWindow])
+  const salesDashboardSummaries = useMemo(
+    () =>
+      buildSalesDashboardWindowSummaries(
+        salesDashboardWindowSubmissions,
+        salesDashboardWindowPayments,
+        seedCrmOwnerOptions,
+      ).filter(
+        (summary) =>
+          salesDashboardRepFilter === 'all' || summary.key === salesDashboardRepFilter,
       ),
-    [salesPaymentReconciliation],
+    [
+      salesDashboardRepFilter,
+      salesDashboardWindowPayments,
+      salesDashboardWindowSubmissions,
+    ],
   )
-  const salesDashboardTrailingSubmissionValue = salesDashboardTrailingSubmissions.reduce(
+  const salesDashboardWindowSubmissionValue = salesDashboardWindowSubmissions.reduce(
     (total, sale) => total + sale.total,
     0,
   )
-  const salesDashboardTrailingPaymentValue = salesDashboardTrailingPayments.reduce(
+  const salesDashboardWindowPaymentValue = salesDashboardWindowPayments.reduce(
     (total, payment) => total + payment.total,
     0,
   )
@@ -6182,47 +6411,43 @@ function InternalApp({
     (total, order) => total + order.total,
     0,
   )
-  const trailingMonthLeaderboardRows = useMemo(() => {
-    if (hasTeamToolSession) return teamLeaderboardRows
-
-    const trailingMonthSales = buildSalesDashboardSales(orderJobs).filter((sale) =>
-      isSaleInsideDashboardRange(sale, '30'),
+  const salesDashboardLeaderboardRows = useMemo(() => {
+    const rows = activeSalesPaymentReconciliation
+      ? activeSalesPaymentReconciliation.teamLeaderboardRows
+      : buildTeamSalesRows(salesDashboardWindowSubmissions, seedCrmOwnerOptions)
+    return rows.filter(
+      (row) => salesDashboardRepFilter === 'all' || row.key === salesDashboardRepFilter,
     )
-    return buildTeamSalesRows(trailingMonthSales, seedCrmOwnerOptions)
-  }, [hasTeamToolSession, orderJobs, teamLeaderboardRows])
+  }, [
+    activeSalesPaymentReconciliation,
+    salesDashboardRepFilter,
+    salesDashboardWindowSubmissions,
+  ])
   const {
     openSales: salesDashboardOpenSales,
-    submittedValue: salesDashboardSubmittedValue,
     openValue: salesDashboardOpenValue,
   } = useMemo(() => {
-    const paidSales: SalesDashboardSale[] = []
     const openSales: SalesDashboardSale[] = []
-    let submittedValue = 0
-    let paidValue = 0
     let openValue = 0
 
-    for (const sale of salesDashboardSales) {
-      submittedValue += sale.total
-      if (sale.isPaid) {
-        paidSales.push(sale)
-        paidValue += sale.total
-      } else {
+    for (const sale of salesDashboardWindowSubmissions) {
+      if (!sale.isPaid) {
         openSales.push(sale)
         openValue += sale.total
       }
     }
 
-    return { paidSales, openSales, submittedValue, paidValue, openValue }
-  }, [salesDashboardSales])
+    return { openSales, openValue }
+  }, [salesDashboardWindowSubmissions])
   const salesDashboardActivitySales = useMemo(
     () =>
-      [...salesDashboardSales]
+      [...salesDashboardWindowSubmissions]
         .sort(
           (first, second) =>
             getDateTimestamp(second.paidAt || second.submittedAt) -
             getDateTimestamp(first.paidAt || first.submittedAt),
         ),
-    [salesDashboardSales],
+    [salesDashboardWindowSubmissions],
   )
   const salesDashboardAwaitingPayment = useMemo(
     () =>
@@ -8846,8 +9071,39 @@ function InternalApp({
               ) : null}
               <div className="live-sync-stamp">
                 <span>Last updated</span>
-                <strong>{formatSalesDashboardSyncTime(lastLiveRefreshAt)}</strong>
+                <strong>
+                  {formatSalesDashboardSyncTime(
+                    activeSalesPaymentReconciliation?.refreshedAt || lastLiveRefreshAt,
+                  )}
+                </strong>
               </div>
+              {salesDashboardRange === 'custom' ? (
+                <div className="dashboard-custom-dates">
+                  <label>
+                    Start date
+                    <input
+                      type="date"
+                      value={salesDashboardCustomStart}
+                      max={salesDashboardCustomEnd || undefined}
+                      onChange={(event) => setSalesDashboardCustomStart(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    End date
+                    <input
+                      type="date"
+                      value={salesDashboardCustomEnd}
+                      min={salesDashboardCustomStart || undefined}
+                      onChange={(event) => setSalesDashboardCustomEnd(event.target.value)}
+                    />
+                  </label>
+                  {salesDashboardRequestedWindowResult.error ? (
+                    <p className="helper-text reconciliation-message" role="alert">
+                      {salesDashboardRequestedWindowResult.error}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -8855,7 +9111,7 @@ function InternalApp({
             <div className="split-heading">
               <div className="section-heading">
                 <p className="eyebrow">Team sales</p>
-                <h2>Trailing 30-day sales leaderboard</h2>
+                <h2>{salesDashboardWindowLabel} sales leaderboard</h2>
               </div>
             </div>
             <p className="helper-text">
@@ -8863,7 +9119,7 @@ function InternalApp({
               paid.
             </p>
             <div className="sales-leaderboard-grid">
-              {trailingMonthLeaderboardRows.map((row, index) => (
+              {salesDashboardLeaderboardRows.map((row, index) => (
                 <article
                   className={`sales-leaderboard-card ${
                     row.key === accessOwner?.key ? 'current' : ''
@@ -8887,27 +9143,27 @@ function InternalApp({
 
           <section className="metrics-grid sales-dashboard-metrics" aria-label="Sales summary">
             <article>
-              <span>Submitted sales</span>
-              <strong>{salesDashboardSales.length}</strong>
+              <span>Submitted orders</span>
+              <strong>{salesDashboardWindowSubmissions.length}</strong>
             </article>
             <article>
-              <span>Submitted value</span>
-              <strong>{formatSalesOrderMoney(salesDashboardSubmittedValue)}</strong>
+              <span>Submitted item value</span>
+              <strong>{formatSalesOrderMoney(salesDashboardWindowSubmissionValue)}</strong>
             </article>
             <article>
-              <span>Paid invoices (30d)</span>
-              <strong>{salesDashboardTrailingPayments.length}</strong>
+              <span>Paid invoices</span>
+              <strong>{salesDashboardWindowPayments.length}</strong>
             </article>
             <article>
-              <span>Paid invoice value (30d)</span>
-              <strong>{formatSalesOrderMoney(salesDashboardTrailingPaymentValue)}</strong>
+              <span>Paid invoice value</span>
+              <strong>{formatSalesOrderMoney(salesDashboardWindowPaymentValue)}</strong>
             </article>
           </section>
 
           <section className="sales-payment-reconciliation">
             <div className="section-heading">
               <p className="eyebrow">Payment reconciliation</p>
-              <h2>Trailing 30-day submissions vs. payments</h2>
+              <h2>{salesDashboardWindowLabel} submissions vs. payments</h2>
               <p className="helper-text">
                 The submission table is based on when the order was entered. The payment table is
                 based on the successful Shopify transaction, regardless of the original submission
@@ -8929,15 +9185,15 @@ function InternalApp({
                     <h2>Orders submitted</h2>
                   </div>
                   <div className="dashboard-total-chip">
-                    <span>{salesDashboardTrailingSubmissions.length} orders · item value</span>
+                    <span>{salesDashboardWindowSubmissions.length} orders · item value</span>
                     <strong>
-                      {formatSalesOrderMoney(salesDashboardTrailingSubmissionValue)}
+                      {formatSalesOrderMoney(salesDashboardWindowSubmissionValue)}
                     </strong>
                   </div>
                 </div>
 
-                {salesDashboardTrailingSubmissions.length === 0 ? (
-                  <p className="empty-state">No orders were submitted in this 30-day window.</p>
+                {salesDashboardWindowSubmissions.length === 0 ? (
+                  <p className="empty-state">No orders were submitted in the selected window.</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="payment-reconciliation-table">
@@ -8952,7 +9208,7 @@ function InternalApp({
                         </tr>
                       </thead>
                       <tbody>
-                        {salesDashboardTrailingSubmissions.map((sale) => (
+                        {salesDashboardWindowSubmissions.map((sale) => (
                           <tr key={sale.key}>
                             <td>{formatSalesDashboardDate(sale.submittedAt)}</td>
                             <td className="reconciliation-reference">
@@ -8991,22 +9247,25 @@ function InternalApp({
                     <h2>Invoices paid</h2>
                   </div>
                   <div className="dashboard-total-chip">
-                    <span>{salesDashboardTrailingPayments.length} orders · invoice total</span>
-                    <strong>{formatSalesOrderMoney(salesDashboardTrailingPaymentValue)}</strong>
+                    <span>{salesDashboardWindowPayments.length} orders · invoice total</span>
+                    <strong>{formatSalesOrderMoney(salesDashboardWindowPaymentValue)}</strong>
                   </div>
                 </div>
 
-                {salesPaymentReconciliationError ? (
+                {salesDashboardReconciliationMessage ? (
                   <p className="helper-text reconciliation-message" role="alert">
-                    Shopify payment timing could not be refreshed: {salesPaymentReconciliationError}
+                    Shopify payment timing could not be refreshed:{' '}
+                    {salesDashboardReconciliationMessage}
                   </p>
                 ) : null}
-                {isLoadingSalesPaymentReconciliation && !salesPaymentReconciliation ? (
+                {isLoadingSalesPaymentReconciliation &&
+                salesDashboardRequestedWindowResult.window &&
+                !activeSalesPaymentReconciliation ? (
                   <p className="empty-state" aria-live="polite">
                     Checking successful Shopify payment transactions…
                   </p>
-                ) : salesDashboardTrailingPayments.length === 0 ? (
-                  <p className="empty-state">No invoices were paid in this 30-day window.</p>
+                ) : salesDashboardWindowPayments.length === 0 ? (
+                  <p className="empty-state">No invoices were paid in the selected window.</p>
                 ) : (
                   <div className="table-wrap">
                     <table className="payment-reconciliation-table">
@@ -9022,7 +9281,7 @@ function InternalApp({
                         </tr>
                       </thead>
                       <tbody>
-                        {salesDashboardTrailingPayments.map((payment) => (
+                        {salesDashboardWindowPayments.map((payment) => (
                           <tr key={payment.orderId || payment.orderName}>
                             <td>{formatSalesDashboardDate(payment.paidAt)}</td>
                             <td className="reconciliation-reference">
@@ -9064,23 +9323,25 @@ function InternalApp({
                   </div>
                 </div>
                 <p className="helper-text">
-                  Direct website orders from the trailing 30 days. Manual orders, draft invoices,
-                  and point-of-sale orders are excluded.
+                  Direct website orders from {salesDashboardWindowLabel.toLowerCase()}. Manual
+                  orders, draft invoices, and point-of-sale orders are excluded.
                 </p>
 
-                {salesPaymentReconciliationError ? (
+                {salesDashboardReconciliationMessage ? (
                   <p className="helper-text reconciliation-message" role="alert">
                     Shopify website orders could not be refreshed:{' '}
-                    {salesPaymentReconciliationError}
+                    {salesDashboardReconciliationMessage}
                   </p>
                 ) : null}
-                {isLoadingSalesPaymentReconciliation && !salesPaymentReconciliation ? (
+                {isLoadingSalesPaymentReconciliation &&
+                salesDashboardRequestedWindowResult.window &&
+                !activeSalesPaymentReconciliation ? (
                   <p className="empty-state" aria-live="polite">
                     Checking Shopify Online Store orders…
                   </p>
                 ) : salesDashboardWebsiteOrders.length === 0 ? (
                   <p className="empty-state">
-                    No Online Store orders were placed in this 30-day window.
+                    No Online Store orders were placed in the selected window.
                   </p>
                 ) : (
                   <div className="table-wrap">
@@ -9130,7 +9391,10 @@ function InternalApp({
               <div className="split-heading">
                 <div className="section-heading">
                   <p className="eyebrow">{hasAdminAccess ? 'By sales rep' : 'My reporting'}</p>
-                  <h2>{hasAdminAccess ? 'Performance' : accessOwner?.label}</h2>
+                  <h2>
+                    {hasAdminAccess ? 'Performance' : accessOwner?.label} ·{' '}
+                    {salesDashboardWindowLabel}
+                  </h2>
                 </div>
                 <div className="dashboard-total-chip">
                   <span>Awaiting</span>
@@ -9187,7 +9451,7 @@ function InternalApp({
             <section className="panel sales-aging-panel">
               <div className="section-heading">
                 <p className="eyebrow">Open invoices</p>
-                <h2>Awaiting payment</h2>
+                <h2>Awaiting payment · {salesDashboardWindowLabel}</h2>
               </div>
 
               <div className="sales-dashboard-list">
@@ -9217,7 +9481,7 @@ function InternalApp({
           <section className="panel sales-activity-panel">
             <div className="section-heading">
               <p className="eyebrow">Sales activity</p>
-              <h2>Submitted and paid orders</h2>
+              <h2>Submitted orders · {salesDashboardWindowLabel}</h2>
             </div>
 
             <div className="sales-dashboard-list activity-list">

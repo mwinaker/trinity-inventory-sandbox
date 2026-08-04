@@ -70,11 +70,10 @@ function getTeamMember(job, members) {
   )
 }
 
-export function buildTrailingSalesLeaderboard(
+export function buildSalesLeaderboardForWindow(
   orderJobs,
   teamMembers,
-  nowMs = Date.now(),
-  trailingDays = 30,
+  { sinceMs = Number.NEGATIVE_INFINITY, throughMs = Date.now() } = {},
 ) {
   const eligibleMembers = (Array.isArray(teamMembers) ? teamMembers : []).filter(
     (member) => member?.role === 'sales' || member?.role === 'admin',
@@ -113,7 +112,6 @@ export function buildTrailingSalesLeaderboard(
     orders.set(orderKey, order)
   }
 
-  const startMs = nowMs - trailingDays * 24 * 60 * 60 * 1000
   const rowsByMember = new Map(
     eligibleMembers.map((member) => [
       member.key ?? member.email,
@@ -127,7 +125,12 @@ export function buildTrailingSalesLeaderboard(
   )
 
   for (const order of orders.values()) {
-    if (!order.owner || !order.submittedAt || order.submittedAt < startMs || order.submittedAt > nowMs) {
+    if (
+      !order.owner ||
+      !order.submittedAt ||
+      order.submittedAt < sinceMs ||
+      order.submittedAt > throughMs
+    ) {
       continue
     }
     const key = order.owner.key ?? order.owner.email
@@ -143,4 +146,16 @@ export function buildTrailingSalesLeaderboard(
       second.submittedCount - first.submittedCount ||
       first.label.localeCompare(second.label),
   )
+}
+
+export function buildTrailingSalesLeaderboard(
+  orderJobs,
+  teamMembers,
+  nowMs = Date.now(),
+  trailingDays = 30,
+) {
+  return buildSalesLeaderboardForWindow(orderJobs, teamMembers, {
+    sinceMs: nowMs - trailingDays * 24 * 60 * 60 * 1000,
+    throughMs: nowMs,
+  })
 }
