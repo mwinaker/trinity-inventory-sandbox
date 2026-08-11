@@ -63,6 +63,7 @@ test('builds Jeremy a paid-order Shopify email with the stored attachment link',
   )
   assert.match(notification.customMessage, /not sent to the customer/)
   assert.equal(notification.tracking.event, 'paid')
+  assert.equal(notification.tracking.method, 'shopify_flow_internal_email')
   assert.equal(notification.tracking.shopifyEventId, 'event-101')
   assert.equal(notification.tracking.shopifyWebhookId, 'webhook-101')
 })
@@ -81,7 +82,7 @@ test('records submission and paid attachment notifications on every matching ord
     event: 'paid',
     recipient: 'jeremy@trinitybats.com',
     sentAt: '2026-08-11T20:30:01.000Z',
-    method: 'shopify_order_email',
+    method: 'shopify_flow_internal_email',
     shopifyOrderId: 'gid://shopify/Order/101',
     shopifyOrderName: '#101',
     shopifyEventId: 'event-101',

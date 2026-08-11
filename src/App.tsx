@@ -8961,8 +8961,16 @@ function InternalApp({
                               </p>
                               {job.internalAttachmentNotifications.map((notification) => (
                                 <p key={notification.id}>
-                                  Attachment {notification.event === 'paid' ? 'paid update' : 'submission'}
-                                  {' sent to '}
+                                  Attachment{' '}
+                                  {notification.event === 'paid'
+                                    ? notification.method === 'shopify_flow_internal_email'
+                                      ? 'paid update queued for Shopify Flow email'
+                                      : 'paid update'
+                                    : 'submission'}
+                                  {notification.event === 'paid' &&
+                                  notification.method === 'shopify_flow_internal_email'
+                                    ? ' to '
+                                    : ' sent to '}
                                   {notification.recipient} · {formatOrderDateTime(notification.sentAt)}
                                 </p>
                               ))}

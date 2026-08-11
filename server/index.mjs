@@ -795,11 +795,6 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
       })
 
       if (paidAttachmentNotification) {
-        await sendOrderInvoice(paidAttachmentNotification.orderId, {
-          to: paidAttachmentNotification.recipient,
-          subject: paidAttachmentNotification.subject,
-          customMessage: paidAttachmentNotification.customMessage,
-        })
         mergedJobs = recordInternalAttachmentNotification(
           mergedJobs,
           paidAttachmentNotification.tracking,
@@ -817,7 +812,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     response.status(200).json({
       ok: true,
       jobs: mappedIncomingJobs.length,
-      paidAttachmentNotificationSent: Boolean(paidAttachmentNotification),
+      paidAttachmentNotificationQueued: Boolean(paidAttachmentNotification),
       paidAttachmentNotificationRecipient: paidAttachmentNotification?.recipient ?? '',
     })
   } catch (error) {

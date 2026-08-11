@@ -224,7 +224,7 @@ export function buildPaidOrderAttachmentNotification({
     event: 'paid',
     recipient: normalizedRecipient,
     sentAt,
-    method: 'shopify_order_email',
+    method: 'shopify_flow_internal_email',
     shopifyEventId,
     shopifyWebhookId,
     shopifyOrderId: orderId,
