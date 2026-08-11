@@ -5714,7 +5714,7 @@ async function listDraftOrdersSubmittedInsideWindow(requestedWindow) {
             first: 100
             after: $after
             query: $query
-            sortKey: CREATED_AT
+            sortKey: UPDATED_AT
             reverse: true
           ) {
             nodes {
