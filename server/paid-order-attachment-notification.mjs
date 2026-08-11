@@ -1,4 +1,5 @@
 const paidOrderTopic = 'orders/paid'
+const paidOrderCreationTopics = new Set(['orders/create', 'orders/updated'])
 
 export const defaultPaidOrderAttachmentRecipient = 'jeremy@trinitybats.com'
 
@@ -16,6 +17,10 @@ function arrayFrom(value) {
 
 function normalizeTopic(value) {
   return cleanString(value).toLowerCase().replaceAll('_', '/')
+}
+
+function isOrderPaid(order) {
+  return cleanString(order?.financial_status || order?.displayFinancialStatus).toLowerCase() === 'paid'
 }
 
 function normalizeAttachmentNotificationEvent(value) {
@@ -174,7 +179,11 @@ export function buildPaidOrderAttachmentNotification({
   shopifyWebhookId = '',
   sentAt = new Date().toISOString(),
 }) {
-  if (normalizeTopic(topic) !== paidOrderTopic) return null
+  const normalizedTopic = normalizeTopic(topic)
+  const isPaidWebhook = normalizedTopic === paidOrderTopic
+  const isPaidWhenCreatedOrUpdated =
+    paidOrderCreationTopics.has(normalizedTopic) && isOrderPaid(order)
+  if (!isPaidWebhook && !isPaidWhenCreatedOrUpdated) return null
 
   const eligibleJobs = arrayFrom(jobs).filter(
     (job) => job?.origin === 'internal_sales' && job?.internalAttachment?.downloadUrl,

@@ -120,6 +120,37 @@ test('does not resend the paid attachment notification for a recorded order', ()
   assert.equal(duplicate, null)
 })
 
+test('sends the paid attachment notification when Shopify creates a completed draft already paid', () => {
+  const notification = buildPaidOrderAttachmentNotification({
+    topic: 'orders/create',
+    order: {
+      admin_graphql_api_id: 'gid://shopify/Order/101',
+      name: '#101',
+      financial_status: 'paid',
+    },
+    jobs: createJobs(),
+    shopifyEventId: 'event-created-paid-101',
+    sentAt: '2026-08-11T20:30:01.000Z',
+  })
+
+  assert.equal(notification.recipient, 'jeremy@trinitybats.com')
+  assert.match(notification.customMessage, /ORDER ATTACHMENT — DOWNLOAD FILE/)
+})
+
+test('sends the paid attachment notification when an order-updated webhook reports paid', () => {
+  const notification = buildPaidOrderAttachmentNotification({
+    topic: 'ORDERS_UPDATED',
+    order: {
+      admin_graphql_api_id: 'gid://shopify/Order/101',
+      name: '#101',
+      financial_status: 'paid',
+    },
+    jobs: createJobs(),
+  })
+
+  assert.equal(notification.recipient, 'jeremy@trinitybats.com')
+})
+
 test('ignores non-paid webhooks, website orders, and orders without attachments', () => {
   assert.equal(
     buildPaidOrderAttachmentNotification({
