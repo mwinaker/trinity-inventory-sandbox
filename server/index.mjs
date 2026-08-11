@@ -24,8 +24,10 @@ import {
   normalizePlayerNameKey,
 } from '../shared/pro-player-affiliations.mjs'
 import {
+  buildSalesLeaderboardFromSubmissions,
   buildSalesLeaderboardForWindow,
   buildTrailingSalesLeaderboard,
+  buildUnifiedSalesSubmissions,
 } from './team-leaderboard.mjs'
 import {
   isAdminTeamMember,
@@ -5690,6 +5692,94 @@ async function listCompletedDraftOrdersUpdatedSince(sinceDate) {
   return rows
 }
 
+async function listDraftOrdersSubmittedInsideWindow(requestedWindow) {
+  const rows = []
+  let cursor = null
+  let hasNextPage = true
+  const throughDate = new Date(requestedWindow.through)
+  throughDate.setUTCDate(throughDate.getUTCDate() + 1)
+  const queryParts = [`created_at:<=${throughDate.toISOString().slice(0, 10)}`]
+  if (requestedWindow.since) {
+    const sinceDate = new Date(requestedWindow.since)
+    sinceDate.setUTCDate(sinceDate.getUTCDate() - 1)
+    queryParts.unshift(`created_at:>=${sinceDate.toISOString().slice(0, 10)}`)
+  }
+  const query = queryParts.join(' ')
+
+  while (hasNextPage) {
+    const result = await shopifyGraphQL(
+      `
+        query SalesSubmissionDraftOrders($after: String, $query: String!) {
+          draftOrders(
+            first: 100
+            after: $after
+            query: $query
+            sortKey: CREATED_AT
+            reverse: true
+          ) {
+            nodes {
+              id
+              name
+              status
+              createdAt
+              completedAt
+              tags
+              note2
+              customAttributes {
+                key
+                value
+              }
+              customer {
+                displayName
+                email
+              }
+              billingAddress {
+                name
+                company
+              }
+              order {
+                id
+                name
+                displayFinancialStatus
+                tags
+                note
+                customAttributes {
+                  key
+                  value
+                }
+              }
+              lineItems(first: 250) {
+                nodes {
+                  title
+                  quantity
+                  originalUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
+                  }
+                }
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
+        }
+      `,
+      { after: cursor, query },
+    )
+
+    const connection = result?.data?.draftOrders
+    rows.push(...(connection?.nodes ?? []))
+    hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
+    cursor = connection?.pageInfo?.endCursor ?? null
+  }
+
+  return rows
+}
+
 function getSalesPaymentOrderJobs(order, orderJobs, orderAttributes) {
   const orderId = extractNumericId(order?.id)
   const orderName = cleanString(order?.name)
@@ -5812,10 +5902,11 @@ async function getSalesPaymentReconciliation(
   const reportPromise = (async () => {
     const through = new Date(requestedWindow.through)
     const since = requestedWindow.since ? new Date(requestedWindow.since) : null
-    const [orders, state, completedDraftOrders] = await Promise.all([
+    const [orders, state, completedDraftOrders, submittedDraftOrders] = await Promise.all([
       listOrdersUpdatedSince(since),
       getSharedState(),
       listCompletedDraftOrdersUpdatedSince(since),
+      listDraftOrdersSubmittedInsideWindow(requestedWindow),
     ])
     const completedDraftsByOrderId = new Map(
       completedDraftOrders
@@ -5840,8 +5931,15 @@ async function getSalesPaymentReconciliation(
         isTimestampInsideSalesDashboardWindow(order?.orderedAt, requestedWindow),
       )
       .sort((first, second) => Date.parse(second.orderedAt) - Date.parse(first.orderedAt))
-    const teamLeaderboardRows = buildSalesLeaderboardForWindow(
+    const submissions = buildUnifiedSalesSubmissions(
       state.orderJobs,
+      submittedDraftOrders,
+      salesPortalTeamMembers,
+    ).filter((submission) =>
+      isTimestampInsideSalesDashboardWindow(submission?.submittedAt, requestedWindow),
+    )
+    const teamLeaderboardRows = buildSalesLeaderboardFromSubmissions(
+      submissions,
       salesPortalTeamMembers,
       {
         sinceMs: since ? since.getTime() : Number.NEGATIVE_INFINITY,
@@ -5858,6 +5956,7 @@ async function getSalesPaymentReconciliation(
       through: through.toISOString(),
       refreshedAt: new Date().toISOString(),
       source: 'shopify_successful_sale_capture_transactions',
+      submissions,
       orders: payments,
       websiteOrders,
       teamLeaderboardRows,

@@ -501,6 +501,7 @@ type SalesDashboardSale = {
   quantity: number
   lineCount: number
   productSummary: string
+  submissionSource: 'inventory' | 'shopify_draft_order'
 }
 
 type SalesPaymentReconciliationOrder = {
@@ -542,6 +543,7 @@ type SalesPaymentReconciliationReport = {
   through: string
   refreshedAt: string
   source: string
+  submissions: SalesDashboardSale[]
   orders: SalesPaymentReconciliationOrder[]
   websiteOrders: SalesWebsiteOrder[]
   teamLeaderboardRows: TeamLeaderboardRow[]
@@ -2466,6 +2468,7 @@ function createSalesDashboardSaleFromPortalOrder(order: SalesPortalOrder): Sales
     total: order.total,
     quantity: order.draft.lines.reduce((total, line) => total + line.quantity, 0),
     lineCount: order.draft.lines.length,
+    submissionSource: 'inventory',
     productSummary: order.draft.lines
       .map(
         (line) =>
@@ -2892,6 +2895,7 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
         quantity: 0,
         lineCount: 0,
         productSummary: '',
+        submissionSource: 'inventory',
         draftLineCount: 0,
         draftProductTitles: new Set<string>(),
         draftQuantity: 0,
@@ -5994,6 +5998,7 @@ function InternalApp({
         if (
           !response.ok ||
           !payload.ok ||
+          !Array.isArray(payload.submissions) ||
           !Array.isArray(payload.orders) ||
           !Array.isArray(payload.websiteOrders) ||
           !Array.isArray(payload.teamLeaderboardRows) ||
@@ -6385,7 +6390,7 @@ function InternalApp({
   const salesDashboardAllSales = useMemo(
     () =>
       applySalesPaymentTimestamps(
-        buildSalesDashboardSales(orderJobs),
+        activeSalesPaymentReconciliation?.submissions ?? buildSalesDashboardSales(orderJobs),
         activeSalesPaymentReconciliation?.orders ?? [],
       ),
     [activeSalesPaymentReconciliation, orderJobs],
@@ -9252,8 +9257,9 @@ function InternalApp({
                 based on the successful Shopify transaction, regardless of the original submission
                 date. Both use the selected sales rep above. Submitted amounts show order-form
                 items; paid amounts show the full Shopify invoice, including shipping and fees.
-                Paid invoices include both Inventory-tool orders and Shopify Draft Orders. Draft
-                Orders without saved rep data are shown as unassigned instead of being omitted.
+                Submitted orders and paid invoices both include Inventory-tool orders and Shopify
+                Draft Orders, deduplicated when both records describe the same sale. Draft Orders
+                without saved rep data are shown as unassigned instead of being omitted.
                 {hasAdminAccess
                   ? ' The admin-only website table below is separate and is not affected by the sales rep filter.'
                   : ''}
@@ -9284,6 +9290,7 @@ function InternalApp({
                         <tr>
                           <th>Submitted</th>
                           <th>Invoice</th>
+                          <th>Source</th>
                           <th>Sales rep</th>
                           <th>Customer</th>
                           <th>Paid?</th>
@@ -9301,6 +9308,11 @@ function InternalApp({
                               {sale.paidOrderName && sale.paidOrderName !== sale.draftOrderName ? (
                                 <span>Paid order {sale.paidOrderName}</span>
                               ) : null}
+                            </td>
+                            <td>
+                              {sale.submissionSource === 'shopify_draft_order'
+                                ? 'Shopify Draft Orders'
+                                : 'Inventory tool'}
                             </td>
                             <td>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</td>
                             <td>{sale.payerName || sale.customerName || 'No payer saved'}</td>

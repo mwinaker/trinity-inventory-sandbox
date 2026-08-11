@@ -33,7 +33,7 @@ export const trinityTeamMembers = Object.freeze([
   {
     name: 'Jeremy McKee',
     email: 'jeremy@trinitybats.com',
-    aliases: [],
+    aliases: ['Trinity Bat Co Admin'],
     role: 'admin',
   },
   {
