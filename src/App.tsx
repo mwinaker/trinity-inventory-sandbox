@@ -3801,6 +3801,8 @@ type SalesOrderApiResponse = {
   internalOrderNotificationSent?: boolean
   internalOrderNotificationMethod?: string
   internalOrderNotificationError?: string
+  internalOrderUploadedAttachmentAttached?: boolean
+  internalOrderAttachmentLinkIncluded?: boolean
   salesRepSubmissionNotificationSent?: boolean
   salesRepSubmissionNotificationError?: string
   orderJobs?: OrderJob[]
@@ -3972,7 +3974,9 @@ function getSalesOrderSuccessMessage(
   const internalCopyMessage = payload.internalOrderNotificationError
     ? `, but internal order-copy emails failed: ${payload.internalOrderNotificationError}`
     : payload.internalOrderNotificationSent
-      ? ' and internal order-copy emails sent'
+      ? payload.internalOrderAttachmentLinkIncluded
+        ? ' and internal order-copy emails sent with the uploaded-file download link'
+        : ' and internal order-copy emails sent'
       : ''
 
   return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`

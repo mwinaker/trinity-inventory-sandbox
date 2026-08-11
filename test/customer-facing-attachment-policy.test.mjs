@@ -27,11 +27,17 @@ test('customer-facing Shopify order payloads do not expose uploaded attachments'
   }
 })
 
-test('internal order notifications still carry uploaded attachments for staff', () => {
+test('internal order notifications include a prominent Shopify Files download link', () => {
   const messageSource = extractFunctionSource('buildInternalOrderCopyMessage')
   const emailSource = extractFunctionSource('sendInternalOrderCopyEmail')
+  const shopifyEmailSource = extractFunctionSource('sendShopifyInternalOrderCopies')
 
-  assert.equal(messageSource.includes('Attachment: ${formatAttachmentLine(internalAttachment)}'), true)
-  assert.equal(emailSource.includes('tryDownloadUploadedOrderEmailAttachment(uploadedAttachment)'), true)
+  assert.equal(
+    messageSource.includes(
+      'ORDER ATTACHMENT — DOWNLOAD FILE: ${formatAttachmentLine(internalAttachment)}',
+    ),
+    true,
+  )
+  assert.equal(shopifyEmailSource.includes('customMessage: text'), true)
   assert.equal(emailSource.includes('uploadedAttachmentAttached: Boolean(uploadedEmailAttachment)'), true)
 })

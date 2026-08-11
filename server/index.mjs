@@ -1708,6 +1708,9 @@ app.post('/api/sales-orders', async (request, response) => {
         internalOrderUploadedAttachmentAttached: Boolean(
           internalOrderNotification.uploadedAttachmentAttached,
         ),
+        internalOrderAttachmentLinkIncluded: Boolean(
+          internalOrderNotification.attachmentLinkIncluded,
+        ),
         internalOrderNotificationError: internalOrderNotification.error,
         payerNotificationSent: Boolean(payerInvoiceNotification.sentAt),
         payerNotificationRecipient: payerInvoiceNotification.recipient,
@@ -1774,6 +1777,9 @@ app.post('/api/sales-orders', async (request, response) => {
       internalOrderPdfAttached: Boolean(internalOrderNotification.pdfAttached),
       internalOrderUploadedAttachmentAttached: Boolean(
         internalOrderNotification.uploadedAttachmentAttached,
+      ),
+      internalOrderAttachmentLinkIncluded: Boolean(
+        internalOrderNotification.attachmentLinkIncluded,
       ),
       internalOrderNotificationError: internalOrderNotification.error,
       payerNotificationRecipient: payerEmail,
@@ -3150,6 +3156,7 @@ async function trySendInternalOrderCopyNotification({
       deliveryMethod: '',
       pdfAttached: false,
       uploadedAttachmentAttached: false,
+      attachmentLinkIncluded: false,
       error: '',
     }
   }
@@ -3186,6 +3193,7 @@ async function trySendInternalOrderCopyNotification({
       deliveryMethod: delivery.method,
       pdfAttached: delivery.pdfAttached,
       uploadedAttachmentAttached: delivery.uploadedAttachmentAttached,
+      attachmentLinkIncluded: Boolean(normalizeOrderAttachment(payload.attachment)?.downloadUrl),
       error: '',
     }
   } catch (error) {
@@ -3197,6 +3205,7 @@ async function trySendInternalOrderCopyNotification({
       deliveryMethod: '',
       pdfAttached: false,
       uploadedAttachmentAttached: false,
+      attachmentLinkIncluded: false,
       error: message,
     }
   }
@@ -3260,7 +3269,9 @@ function buildInternalOrderCopyMessage({
     payer.phone ? `Payer phone: ${payer.phone}` : '',
     payer.company ? `Team/agency: ${payer.company}` : '',
     payer.relationship ? `Relationship: ${payer.relationship}` : '',
-    internalAttachment ? `Attachment: ${formatAttachmentLine(internalAttachment)}` : '',
+    internalAttachment
+      ? `ORDER ATTACHMENT — DOWNLOAD FILE: ${formatAttachmentLine(internalAttachment)}`
+      : '',
     shippingOption
       ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}`
       : 'Shipping: Local delivery / no shipping required',
