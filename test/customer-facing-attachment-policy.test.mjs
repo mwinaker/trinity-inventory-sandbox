@@ -27,6 +27,26 @@ test('customer-facing Shopify order payloads do not expose uploaded attachments'
   }
 })
 
+test('attachment-bearing orders carry only a neutral tag for the paid Flow workflow', () => {
+  for (const functionName of ['buildOrderCreateInput', 'buildDraftOrderInput']) {
+    const source = extractFunctionSource(functionName)
+
+    assert.equal(
+      source.includes("hasInternalAttachment ? ['Trinity Attachment'] : []"),
+      true,
+    )
+    assert.equal(source.includes('trinity_internal_attachment_url'), false)
+  }
+})
+
+test('order-job metafield sync provides Flow with the internal attachment URL', () => {
+  const syncSource = extractFunctionSource('syncOrderJobMetafields')
+
+  assert.equal(syncSource.includes("key: 'internal_attachment_url'"), true)
+  assert.equal(syncSource.includes("type: 'single_line_text_field'"), true)
+  assert.equal(syncSource.includes('value: job.internalAttachment.downloadUrl'), true)
+})
+
 test('internal order notifications include a prominent Shopify Files download link', () => {
   const messageSource = extractFunctionSource('buildInternalOrderCopyMessage')
   const emailSource = extractFunctionSource('sendInternalOrderCopyEmail')

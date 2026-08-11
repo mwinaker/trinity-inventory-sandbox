@@ -6222,6 +6222,15 @@ async function syncOrderJobMetafields(orderJobs) {
             value: JSON.stringify(job.internalAttachment),
           }
         : null,
+      job.internalAttachment?.downloadUrl
+        ? {
+            namespace: 'trinity',
+            key: 'internal_attachment_url',
+            ownerId,
+            type: 'single_line_text_field',
+            value: job.internalAttachment.downloadUrl,
+          }
+        : null,
       normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications).length > 0
         ? {
             namespace: 'trinity',
@@ -7505,6 +7514,7 @@ function summarizeSalesOrderLines(lines) {
 
 function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const hasInternalAttachment = Boolean(normalizeOrderAttachment(payload.attachment)?.downloadUrl)
   const salesRep = cleanString(payload.salesRep)
   const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
@@ -7569,6 +7579,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     ...(shippingLine ? { shippingLines: [shippingLine] } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
+      hasInternalAttachment ? ['Trinity Attachment'] : [],
       salesRep ? [`Sales Rep: ${salesRep}`] : [],
       playerName ? [`Player: ${playerName}`] : [],
       hasProOrder ? ['Pro Order'] : [],
@@ -7650,6 +7661,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
 
 function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().toISOString()) {
   const lines = Array.isArray(payload.lines) ? payload.lines : []
+  const hasInternalAttachment = Boolean(normalizeOrderAttachment(payload.attachment)?.downloadUrl)
   const salesRep = cleanString(payload.salesRep)
   const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const playerName = cleanString(payload.playerName || payload.customerName)
@@ -7703,6 +7715,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     ...(shippingLine ? { shippingLine } : {}),
     note,
     tags: ['Trinity Intake', 'Internal Sales'].concat(
+      hasInternalAttachment ? ['Trinity Attachment'] : [],
       salesRep ? [`Sales Rep: ${salesRep}`] : [],
       playerName ? [`Player: ${playerName}`] : [],
       hasProOrder ? ['Pro Order'] : [],
