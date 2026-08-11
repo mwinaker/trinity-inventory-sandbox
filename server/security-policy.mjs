@@ -145,9 +145,45 @@ export function sanitizeOrderJobForTeamReporting(job) {
     totalPrice: cleanString(job?.totalPrice),
     currency: cleanString(job?.currency),
     internalAttachment: sanitizeOrderAttachmentForTeamReporting(job?.internalAttachment),
+    internalAttachmentNotifications: sanitizeAttachmentNotificationsForTeamReporting(
+      job?.internalAttachmentNotifications,
+    ),
     createdAt: cleanString(job?.createdAt),
     updatedAt: cleanString(job?.updatedAt),
   }
+}
+
+function sanitizeAttachmentNotificationsForTeamReporting(notifications) {
+  if (!Array.isArray(notifications)) return []
+
+  return notifications
+    .map((notification) => {
+      const event = cleanString(notification?.event).toLowerCase()
+      const recipient = cleanString(notification?.recipient).toLowerCase()
+      const sentAt = cleanString(notification?.sentAt)
+      if (!['submission', 'paid'].includes(event) || !recipient || !sentAt) return null
+
+      return {
+        id: cleanString(notification?.id),
+        event,
+        recipient,
+        sentAt,
+        method: cleanString(notification?.method),
+        shopifyEventId: cleanString(notification?.shopifyEventId),
+        shopifyWebhookId: cleanString(notification?.shopifyWebhookId),
+        shopifyOrderId: cleanString(notification?.shopifyOrderId),
+        shopifyOrderName: cleanString(notification?.shopifyOrderName),
+        shopifyDraftOrderId: cleanString(notification?.shopifyDraftOrderId),
+        shopifyDraftOrderName: cleanString(notification?.shopifyDraftOrderName),
+        attachmentId: cleanString(notification?.attachmentId),
+        filename: cleanString(notification?.filename),
+        downloadUrl: isAllowedShopifyAttachmentUrl(notification?.downloadUrl)
+          ? cleanString(notification.downloadUrl)
+          : '',
+      }
+    })
+    .filter(Boolean)
+    .slice(-25)
 }
 
 function sanitizeOrderAttachmentForTeamReporting(attachment) {

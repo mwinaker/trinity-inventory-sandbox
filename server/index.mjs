@@ -47,6 +47,13 @@ import {
 import { downloadUploadedOrderEmailAttachment } from './order-attachment-email.mjs'
 import { formatOrderAttachmentUploadError } from './order-attachment-errors.mjs'
 import {
+  buildPaidOrderAttachmentNotification,
+  createInternalAttachmentNotification,
+  defaultPaidOrderAttachmentRecipient,
+  normalizeInternalAttachmentNotifications,
+  recordInternalAttachmentNotification,
+} from './paid-order-attachment-notification.mjs'
+import {
   allowsLocalInternalAccess,
   buildShopifySessionBounceLocation,
   hasEmbeddedShopifyContext,
@@ -765,22 +772,52 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     }
 
     const topic = String(request.get('x-shopify-topic') ?? '')
+    const shopifyEventId = String(request.get('x-shopify-event-id') ?? '')
+    const shopifyWebhookId = String(request.get('x-shopify-webhook-id') ?? '')
     const payload = JSON.parse(request.body.toString('utf8'))
     const mappedIncomingJobs = mapOrderWebhookToJobs(payload, topic)
+    let paidAttachmentNotification = null
 
     if (mappedIncomingJobs.length > 0) {
       await ensureDefinitions()
       const incomingJobs = await attachOrderJobsToPlayerProfiles(mappedIncomingJobs)
       const existingJobs = await listRecords(resourceConfigs.orderJobs)
-      const mergedJobs = mergeIncomingOrderJobs(existingJobs, incomingJobs)
+      let mergedJobs = mergeIncomingOrderJobs(existingJobs, incomingJobs)
+      paidAttachmentNotification = buildPaidOrderAttachmentNotification({
+        topic,
+        order: payload,
+        jobs: mergedJobs,
+        recipient: defaultPaidOrderAttachmentRecipient,
+        shopifyEventId,
+        shopifyWebhookId,
+      })
+
+      if (paidAttachmentNotification) {
+        await sendOrderInvoice(paidAttachmentNotification.orderId, {
+          to: paidAttachmentNotification.recipient,
+          subject: paidAttachmentNotification.subject,
+          customMessage: paidAttachmentNotification.customMessage,
+        })
+        mergedJobs = recordInternalAttachmentNotification(
+          mergedJobs,
+          paidAttachmentNotification.tracking,
+        )
+      }
+
       await Promise.all([
         Promise.all(mergedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
         rememberOrderJobContacts(mergedJobs),
       ])
+      await syncOrderJobMetafields(mergedJobs)
       invalidateSalesPaymentReconciliationCache()
     }
 
-    response.status(200).json({ ok: true, jobs: mappedIncomingJobs.length })
+    response.status(200).json({
+      ok: true,
+      jobs: mappedIncomingJobs.length,
+      paidAttachmentNotificationSent: Boolean(paidAttachmentNotification),
+      paidAttachmentNotificationRecipient: paidAttachmentNotification?.recipient ?? '',
+    })
   } catch (error) {
     response.status(500).json({
       ok: false,
@@ -1691,6 +1728,12 @@ app.post('/api/sales-orders', async (request, response) => {
         invoiceRecipient: payerInvoiceNotification.recipient,
         invoiceError: payerInvoiceNotification.error,
       })
+      const attachmentTracking = await tryRecordSubmittedAttachmentNotification({
+        jobs,
+        payload,
+        internalOrderNotification,
+        draftOrder,
+      })
       const salesRepEmail = normalizeEmail(payload.salesRepEmail)
 
       response.json({
@@ -1711,6 +1754,8 @@ app.post('/api/sales-orders', async (request, response) => {
         internalOrderAttachmentLinkIncluded: Boolean(
           internalOrderNotification.attachmentLinkIncluded,
         ),
+        internalOrderAttachmentTracked: attachmentTracking.tracked,
+        internalOrderAttachmentTrackingError: attachmentTracking.error,
         internalOrderNotificationError: internalOrderNotification.error,
         payerNotificationSent: Boolean(payerInvoiceNotification.sentAt),
         payerNotificationRecipient: payerInvoiceNotification.recipient,
@@ -1722,7 +1767,7 @@ app.post('/api/sales-orders', async (request, response) => {
           ? internalOrderNotification.error
           : '',
         staffNotificationFlow: 'shopify_draft_order_review',
-        orderJobs: jobs,
+        orderJobs: attachmentTracking.jobs,
         players: rememberedContacts.players,
         billingContacts: rememberedContacts.billingContacts,
       })
@@ -1759,6 +1804,12 @@ app.post('/api/sales-orders', async (request, response) => {
       invoiceRecipient: payerEmail,
       invoiceError: '',
     })
+    const attachmentTracking = await tryRecordSubmittedAttachmentNotification({
+      jobs,
+      payload,
+      internalOrderNotification,
+      order,
+    })
     const salesRepEmail = normalizeEmail(payload.salesRepEmail)
 
     response.json({
@@ -1781,6 +1832,8 @@ app.post('/api/sales-orders', async (request, response) => {
       internalOrderAttachmentLinkIncluded: Boolean(
         internalOrderNotification.attachmentLinkIncluded,
       ),
+      internalOrderAttachmentTracked: attachmentTracking.tracked,
+      internalOrderAttachmentTrackingError: attachmentTracking.error,
       internalOrderNotificationError: internalOrderNotification.error,
       payerNotificationRecipient: payerEmail,
       salesRepSubmissionNotificationSent: Boolean(
@@ -1790,7 +1843,7 @@ app.post('/api/sales-orders', async (request, response) => {
         ? internalOrderNotification.error
         : '',
       staffNotificationFlow: 'shopify_new_order',
-      orderJobs: jobs,
+      orderJobs: attachmentTracking.jobs,
       players: rememberedContacts.players,
       billingContacts: rememberedContacts.billingContacts,
     })
@@ -3208,6 +3261,46 @@ async function trySendInternalOrderCopyNotification({
       attachmentLinkIncluded: false,
       error: message,
     }
+  }
+}
+
+async function tryRecordSubmittedAttachmentNotification({
+  jobs,
+  payload,
+  internalOrderNotification,
+  draftOrder = null,
+  order = null,
+}) {
+  const attachment = normalizeOrderAttachment(payload?.attachment)
+  const jeremyReceivedCopy = internalOrderNotification?.recipients?.some(
+    (recipient) => normalizeEmail(recipient) === defaultPaidOrderAttachmentRecipient,
+  )
+  if (!attachment || !internalOrderNotification?.sentAt || !jeremyReceivedCopy) {
+    return { jobs, tracked: false, error: '' }
+  }
+
+  const tracking = createInternalAttachmentNotification({
+    event: 'submission',
+    recipient: defaultPaidOrderAttachmentRecipient,
+    sentAt: internalOrderNotification.sentAt,
+    method: internalOrderNotification.deliveryMethod,
+    shopifyOrderId: order?.id,
+    shopifyOrderName: order?.name,
+    shopifyDraftOrderId: draftOrder?.id,
+    shopifyDraftOrderName: draftOrder?.name,
+    attachment,
+  })
+  const trackedJobs = recordInternalAttachmentNotification(jobs, tracking)
+
+  try {
+    await Promise.all(trackedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job)))
+    await syncOrderJobMetafields(trackedJobs)
+    return { jobs: trackedJobs, tracked: true, error: '' }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown attachment notification tracking error.'
+    console.error(`Attachment notification tracking error: ${message}`)
+    return { jobs, tracked: false, error: message }
   }
 }
 
@@ -5810,6 +5903,15 @@ async function listRecentOrders(first) {
               key
               value
             }
+            internalAttachment: metafield(namespace: "trinity", key: "internal_attachment") {
+              jsonValue
+            }
+            internalAttachmentNotifications: metafield(
+              namespace: "trinity"
+              key: "internal_attachment_notifications"
+            ) {
+              jsonValue
+            }
             currentTotalPriceSet {
               shopMoney {
                 amount
@@ -6024,6 +6126,17 @@ async function syncOrderJobMetafields(orderJobs) {
             ownerId,
             type: 'json',
             value: JSON.stringify(job.internalAttachment),
+          }
+        : null,
+      normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications).length > 0
+        ? {
+            namespace: 'trinity',
+            key: 'internal_attachment_notifications',
+            ownerId,
+            type: 'json',
+            value: JSON.stringify(
+              normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications),
+            ),
           }
         : null,
       {
@@ -7808,6 +7921,7 @@ function mapDraftOrderToJobs(
         },
       ],
       internalAttachment,
+      internalAttachmentNotifications: [],
       notes: cleanString(line.notes),
       internalNotes: cleanString(payload.notes),
       createdAt: draftOrder.createdAt ?? now,
@@ -7843,6 +7957,9 @@ function mapCompletedDraftOrderToJobs(
       purchaseOrder: job.purchaseOrder || cleanString(payload.purchaseOrder),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
+      internalAttachmentNotifications: normalizeInternalAttachmentNotifications(
+        job.internalAttachmentNotifications,
+      ),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
@@ -7873,6 +7990,9 @@ function mapCreatedOrderToJobs(
       purchaseOrder: job.purchaseOrder || cleanString(payload.purchaseOrder),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
+      internalAttachmentNotifications: normalizeInternalAttachmentNotifications(
+        job.internalAttachmentNotifications,
+      ),
       internalNotes: cleanString(payload.notes),
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
@@ -7905,7 +8025,12 @@ function mapGraphQLOrderToJobs(order) {
       order.customer?.displayName ?? '',
       order.email ?? order.customer?.email ?? '',
     )
-    const internalAttachment = normalizeOrderAttachmentFromAttributes(orderAttributes)
+    const internalAttachment =
+      normalizeOrderAttachment(order.internalAttachment?.jsonValue) ||
+      normalizeOrderAttachmentFromAttributes(orderAttributes)
+    const internalAttachmentNotifications = normalizeInternalAttachmentNotifications(
+      order.internalAttachmentNotifications?.jsonValue,
+    )
 
     return {
       id: `order-${extractNumericId(order.id)}-line-${extractNumericId(line.id)}`,
@@ -7959,6 +8084,7 @@ function mapGraphQLOrderToJobs(order) {
         },
       ],
       internalAttachment,
+      internalAttachmentNotifications,
       notes: lineAttributes.trinity_notes ?? order.note ?? '',
       internalNotes: '',
       createdAt: order.createdAt,
@@ -8086,6 +8212,8 @@ function mapOrderWebhookToJobs(order, topic) {
           productId: line.product_id ? toShopifyGid('Product', line.product_id) : '',
         },
       ],
+      internalAttachment: null,
+      internalAttachmentNotifications: [],
       notes: lineAttributes.trinity_notes ?? order.note ?? '',
       internalNotes: '',
       createdAt: order.created_at,
@@ -8139,6 +8267,10 @@ function mergeOrderJob(existing, incoming) {
     purchaseOrder: existing.purchaseOrder || incoming.purchaseOrder,
     specs: mergeSpecs(existing.specs, incoming.specs),
     internalAttachment: existing.internalAttachment || incoming.internalAttachment || null,
+    internalAttachmentNotifications: normalizeInternalAttachmentNotifications([
+      ...(existing.internalAttachmentNotifications ?? []),
+      ...(incoming.internalAttachmentNotifications ?? []),
+    ]),
     internalNotes: existing.internalNotes || incoming.internalNotes,
     createdAt: existing.createdAt || incoming.createdAt,
     updatedAt: incoming.updatedAt || new Date().toISOString(),

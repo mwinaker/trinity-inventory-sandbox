@@ -147,6 +147,22 @@ test('team reporting keeps sales totals while removing customer and CRM details'
       fileStatus: 'READY',
       uploadToken: 'secret-token',
     },
+    internalAttachmentNotifications: [
+      {
+        id: 'paid:event-1',
+        event: 'paid',
+        recipient: 'jeremy@trinitybats.com',
+        sentAt: '2026-07-19T19:00:00.000Z',
+        method: 'shopify_order_email',
+        shopifyEventId: 'event-1',
+        shopifyWebhookId: 'webhook-1',
+        shopifyOrderId: 'gid://shopify/Order/1',
+        shopifyOrderName: '#1001',
+        attachmentId: 'attachment-1',
+        filename: 'swing notes.pdf',
+        downloadUrl: 'https://cdn.shopify.com/s/files/1/0000/files/swing-notes.pdf',
+      },
+    ],
   })
 
   assert.equal(sanitized.salesRep, 'Shane Telfer')
@@ -167,6 +183,24 @@ test('team reporting keeps sales totals while removing customer and CRM details'
   assert.equal('notes' in sanitized, false)
   assert.equal('shopifyFileId' in sanitized.internalAttachment, false)
   assert.equal('uploadToken' in sanitized.internalAttachment, false)
+  assert.deepEqual(sanitized.internalAttachmentNotifications, [
+    {
+      id: 'paid:event-1',
+      event: 'paid',
+      recipient: 'jeremy@trinitybats.com',
+      sentAt: '2026-07-19T19:00:00.000Z',
+      method: 'shopify_order_email',
+      shopifyEventId: 'event-1',
+      shopifyWebhookId: 'webhook-1',
+      shopifyOrderId: 'gid://shopify/Order/1',
+      shopifyOrderName: '#1001',
+      shopifyDraftOrderId: '',
+      shopifyDraftOrderName: '',
+      attachmentId: 'attachment-1',
+      filename: 'swing notes.pdf',
+      downloadUrl: 'https://cdn.shopify.com/s/files/1/0000/files/swing-notes.pdf',
+    },
+  ])
 })
 
 test('attachment policy accepts common business files and rejects executable web content', () => {

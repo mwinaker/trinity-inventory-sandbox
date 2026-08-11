@@ -302,6 +302,23 @@ type OrderAttachment = {
   uploadToken: string
 }
 
+type InternalAttachmentNotification = {
+  id: string
+  event: 'submission' | 'paid'
+  recipient: string
+  sentAt: string
+  method: string
+  shopifyEventId: string
+  shopifyWebhookId: string
+  shopifyOrderId: string
+  shopifyOrderName: string
+  shopifyDraftOrderId: string
+  shopifyDraftOrderName: string
+  attachmentId: string
+  filename: string
+  downloadUrl: string
+}
+
 type OrderJob = {
   id: string
   itemType: SalesOrderItemType
@@ -351,6 +368,7 @@ type OrderJob = {
     productId: string
   }>
   internalAttachment: OrderAttachment | null
+  internalAttachmentNotifications: InternalAttachmentNotification[]
   notes: string
   internalNotes: string
   createdAt: string
@@ -1540,6 +1558,46 @@ function normalizeOrderAttachment(
   }
 }
 
+function normalizeInternalAttachmentNotifications(
+  notifications: Partial<InternalAttachmentNotification>[] | null | undefined,
+): InternalAttachmentNotification[] {
+  if (!Array.isArray(notifications)) return []
+
+  const unique = new Map<string, InternalAttachmentNotification>()
+  for (const notification of notifications) {
+    const event = notification?.event === 'submission' || notification?.event === 'paid'
+      ? notification.event
+      : null
+    const recipient = String(notification?.recipient ?? '').trim().toLowerCase()
+    const sentAt = String(notification?.sentAt ?? '').trim()
+    const attachmentId = String(notification?.attachmentId ?? '').trim()
+    const downloadUrl = String(notification?.downloadUrl ?? '').trim()
+    if (!event || !recipient || !sentAt || (!attachmentId && !downloadUrl)) continue
+
+    const normalized = {
+      id:
+        String(notification?.id ?? '').trim() ||
+        [event, recipient, attachmentId || downloadUrl, sentAt].join(':'),
+      event,
+      recipient,
+      sentAt,
+      method: String(notification?.method ?? '').trim(),
+      shopifyEventId: String(notification?.shopifyEventId ?? '').trim(),
+      shopifyWebhookId: String(notification?.shopifyWebhookId ?? '').trim(),
+      shopifyOrderId: String(notification?.shopifyOrderId ?? '').trim(),
+      shopifyOrderName: String(notification?.shopifyOrderName ?? '').trim(),
+      shopifyDraftOrderId: String(notification?.shopifyDraftOrderId ?? '').trim(),
+      shopifyDraftOrderName: String(notification?.shopifyDraftOrderName ?? '').trim(),
+      attachmentId,
+      filename: String(notification?.filename ?? '').trim(),
+      downloadUrl,
+    } satisfies InternalAttachmentNotification
+    if (!unique.has(normalized.id)) unique.set(normalized.id, normalized)
+  }
+
+  return Array.from(unique.values()).slice(-25)
+}
+
 function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): OrderJob {
   const specs = (record.specs ?? {}) as Partial<OrderSpecs>
   const billingDifferent =
@@ -1604,6 +1662,9 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     },
     lineItems: record.lineItems ?? [],
     internalAttachment: normalizeOrderAttachment(record.internalAttachment),
+    internalAttachmentNotifications: normalizeInternalAttachmentNotifications(
+      record.internalAttachmentNotifications,
+    ),
     notes: record.notes ?? '',
     internalNotes: record.internalNotes ?? '',
     createdAt: record.createdAt ?? new Date().toISOString(),
@@ -3159,6 +3220,10 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
       billingCompany: job.billingCompany || existing?.billingCompany || '',
       billingRelationship: job.billingRelationship || existing?.billingRelationship || '',
       specs: mergeOrderSpecs(job.specs, existing?.specs),
+      internalAttachmentNotifications: normalizeInternalAttachmentNotifications([
+        ...(existing?.internalAttachmentNotifications ?? []),
+        ...(job.internalAttachmentNotifications ?? []),
+      ]),
     })
   }
 
@@ -3803,6 +3868,8 @@ type SalesOrderApiResponse = {
   internalOrderNotificationError?: string
   internalOrderUploadedAttachmentAttached?: boolean
   internalOrderAttachmentLinkIncluded?: boolean
+  internalOrderAttachmentTracked?: boolean
+  internalOrderAttachmentTrackingError?: string
   salesRepSubmissionNotificationSent?: boolean
   salesRepSubmissionNotificationError?: string
   orderJobs?: OrderJob[]
@@ -3978,8 +4045,11 @@ function getSalesOrderSuccessMessage(
         ? ' and internal order-copy emails sent with the uploaded-file download link'
         : ' and internal order-copy emails sent'
       : ''
+  const attachmentTrackingMessage = payload.internalOrderAttachmentTrackingError
+    ? `, but attachment notification tracking failed: ${payload.internalOrderAttachmentTrackingError}`
+    : ''
 
-  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}.`
+  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}${attachmentTrackingMessage}.`
 }
 
 function getCrmTouchpointDayTimestamp(touchpoint: CrmTouchpoint) {
@@ -8873,16 +8943,25 @@ function InternalApp({
                           {job.salesRep ? <p>Sales rep: {job.salesRep}</p> : null}
                           {job.salesRepEmail ? <p>Sales rep email: {job.salesRepEmail}</p> : null}
                           {job.internalAttachment?.downloadUrl ? (
-                            <p>
-                              Attachment:{' '}
-                              <a
-                                href={job.internalAttachment.downloadUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                {job.internalAttachment.filename}
-                              </a>
-                            </p>
+                            <>
+                              <p>
+                                Attachment:{' '}
+                                <a
+                                  href={job.internalAttachment.downloadUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {job.internalAttachment.filename}
+                                </a>
+                              </p>
+                              {job.internalAttachmentNotifications.map((notification) => (
+                                <p key={notification.id}>
+                                  Attachment {notification.event === 'paid' ? 'paid update' : 'submission'}
+                                  {' sent to '}
+                                  {notification.recipient} · {formatOrderDateTime(notification.sentAt)}
+                                </p>
+                              ))}
+                            </>
                           ) : null}
                         </div>
 
