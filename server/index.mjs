@@ -2033,18 +2033,31 @@ app.listen(port, () => {
 })
 
 function servePublicAppShell(_request, response) {
-  serveAppShell(response, false)
+  serveAppShell(response)
 }
 
 function serveInternalAppShell(request, response) {
-  serveAppShell(response, isInternalAppShellPath(request.path))
+  const isInternalShell = isInternalAppShellPath(request.path)
+  const isEmbeddedLaunch = hasEmbeddedShopifyContext({
+    embedded: getQueryParam(request, 'embedded'),
+    host: getQueryParam(request, 'host'),
+  })
+
+  serveAppShell(response, {
+    includeShopifyAppBridge: isInternalShell && isEmbeddedLaunch,
+    includeTeamPinFallback: isInternalShell,
+  })
 }
 
-function serveAppShell(response, includeShopifyAppBridge) {
+function serveAppShell(
+  response,
+  { includeShopifyAppBridge = false, includeTeamPinFallback = false } = {},
+) {
   response.set('Cache-Control', 'no-store')
   response.type('html').send(
     renderAppShell(fs.readFileSync(path.join(rootDir, 'dist', 'index.html'), 'utf8'), {
       includeShopifyAppBridge,
+      includeTeamPinFallback,
       apiKey: shopifyApiKey,
     }),
   )

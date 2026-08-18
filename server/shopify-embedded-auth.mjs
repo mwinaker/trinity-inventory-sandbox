@@ -179,14 +179,23 @@ export function renderShopifySessionBounce(apiKey = '') {
 </html>`
 }
 
-export function renderAppShell(template, { includeShopifyAppBridge = false, apiKey = '' } = {}) {
+export function renderAppShell(
+  template,
+  { includeShopifyAppBridge = false, includeTeamPinFallback = false, apiKey = '' } = {},
+) {
   const markup =
-    includeShopifyAppBridge && apiKey
+    apiKey && (includeShopifyAppBridge || includeTeamPinFallback)
       ? [
           `<meta name="shopify-api-key" content="${escapeHtmlAttribute(apiKey)}" />`,
-          '<meta name="shopify-disabled-features" content="auto-redirect" />',
-          '<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>',
-        ].join('\n    ')
+          includeShopifyAppBridge
+            ? '<meta name="shopify-disabled-features" content="auto-redirect" />'
+            : '',
+          includeShopifyAppBridge
+            ? '<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>'
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n    ')
       : ''
 
   return String(template).replace(shopifyAppBridgePlaceholder, markup)

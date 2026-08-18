@@ -217,6 +217,7 @@ test('internal app shell loads App Bridge without forcing standalone desktop red
   const template = '<head><!-- TRINITY_SHOPIFY_APP_BRIDGE --></head>'
   const html = renderAppShell(template, {
     includeShopifyAppBridge: true,
+    includeTeamPinFallback: true,
     apiKey,
   })
 
@@ -226,12 +227,22 @@ test('internal app shell loads App Bridge without forcing standalone desktop red
   assert.doesNotMatch(html, /TRINITY_SHOPIFY_APP_BRIDGE/)
 })
 
-test('public and team-code shells do not load App Bridge', () => {
+test('desktop Team PIN shell keeps its app identity without loading App Bridge', () => {
   const template = '<head><!-- TRINITY_SHOPIFY_APP_BRIDGE --></head>'
   const html = renderAppShell(template, {
     includeShopifyAppBridge: false,
+    includeTeamPinFallback: true,
     apiKey,
   })
+
+  assert.match(html, /name="shopify-api-key" content="trinity-client-id"/)
+  assert.doesNotMatch(html, /shopify-disabled-features/)
+  assert.doesNotMatch(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
+})
+
+test('public shells omit Shopify identity and App Bridge', () => {
+  const template = '<head><!-- TRINITY_SHOPIFY_APP_BRIDGE --></head>'
+  const html = renderAppShell(template, { apiKey })
 
   assert.equal(html, '<head></head>')
 })
