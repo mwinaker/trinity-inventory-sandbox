@@ -49,6 +49,7 @@ import {
 import { downloadUploadedOrderEmailAttachment } from './order-attachment-email.mjs'
 import { formatOrderAttachmentUploadError } from './order-attachment-errors.mjs'
 import {
+  buildPaidOrderAttachmentDeliveryInput,
   buildPaidOrderAttachmentNotification,
   createInternalAttachmentNotification,
   defaultPaidOrderAttachmentRecipient,
@@ -779,6 +780,7 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     const payload = JSON.parse(request.body.toString('utf8'))
     const mappedIncomingJobs = mapOrderWebhookToJobs(payload, topic)
     let paidAttachmentNotification = null
+    let paidAttachmentDelivery = null
 
     if (mappedIncomingJobs.length > 0) {
       await ensureDefinitions()
@@ -795,9 +797,17 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
       })
 
       if (paidAttachmentNotification) {
+        const deliveryInput = buildPaidOrderAttachmentDeliveryInput(paidAttachmentNotification)
+        if (!deliveryInput) {
+          throw new Error('Paid attachment notification is missing its internal delivery details.')
+        }
+        paidAttachmentDelivery = await sendInternalOrderCopyEmail(deliveryInput)
         mergedJobs = recordInternalAttachmentNotification(
           mergedJobs,
-          paidAttachmentNotification.tracking,
+          {
+            ...paidAttachmentNotification.tracking,
+            method: paidAttachmentDelivery.method,
+          },
         )
       }
 
@@ -812,7 +822,8 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
     response.status(200).json({
       ok: true,
       jobs: mappedIncomingJobs.length,
-      paidAttachmentNotificationQueued: Boolean(paidAttachmentNotification),
+      paidAttachmentNotificationSent: Boolean(paidAttachmentDelivery),
+      paidAttachmentNotificationMethod: paidAttachmentDelivery?.method ?? '',
       paidAttachmentNotificationRecipient: paidAttachmentNotification?.recipient ?? '',
     })
   } catch (error) {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  buildPaidOrderAttachmentDeliveryInput,
   buildPaidOrderAttachmentNotification,
   createInternalAttachmentNotification,
   recordInternalAttachmentNotification,
@@ -55,6 +56,7 @@ test('builds Jeremy a paid-order Shopify email with the stored attachment link',
 
   assert.equal(notification.recipient, 'jeremy@trinitybats.com')
   assert.equal(notification.orderId, 'gid://shopify/Order/101')
+  assert.equal(notification.orderName, '#101')
   assert.equal(notification.subject, '#101 paid — production attachment')
   assert.match(notification.customMessage, /#101 has been paid/)
   assert.match(
@@ -66,6 +68,41 @@ test('builds Jeremy a paid-order Shopify email with the stored attachment link',
   assert.equal(notification.tracking.method, 'shopify_flow_internal_email')
   assert.equal(notification.tracking.shopifyEventId, 'event-101')
   assert.equal(notification.tracking.shopifyWebhookId, 'webhook-101')
+})
+
+test('creates a direct paid-order delivery with the stored attachment', () => {
+  const notification = buildPaidOrderAttachmentNotification({
+    topic: 'orders/paid',
+    order: {
+      admin_graphql_api_id: 'gid://shopify/Order/101',
+      name: '#101',
+    },
+    jobs: createJobs(),
+  })
+
+  const delivery = buildPaidOrderAttachmentDeliveryInput(notification)
+
+  assert.deepEqual(delivery.order, {
+    id: 'gid://shopify/Order/101',
+    name: '#101',
+  })
+  assert.deepEqual(delivery.recipients, ['jeremy@trinitybats.com'])
+  assert.equal(delivery.subject, '#101 paid — production attachment')
+  assert.equal(delivery.uploadedAttachment, attachment)
+  assert.match(delivery.text, /ORDER ATTACHMENT — DOWNLOAD FILE/)
+})
+
+test('does not create a direct paid-order delivery without a usable link', () => {
+  assert.equal(
+    buildPaidOrderAttachmentDeliveryInput({
+      orderId: 'gid://shopify/Order/101',
+      recipient: 'jeremy@trinitybats.com',
+      subject: '#101 paid — production attachment',
+      customMessage: '#101 has been paid.',
+      attachment: { filename: 'reference.png' },
+    }),
+    null,
+  )
 })
 
 test('records submission and paid attachment notifications on every matching order line', () => {

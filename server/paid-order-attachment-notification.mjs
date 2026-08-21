@@ -238,9 +238,32 @@ export function buildPaidOrderAttachmentNotification({
 
   return {
     orderId,
+    orderName,
     recipient: normalizedRecipient,
     subject: `${orderName} paid — production attachment`,
     customMessage,
+    attachment,
     tracking,
+  }
+}
+
+export function buildPaidOrderAttachmentDeliveryInput(notification) {
+  const orderId = cleanString(notification?.orderId)
+  const orderName = cleanString(notification?.orderName)
+  const recipient = normalizeEmail(notification?.recipient)
+  const subject = cleanString(notification?.subject)
+  const text = cleanString(notification?.customMessage)
+  const attachment = notification?.attachment
+
+  if (!orderId || !recipient || !subject || !text || !cleanString(attachment?.downloadUrl)) {
+    return null
+  }
+
+  return {
+    order: { id: orderId, name: orderName },
+    recipients: [recipient],
+    subject,
+    text,
+    uploadedAttachment: attachment,
   }
 }
