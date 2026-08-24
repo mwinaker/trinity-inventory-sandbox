@@ -49,6 +49,13 @@ import {
 import { downloadUploadedOrderEmailAttachment } from './order-attachment-email.mjs'
 import { formatOrderAttachmentUploadError } from './order-attachment-errors.mjs'
 import {
+  createGoogleOAuthAuthorizationUrl,
+  exchangeGoogleOAuthCode,
+  isGoogleWorkspaceInternalEmailConfigured,
+  isAllowedInternalEmail,
+  sendGoogleWorkspaceInternalEmail,
+} from './google-workspace-internal-email.mjs'
+import {
   buildPaidOrderAttachmentDeliveryInput,
   buildPaidOrderAttachmentNotification,
   createInternalAttachmentNotification,
@@ -287,6 +294,20 @@ const internalEmailProviderUrl =
 const internalEmailFrom =
   cleanString(process.env.TRINITY_INTERNAL_EMAIL_FROM) || cleanString(process.env.RESEND_FROM_EMAIL)
 const internalEmailReplyTo = normalizeEmail(process.env.TRINITY_INTERNAL_EMAIL_REPLY_TO)
+const internalEmailAllowedDomains = parseEmailDomainList(
+  process.env.TRINITY_INTERNAL_EMAIL_ALLOWED_DOMAINS,
+  ['trinitybats.com'],
+)
+const googleWorkspaceInternalEmailConfig = {
+  clientId: cleanString(process.env.TRINITY_GOOGLE_OAUTH_CLIENT_ID),
+  clientSecret: cleanString(process.env.TRINITY_GOOGLE_OAUTH_CLIENT_SECRET),
+  refreshToken: cleanString(process.env.TRINITY_GOOGLE_OAUTH_REFRESH_TOKEN),
+  from: normalizeEmail(process.env.TRINITY_GOOGLE_INTERNAL_EMAIL_FROM),
+  redirectUri:
+    cleanString(process.env.TRINITY_GOOGLE_OAUTH_REDIRECT_URI) ||
+    'https://trinity-billet-inventory.onrender.com/api/internal-email/google/callback',
+}
+const googleOAuthAuthorizationStates = new Map()
 const orderPrinterProDraftPdfConfig = createOrderPrinterProDraftPdfConfig({
   origin: cleanString(process.env.TRINITY_ORDER_PRINTER_PDF_ORIGIN) || 'https://trinitybatco.com',
   pathToken:
@@ -910,6 +931,67 @@ app.post(
 )
 
 app.use(express.json({ limit: '5mb' }))
+
+app.get('/api/internal-email/google/authorize', (request, response) => {
+  if (
+    !googleWorkspaceInternalEmailConfig.clientId ||
+    !googleWorkspaceInternalEmailConfig.clientSecret ||
+    !googleWorkspaceInternalEmailConfig.from
+  ) {
+    response.status(503).json({
+      ok: false,
+      message: 'Google Workspace internal email has not been configured in Render yet.',
+    })
+    return
+  }
+
+  const now = Date.now()
+  for (const [state, createdAt] of googleOAuthAuthorizationStates) {
+    if (now - createdAt > 10 * 60 * 1000) googleOAuthAuthorizationStates.delete(state)
+  }
+  const state = crypto.randomBytes(32).toString('base64url')
+  googleOAuthAuthorizationStates.set(state, now)
+  response.redirect(
+    createGoogleOAuthAuthorizationUrl({
+      clientId: googleWorkspaceInternalEmailConfig.clientId,
+      redirectUri: googleWorkspaceInternalEmailConfig.redirectUri,
+      state,
+      loginHint: googleWorkspaceInternalEmailConfig.from,
+      hostedDomain: internalEmailAllowedDomains[0],
+    }),
+  )
+})
+
+app.get('/api/internal-email/google/callback', async (request, response) => {
+  const state = cleanString(request.query.state)
+  const code = cleanString(request.query.code)
+  const createdAt = googleOAuthAuthorizationStates.get(state)
+  googleOAuthAuthorizationStates.delete(state)
+  if (!state || !code || !createdAt || Date.now() - createdAt > 10 * 60 * 1000) {
+    response.status(400).type('text').send('This Google authorization link has expired. Start again from the authorize link.')
+    return
+  }
+
+  try {
+    const token = await exchangeGoogleOAuthCode({
+      clientId: googleWorkspaceInternalEmailConfig.clientId,
+      clientSecret: googleWorkspaceInternalEmailConfig.clientSecret,
+      redirectUri: googleWorkspaceInternalEmailConfig.redirectUri,
+      code,
+    })
+    response
+      .set({
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Robots-Tag': 'noindex, nofollow',
+      })
+      .type('html')
+      .send(renderGoogleOAuthRefreshTokenPage(token.refresh_token))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Google authorization error.'
+    response.status(502).type('text').send(`Google authorization could not be completed: ${message}`)
+  }
+})
 
 app.options('/api/analytics/events', (request, response) => {
   setAnalyticsCorsHeaders(response)
@@ -3326,7 +3408,9 @@ async function tryRecordSubmittedAttachmentNotification({
 }
 
 function buildInternalOrderCopyRecipients(payload) {
-  return uniqueEmails(internalOrderNotificationEmails.concat(normalizeEmail(payload?.salesRepEmail)))
+  return uniqueEmails(internalOrderNotificationEmails.concat(normalizeEmail(payload?.salesRepEmail))).filter(
+    (email) => isAllowedInternalEmail(email, internalEmailAllowedDomains),
+  )
 }
 
 function buildInternalOrderCopySubject({ draftOrder = null, order = null }) {
@@ -3463,6 +3547,28 @@ async function sendInternalOrderCopyEmail({
   orderPrinterPdfUrl = '',
   uploadedAttachment = null,
 }) {
+  if (isGoogleWorkspaceInternalEmailConfigured(googleWorkspaceInternalEmailConfig)) {
+    const pdfAttachment = await tryDownloadOrderPrinterProPdfAttachment({
+      draftOrder,
+      orderPrinterPdfUrl,
+    })
+    const uploadedEmailAttachment = await tryDownloadUploadedOrderEmailAttachment(uploadedAttachment)
+    const attachments = [pdfAttachment, uploadedEmailAttachment].filter(Boolean)
+    await sendGoogleWorkspaceInternalEmail({
+      ...googleWorkspaceInternalEmailConfig,
+      to: recipients,
+      subject,
+      text,
+      attachments,
+      allowedDomains: internalEmailAllowedDomains,
+    })
+    return {
+      method: 'google_workspace_gmail_api',
+      pdfAttached: Boolean(pdfAttachment),
+      uploadedAttachmentAttached: Boolean(uploadedEmailAttachment),
+    }
+  }
+
   if (internalEmailProviderApiKey && internalEmailFrom) {
     const pdfAttachment = await tryDownloadOrderPrinterProPdfAttachment({
       draftOrder,
@@ -3547,7 +3653,9 @@ async function tryDownloadUploadedOrderEmailAttachment(attachment) {
 }
 
 async function sendShopifyInternalOrderCopies({ sendInvoice, recipients, subject, text }) {
-  const uniqueRecipients = uniqueEmails(recipients)
+  const uniqueRecipients = uniqueEmails(recipients).filter((recipient) =>
+    isAllowedInternalEmail(recipient, internalEmailAllowedDomains),
+  )
   const failures = []
 
   for (const recipient of uniqueRecipients) {
@@ -8738,6 +8846,14 @@ function parseEmailList(value, fallback = [], required = []) {
   return uniqueEmails(emails)
 }
 
+function parseEmailDomainList(value, fallback = []) {
+  const configuredDomains = cleanString(value)
+    .split(/[\s,;]+/)
+    .map((domain) => cleanString(domain).toLowerCase().replace(/^@/, ''))
+    .filter((domain) => /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain))
+  return Array.from(new Set(configuredDomains.length > 0 ? configuredDomains : fallback))
+}
+
 function uniqueEmails(emails) {
   return Array.from(new Set(emails.map((email) => normalizeEmail(email)).filter(Boolean)))
 }
@@ -8772,6 +8888,27 @@ function toMoneyBagInput(value) {
 
 function cleanString(value) {
   return value === undefined || value === null ? '' : String(value).trim()
+}
+
+function renderGoogleOAuthRefreshTokenPage(refreshToken) {
+  const escapedToken = escapeHtml(refreshToken)
+  return `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Trinity internal email connected</title></head>
+  <body style="font:16px system-ui,sans-serif;max-width:42rem;margin:3rem auto;padding:0 1rem">
+    <h1>Trinity internal email connected</h1>
+    <p>Copy this one-time token into Render as <code>TRINITY_GOOGLE_OAUTH_REFRESH_TOKEN</code>. It is shown only here and is not stored by this page.</p>
+    <textarea aria-label="Google OAuth refresh token" readonly style="width:100%;min-height:8rem">${escapedToken}</textarea>
+    <p>After saving it in Render, close this tab. Do not share this token.</p>
+  </body>
+</html>`
+}
+
+function escapeHtml(value) {
+  return cleanString(value).replace(/[&<>"']/g, (character) => {
+    const entities = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+    return entities[character]
+  })
 }
 
 function customerNameFromWebhook(customer) {

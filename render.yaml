@@ -16,6 +16,18 @@ services:
         sync: false
       - key: TRINITY_INTERNAL_EMAIL_REPLY_TO
         sync: false
+      - key: TRINITY_GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: TRINITY_GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: TRINITY_GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
+      - key: TRINITY_GOOGLE_INTERNAL_EMAIL_FROM
+        sync: false
+      - key: TRINITY_GOOGLE_OAUTH_REDIRECT_URI
+        value: https://trinity-billet-inventory.onrender.com/api/internal-email/google/callback
+      - key: TRINITY_INTERNAL_EMAIL_ALLOWED_DOMAINS
+        value: trinitybats.com
       - key: SHOPIFY_API_VERSION
         value: 2026-01
       - key: TRINITY_DRAFT_SHIPPING_TITLE
