@@ -2117,6 +2117,127 @@ app.post('/api/webhooks/register', requireSalesPortalAdminOrInternalAccess, asyn
   }
 })
 
+app.post(
+  '/api/orders/retry-paid-attachment-notification',
+  requireSalesPortalAdminOrInternalAccess,
+  async (request, response) => {
+    try {
+      if (!shopDomain || !adminToken) {
+        response.status(503).json({
+          ok: false,
+          message: 'Shopify credentials are not configured on this server.',
+        })
+        return
+      }
+
+      const draftOrderId = cleanString(request.body?.draftOrderId)
+      if (!draftOrderId) {
+        response.status(400).json({
+          ok: false,
+          message: 'A Shopify Draft Order ID is required to retry a paid attachment delivery.',
+        })
+        return
+      }
+
+      const draftOrder = await getDraftOrderForPaidAttachmentRetry(draftOrderId)
+      const paidOrder = draftOrder?.order
+      if (!paidOrder?.id) {
+        response.status(404).json({
+          ok: false,
+          message: 'This draft order has not been completed into a Shopify order yet.',
+        })
+        return
+      }
+      if (cleanString(paidOrder.displayFinancialStatus).toLowerCase() !== 'paid') {
+        response.status(409).json({
+          ok: false,
+          message: `${paidOrder.name || 'This order'} is not paid, so no paid attachment email was sent.`,
+        })
+        return
+      }
+
+      const existingJobs = await listRecords(resourceConfigs.orderJobs)
+      const matchingJobs = existingJobs
+        .filter(
+          (job) =>
+            job?.origin === 'internal_sales' &&
+            cleanString(job.shopifyDraftOrderId) === draftOrderId &&
+            job.internalAttachment?.downloadUrl,
+        )
+        .map((job) => ({
+          ...job,
+          shopifyOrderId: paidOrder.id,
+          shopifyOrderName: paidOrder.name ?? '',
+          financialStatus: 'paid',
+          invoiceStatus: 'paid',
+          updatedAt: new Date().toISOString(),
+        }))
+      if (matchingJobs.length === 0) {
+        response.status(404).json({
+          ok: false,
+          message: 'No internal attachment jobs were found for this completed draft order.',
+        })
+        return
+      }
+
+      const notification = buildPaidOrderAttachmentNotification({
+        topic: 'orders/paid',
+        order: {
+          admin_graphql_api_id: paidOrder.id,
+          name: paidOrder.name,
+          displayFinancialStatus: paidOrder.displayFinancialStatus,
+          updated_at: paidOrder.updatedAt,
+        },
+        jobs: matchingJobs,
+        recipient: defaultPaidOrderAttachmentRecipient,
+      })
+      if (!notification) {
+        response.status(409).json({
+          ok: false,
+          message: 'Jeremy already has a recorded paid attachment delivery for this order.',
+        })
+        return
+      }
+
+      const deliveryInput = buildPaidOrderAttachmentDeliveryInput(notification)
+      if (!deliveryInput) {
+        throw new Error('The paid attachment retry is missing its internal delivery details.')
+      }
+      const delivery = await sendInternalOrderCopyEmail({
+        ...deliveryInput,
+        requireUploadedAttachment: true,
+      })
+      const updatedJobs = recordInternalAttachmentNotification(matchingJobs, {
+        ...notification.tracking,
+        method: delivery.method,
+        providerMessageId: delivery.providerMessageId,
+        uploadedAttachmentAttached: delivery.uploadedAttachmentAttached,
+      })
+      await Promise.all([
+        Promise.all(updatedJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+        rememberOrderJobContacts(updatedJobs),
+      ])
+      await syncOrderJobMetafields(updatedJobs)
+      invalidateSalesPaymentReconciliationCache()
+
+      response.json({
+        ok: true,
+        orderName: paidOrder.name ?? '',
+        recipient: notification.recipient,
+        method: delivery.method,
+        providerMessageId: delivery.providerMessageId,
+        uploadedAttachmentAttached: delivery.uploadedAttachmentAttached,
+        orderJobs: updatedJobs,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown paid attachment retry error.'
+      console.error(`Paid attachment retry error: ${message}`)
+      response.status(500).json({ ok: false, message })
+    }
+  },
+)
+
 app.get(publicSalesOrderFormPaths, servePublicAppShell)
 app.get(salesPortalPaths, servePublicAppShell)
 app.get(internalToolPaths, serveInternalAppShell)
@@ -6340,6 +6461,28 @@ async function ensureOrderWebhooksOnStartup() {
       .map((item) => `${item.topic}=${item.action}`)
       .join(', ')}`,
   )
+}
+
+async function getDraftOrderForPaidAttachmentRetry(draftOrderId) {
+  const result = await shopifyGraphQL(
+    `
+      query DraftOrderForPaidAttachmentRetry($id: ID!) {
+        draftOrder(id: $id) {
+          id
+          name
+          order {
+            id
+            name
+            displayFinancialStatus
+            updatedAt
+          }
+        }
+      }
+    `,
+    { id: draftOrderId },
+  )
+
+  return result?.data?.draftOrder ?? null
 }
 
 async function reconcileOrderWebhooks(baseUrl) {

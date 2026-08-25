@@ -314,6 +314,8 @@ type InternalAttachmentNotification = {
   shopifyOrderName: string
   shopifyDraftOrderId: string
   shopifyDraftOrderName: string
+  providerMessageId: string
+  uploadedAttachmentAttached: boolean
   attachmentId: string
   filename: string
   downloadUrl: string
@@ -1590,6 +1592,8 @@ function normalizeInternalAttachmentNotifications(
       shopifyOrderName: String(notification?.shopifyOrderName ?? '').trim(),
       shopifyDraftOrderId: String(notification?.shopifyDraftOrderId ?? '').trim(),
       shopifyDraftOrderName: String(notification?.shopifyDraftOrderName ?? '').trim(),
+      providerMessageId: String(notification?.providerMessageId ?? '').trim(),
+      uploadedAttachmentAttached: notification?.uploadedAttachmentAttached === true,
       attachmentId,
       filename: String(notification?.filename ?? '').trim(),
       downloadUrl,
@@ -5605,6 +5609,7 @@ function InternalApp({
   const [isCreatingDraftOrder, setIsCreatingDraftOrder] = useState(false)
   const [isImportingOrders, setIsImportingOrders] = useState(false)
   const [isRegisteringWebhooks, setIsRegisteringWebhooks] = useState(false)
+  const [retryingPaidAttachmentJobId, setRetryingPaidAttachmentJobId] = useState('')
   const [newDeliveryDate, setNewDeliveryDate] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
@@ -7054,6 +7059,48 @@ function InternalApp({
       setOrderActionMessage(`Invoice sent for ${job.shopifyDraftOrderName || 'draft order'}.`)
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not send invoice.')
+    }
+  }
+
+  async function retryPaidAttachmentNotification(job: OrderJob) {
+    if (!job.shopifyDraftOrderId || !job.internalAttachment?.downloadUrl) return
+
+    try {
+      setRetryingPaidAttachmentJobId(job.id)
+      setOrderActionMessage(
+        `Retrying Jeremy's paid attachment delivery for ${job.shopifyDraftOrderName || 'this order'}...`,
+      )
+      const response = await fetchApi('/api/orders/retry-paid-attachment-notification', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ draftOrderId: job.shopifyDraftOrderId }),
+      })
+      const payload = (await response.json()) as {
+        ok?: boolean
+        message?: string
+        recipient?: string
+        uploadedAttachmentAttached?: boolean
+        orderJobs?: OrderJob[]
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message ?? 'Paid attachment delivery retry failed.')
+      }
+
+      mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      if (!payload.uploadedAttachmentAttached) {
+        throw new Error('The retry did not include the uploaded attachment.')
+      }
+      setOrderActionMessage(
+        `Paid attachment delivery sent to ${payload.recipient || 'Jeremy'} with the uploaded file attached.`,
+      )
+    } catch (error) {
+      setOrderActionMessage(
+        error instanceof Error ? error.message : 'Could not retry the paid attachment delivery.',
+      )
+    } finally {
+      setRetryingPaidAttachmentJobId('')
     }
   }
 
@@ -8972,6 +9019,10 @@ function InternalApp({
                                     ? ' to '
                                     : ' sent to '}
                                   {notification.recipient} · {formatOrderDateTime(notification.sentAt)}
+                                  {notification.event === 'paid' &&
+                                  notification.uploadedAttachmentAttached
+                                    ? ' · uploaded file attached'
+                                    : ''}
                                 </p>
                               ))}
                             </>
@@ -9081,6 +9132,24 @@ function InternalApp({
                               }
                             />
                           </label>
+
+                          {hasAdminAccess &&
+                          job.shopifyDraftOrderId &&
+                          job.internalAttachment?.downloadUrl &&
+                          !job.internalAttachmentNotifications.some(
+                            (notification) => notification.event === 'paid',
+                          ) ? (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => retryPaidAttachmentNotification(job)}
+                              disabled={Boolean(retryingPaidAttachmentJobId)}
+                            >
+                              {retryingPaidAttachmentJobId === job.id
+                                ? 'Retrying paid attachment...'
+                                : 'Retry paid attachment delivery'}
+                            </button>
+                          ) : null}
 
                           {hasAdminAccess &&
                           job.shopifyDraftOrderId &&
