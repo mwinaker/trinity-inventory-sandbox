@@ -789,7 +789,13 @@ let stateWriteQueue = Promise.resolve()
 
 app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), async (request, response) => {
   try {
+    const topic = String(request.get('x-shopify-topic') ?? '')
+    const shopifyEventId = String(request.get('x-shopify-event-id') ?? '')
+    const shopifyWebhookId = String(request.get('x-shopify-webhook-id') ?? '')
     if (!verifyShopifyWebhook(request)) {
+      console.warn(
+        `Rejected Shopify order webhook: topic=${topic || 'unknown'} event=${shopifyEventId || 'unknown'}`,
+      )
       response.status(401).send('Invalid webhook signature')
       return
     }
@@ -799,11 +805,11 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
       return
     }
 
-    const topic = String(request.get('x-shopify-topic') ?? '')
-    const shopifyEventId = String(request.get('x-shopify-event-id') ?? '')
-    const shopifyWebhookId = String(request.get('x-shopify-webhook-id') ?? '')
     const payload = JSON.parse(request.body.toString('utf8'))
     const mappedIncomingJobs = mapOrderWebhookToJobs(payload, topic)
+    console.log(
+      `Received Shopify order webhook: topic=${topic || 'unknown'} event=${shopifyEventId || 'unknown'} order=${cleanString(payload?.name || payload?.id) || 'unknown'} jobs=${mappedIncomingJobs.length}`,
+    )
     let paidAttachmentNotification = null
     let paidAttachmentDelivery = null
 
@@ -849,14 +855,21 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
       invalidateSalesPaymentReconciliationCache()
     }
 
-    response.status(200).json({
+    const result = {
       ok: true,
       jobs: mappedIncomingJobs.length,
       paidAttachmentNotificationSent: Boolean(paidAttachmentDelivery),
       paidAttachmentNotificationMethod: paidAttachmentDelivery?.method ?? '',
       paidAttachmentNotificationRecipient: paidAttachmentNotification?.recipient ?? '',
-    })
+    }
+    console.log(
+      `Processed Shopify order webhook: topic=${topic || 'unknown'} event=${shopifyEventId || 'unknown'} paidAttachmentNotificationSent=${result.paidAttachmentNotificationSent}`,
+    )
+    response.status(200).json(result)
   } catch (error) {
+    console.error(
+      `Shopify order webhook error: ${error instanceof Error ? error.message : 'Unknown Shopify webhook error.'}`,
+    )
     response.status(500).json({
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown Shopify webhook error.',
