@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   buildOrderWebhookUri,
+  disabledOrderWebhookTopics,
   reconcileOrderWebhookSubscriptions,
   requiredOrderWebhookTopics,
 } from '../server/order-webhook-subscriptions.mjs'
@@ -30,11 +31,17 @@ test('creates and then verifies each required order webhook', async () => {
     updateSubscription: async () => {
       throw new Error('update should not be needed')
     },
+    deleteSubscription: async () => {
+      throw new Error('delete should not be needed')
+    },
   })
 
   assert.equal(result.subscriptions.length, requiredOrderWebhookTopics.length)
   assert.deepEqual(actions, requiredOrderWebhookTopics.map((topic) => `create:${topic}`))
-  assert.deepEqual(result.actions.map((item) => item.action), Array(4).fill('created'))
+  assert.deepEqual(
+    result.actions.map((item) => item.action),
+    Array(requiredOrderWebhookTopics.length).fill('created'),
+  )
 })
 
 test('repairs an app-owned order webhook that points to an old endpoint', async () => {
@@ -56,10 +63,16 @@ test('repairs an app-owned order webhook that points to an old endpoint', async 
       updates.push(id)
       return subscription
     },
+    deleteSubscription: async () => {
+      throw new Error('delete should not be needed')
+    },
   })
 
   assert.equal(updates.length, requiredOrderWebhookTopics.length)
-  assert.deepEqual(result.actions.map((item) => item.action), Array(4).fill('updated'))
+  assert.deepEqual(
+    result.actions.map((item) => item.action),
+    Array(requiredOrderWebhookTopics.length).fill('updated'),
+  )
 })
 
 test('does not change a verified set of required order webhooks', async () => {
@@ -78,7 +91,53 @@ test('does not change a verified set of required order webhooks', async () => {
     updateSubscription: async () => {
       throw new Error('update should not be needed')
     },
+    deleteSubscription: async () => {
+      throw new Error('delete should not be needed')
+    },
   })
 
-  assert.deepEqual(result.actions.map((item) => item.action), Array(4).fill('verified'))
+  assert.deepEqual(
+    result.actions.map((item) => item.action),
+    Array(requiredOrderWebhookTopics.length).fill('verified'),
+  )
+})
+
+test('disables the self-triggering order-updated fallback webhook', async () => {
+  const uri = 'https://trinity-billet-inventory.onrender.com/api/webhooks/orders'
+  const subscriptions = requiredOrderWebhookTopics
+    .map((topic, index) => ({
+      id: `gid://shopify/WebhookSubscription/${index + 1}`,
+      topic,
+      uri,
+    }))
+    .concat(
+      disabledOrderWebhookTopics.map((topic, index) => ({
+        id: `gid://shopify/WebhookSubscription/disabled-${index + 1}`,
+        topic,
+        uri,
+      })),
+    )
+  const result = await reconcileOrderWebhookSubscriptions({
+    baseUrl: 'https://trinity-billet-inventory.onrender.com',
+    listSubscriptions: async () => subscriptions,
+    createSubscription: async () => {
+      throw new Error('create should not be needed')
+    },
+    updateSubscription: async () => {
+      throw new Error('update should not be needed')
+    },
+    deleteSubscription: async ({ id }) => {
+      const index = subscriptions.findIndex((item) => item.id === id)
+      subscriptions.splice(index, 1)
+    },
+  })
+
+  assert.deepEqual(result.actions.map((item) => item.action), [
+    'disabled',
+    ...Array(requiredOrderWebhookTopics.length).fill('verified'),
+  ])
+  assert.equal(
+    subscriptions.some((item) => item.topic === 'ORDERS_UPDATED'),
+    false,
+  )
 })

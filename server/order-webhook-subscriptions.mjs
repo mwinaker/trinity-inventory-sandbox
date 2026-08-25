@@ -1,9 +1,10 @@
 export const requiredOrderWebhookTopics = Object.freeze([
   'ORDERS_CREATE',
   'ORDERS_PAID',
-  'ORDERS_UPDATED',
   'ORDERS_CANCELLED',
 ])
+
+export const disabledOrderWebhookTopics = Object.freeze(['ORDERS_UPDATED'])
 
 function cleanString(value) {
   return String(value ?? '').trim()
@@ -57,7 +58,9 @@ export async function reconcileOrderWebhookSubscriptions({
   listSubscriptions,
   createSubscription,
   updateSubscription,
+  deleteSubscription,
   topics = requiredOrderWebhookTopics,
+  disabledTopics = disabledOrderWebhookTopics,
 } = {}) {
   if (typeof listSubscriptions !== 'function') {
     throw new Error('A webhook subscription listing function is required.')
@@ -68,11 +71,26 @@ export async function reconcileOrderWebhookSubscriptions({
   if (typeof updateSubscription !== 'function') {
     throw new Error('A webhook subscription update function is required.')
   }
+  if (typeof deleteSubscription !== 'function') {
+    throw new Error('A webhook subscription deletion function is required.')
+  }
 
   const uri = buildOrderWebhookUri(baseUrl)
   const requiredTopics = Array.from(new Set(topics.map(normalizeTopic).filter(Boolean)))
-  const existing = await listSubscriptions(requiredTopics)
+  const disabled = Array.from(new Set(disabledTopics.map(normalizeTopic).filter(Boolean)))
+  const watchedTopics = Array.from(new Set([...requiredTopics, ...disabled]))
+  const existing = await listSubscriptions(watchedTopics)
   const actions = []
+
+  for (const topic of disabled) {
+    const subscriptions = existing.filter(
+      (subscription) => normalizeTopic(subscription?.topic) === topic && cleanString(subscription?.id),
+    )
+    for (const subscription of subscriptions) {
+      await deleteSubscription({ id: subscription.id })
+      actions.push({ topic, action: 'disabled', id: subscription.id })
+    }
+  }
 
   for (const topic of requiredTopics) {
     if (hasRequiredWebhook(existing, topic, uri)) {
@@ -91,7 +109,7 @@ export async function reconcileOrderWebhookSubscriptions({
     actions.push({ topic, action: 'created', id: cleanString(created?.id) })
   }
 
-  const verifiedSubscriptions = await listSubscriptions(requiredTopics)
+  const verifiedSubscriptions = await listSubscriptions(watchedTopics)
   const missingTopics = requiredTopics.filter(
     (topic) => !hasRequiredWebhook(verifiedSubscriptions, topic, uri),
   )
@@ -100,11 +118,21 @@ export async function reconcileOrderWebhookSubscriptions({
       `Order webhook verification failed; missing ${missingTopics.join(', ')} at ${uri}.`,
     )
   }
+  const remainingDisabledTopics = disabled.filter((topic) =>
+    verifiedSubscriptions.some((subscription) => normalizeTopic(subscription?.topic) === topic),
+  )
+  if (remainingDisabledTopics.length > 0) {
+    throw new Error(
+      `Order webhook verification failed; disabled topics remain subscribed: ${remainingDisabledTopics.join(', ')}.`,
+    )
+  }
 
   return {
     uri,
-    subscriptions: verifiedSubscriptions.filter((subscription) =>
-      hasRequiredWebhook([subscription], subscription?.topic, uri),
+    subscriptions: verifiedSubscriptions.filter(
+      (subscription) =>
+        requiredTopics.includes(normalizeTopic(subscription?.topic)) &&
+        hasRequiredWebhook([subscription], subscription?.topic, uri),
     ),
     actions,
   }

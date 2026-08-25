@@ -64,6 +64,7 @@ import {
   recordInternalAttachmentNotification,
 } from './paid-order-attachment-notification.mjs'
 import {
+  disabledOrderWebhookTopics,
   reconcileOrderWebhookSubscriptions,
   requiredOrderWebhookTopics,
 } from './order-webhook-subscriptions.mjs'
@@ -6345,9 +6346,11 @@ async function reconcileOrderWebhooks(baseUrl) {
   return reconcileOrderWebhookSubscriptions({
     baseUrl,
     topics: requiredOrderWebhookTopics,
+    disabledTopics: disabledOrderWebhookTopics,
     listSubscriptions: listOrderWebhookSubscriptions,
     createSubscription: ({ topic, uri }) => registerWebhook(topic, uri),
     updateSubscription: ({ id, uri }) => updateWebhook(id, uri),
+    deleteSubscription: ({ id }) => deleteWebhook(id),
   })
 }
 
@@ -6403,6 +6406,33 @@ async function updateWebhook(id, uri) {
   const subscription = result?.data?.webhookSubscriptionUpdate?.webhookSubscription
   if (!subscription?.id) throw new Error('Webhook subscription update returned no subscription.')
   return subscription
+}
+
+async function deleteWebhook(id) {
+  const result = await shopifyGraphQL(
+    `
+      mutation DeleteWebhook($id: ID!) {
+        webhookSubscriptionDelete(id: $id) {
+          deletedWebhookSubscriptionId
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    { id },
+  )
+
+  const errors = result?.data?.webhookSubscriptionDelete?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(
+      `Webhook subscription deletion error: ${errors.map((item) => item.message).join(', ')}`,
+    )
+  }
+  if (!result?.data?.webhookSubscriptionDelete?.deletedWebhookSubscriptionId) {
+    throw new Error('Webhook subscription deletion returned no deleted subscription ID.')
+  }
 }
 
 async function registerWebhook(topic, uri) {
