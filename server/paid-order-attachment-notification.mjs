@@ -60,6 +60,8 @@ export function normalizeInternalAttachmentNotification(notification) {
     shopifyOrderName: cleanString(notification.shopifyOrderName),
     shopifyDraftOrderId: cleanString(notification.shopifyDraftOrderId),
     shopifyDraftOrderName: cleanString(notification.shopifyDraftOrderName),
+    providerMessageId: cleanString(notification.providerMessageId),
+    uploadedAttachmentAttached: notification.uploadedAttachmentAttached === true,
     attachmentId,
     filename: cleanString(notification.filename),
     downloadUrl,
@@ -88,6 +90,8 @@ export function createInternalAttachmentNotification({
   shopifyOrderName = '',
   shopifyDraftOrderId = '',
   shopifyDraftOrderName = '',
+  providerMessageId = '',
+  uploadedAttachmentAttached = false,
   attachment,
 }) {
   return normalizeInternalAttachmentNotification({
@@ -101,6 +105,8 @@ export function createInternalAttachmentNotification({
     shopifyOrderName,
     shopifyDraftOrderId,
     shopifyDraftOrderName,
+    providerMessageId,
+    uploadedAttachmentAttached,
     attachmentId: attachment?.id,
     filename: attachment?.filename,
     downloadUrl: attachment?.downloadUrl || attachment?.url,

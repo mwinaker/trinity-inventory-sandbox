@@ -64,6 +64,10 @@ import {
   recordInternalAttachmentNotification,
 } from './paid-order-attachment-notification.mjs'
 import {
+  reconcileOrderWebhookSubscriptions,
+  requiredOrderWebhookTopics,
+} from './order-webhook-subscriptions.mjs'
+import {
   allowsLocalInternalAccess,
   buildShopifySessionBounceLocation,
   hasEmbeddedShopifyContext,
@@ -822,12 +826,17 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
         if (!deliveryInput) {
           throw new Error('Paid attachment notification is missing its internal delivery details.')
         }
-        paidAttachmentDelivery = await sendInternalOrderCopyEmail(deliveryInput)
+        paidAttachmentDelivery = await sendInternalOrderCopyEmail({
+          ...deliveryInput,
+          requireUploadedAttachment: true,
+        })
         mergedJobs = recordInternalAttachmentNotification(
           mergedJobs,
           {
             ...paidAttachmentNotification.tracking,
             method: paidAttachmentDelivery.method,
+            providerMessageId: paidAttachmentDelivery.providerMessageId,
+            uploadedAttachmentAttached: paidAttachmentDelivery.uploadedAttachmentAttached,
           },
         )
       }
@@ -2080,14 +2089,11 @@ app.post('/api/webhooks/register', requireSalesPortalAdminOrInternalAccess, asyn
       return
     }
 
-    const uri = `${baseUrl.replace(/\/$/, '')}/api/webhooks/orders`
-    const topics = ['ORDERS_CREATE', 'ORDERS_PAID', 'ORDERS_UPDATED', 'ORDERS_CANCELLED']
-    const subscriptions = await Promise.all(topics.map((topic) => registerWebhook(topic, uri)))
+    const registration = await reconcileOrderWebhooks(baseUrl)
 
     response.json({
       ok: true,
-      uri,
-      subscriptions,
+      ...registration,
     })
   } catch (error) {
     response.status(500).json({
@@ -2123,6 +2129,10 @@ app.get('/{*path}', serveInternalAppShell)
 
 app.listen(port, () => {
   console.log(`Trinity billet server listening on http://127.0.0.1:${port}`)
+  void ensureOrderWebhooksOnStartup().catch((error) => {
+    const message = error instanceof Error ? error.message : 'Unknown order webhook registration error.'
+    console.error(`Order webhook registration error: ${message}`)
+  })
 })
 
 function servePublicAppShell(_request, response) {
@@ -3313,6 +3323,7 @@ async function trySendInternalOrderCopyNotification({
       pdfAttached: false,
       uploadedAttachmentAttached: false,
       attachmentLinkIncluded: false,
+      providerMessageId: '',
       error: '',
     }
   }
@@ -3350,6 +3361,7 @@ async function trySendInternalOrderCopyNotification({
       pdfAttached: delivery.pdfAttached,
       uploadedAttachmentAttached: delivery.uploadedAttachmentAttached,
       attachmentLinkIncluded: Boolean(normalizeOrderAttachment(payload.attachment)?.downloadUrl),
+      providerMessageId: delivery.providerMessageId,
       error: '',
     }
   } catch (error) {
@@ -3362,6 +3374,7 @@ async function trySendInternalOrderCopyNotification({
       pdfAttached: false,
       uploadedAttachmentAttached: false,
       attachmentLinkIncluded: false,
+      providerMessageId: '',
       error: message,
     }
   }
@@ -3391,6 +3404,8 @@ async function tryRecordSubmittedAttachmentNotification({
     shopifyOrderName: order?.name,
     shopifyDraftOrderId: draftOrder?.id,
     shopifyDraftOrderName: draftOrder?.name,
+    providerMessageId: internalOrderNotification.providerMessageId,
+    uploadedAttachmentAttached: internalOrderNotification.uploadedAttachmentAttached,
     attachment,
   })
   const trackedJobs = recordInternalAttachmentNotification(jobs, tracking)
@@ -3546,15 +3561,28 @@ async function sendInternalOrderCopyEmail({
   text,
   orderPrinterPdfUrl = '',
   uploadedAttachment = null,
+  requireUploadedAttachment = false,
 }) {
-  if (isGoogleWorkspaceInternalEmailConfigured(googleWorkspaceInternalEmailConfig)) {
+  const googleWorkspaceConfigured = isGoogleWorkspaceInternalEmailConfigured(
+    googleWorkspaceInternalEmailConfig,
+  )
+  const internalEmailProviderConfigured = Boolean(internalEmailProviderApiKey && internalEmailFrom)
+  if (requireUploadedAttachment && !googleWorkspaceConfigured && !internalEmailProviderConfigured) {
+    throw new Error(
+      'The paid-order attachment email requires a configured internal email provider that supports attachments.',
+    )
+  }
+
+  if (googleWorkspaceConfigured) {
     const pdfAttachment = await tryDownloadOrderPrinterProPdfAttachment({
       draftOrder,
       orderPrinterPdfUrl,
     })
-    const uploadedEmailAttachment = await tryDownloadUploadedOrderEmailAttachment(uploadedAttachment)
+    const uploadedEmailAttachment = await tryDownloadUploadedOrderEmailAttachment(uploadedAttachment, {
+      required: requireUploadedAttachment,
+    })
     const attachments = [pdfAttachment, uploadedEmailAttachment].filter(Boolean)
-    await sendGoogleWorkspaceInternalEmail({
+    const googleWorkspaceMessage = await sendGoogleWorkspaceInternalEmail({
       ...googleWorkspaceInternalEmailConfig,
       to: recipients,
       subject,
@@ -3566,15 +3594,18 @@ async function sendInternalOrderCopyEmail({
       method: 'google_workspace_gmail_api',
       pdfAttached: Boolean(pdfAttachment),
       uploadedAttachmentAttached: Boolean(uploadedEmailAttachment),
+      providerMessageId: cleanString(googleWorkspaceMessage?.id),
     }
   }
 
-  if (internalEmailProviderApiKey && internalEmailFrom) {
+  if (internalEmailProviderConfigured) {
     const pdfAttachment = await tryDownloadOrderPrinterProPdfAttachment({
       draftOrder,
       orderPrinterPdfUrl,
     })
-    const uploadedEmailAttachment = await tryDownloadUploadedOrderEmailAttachment(uploadedAttachment)
+    const uploadedEmailAttachment = await tryDownloadUploadedOrderEmailAttachment(uploadedAttachment, {
+      required: requireUploadedAttachment,
+    })
     const attachments = [pdfAttachment, uploadedEmailAttachment].filter(Boolean)
     await sendInternalEmail({
       to: recipients,
@@ -3586,6 +3617,7 @@ async function sendInternalOrderCopyEmail({
       method: 'internal_email_provider',
       pdfAttached: Boolean(pdfAttachment),
       uploadedAttachmentAttached: Boolean(uploadedEmailAttachment),
+      providerMessageId: '',
     }
   }
 
@@ -3600,6 +3632,7 @@ async function sendInternalOrderCopyEmail({
       method: 'shopify_draft_order_email',
       pdfAttached: false,
       uploadedAttachmentAttached: false,
+      providerMessageId: '',
     }
   }
 
@@ -3614,6 +3647,7 @@ async function sendInternalOrderCopyEmail({
       method: 'shopify_order_email',
       pdfAttached: false,
       uploadedAttachmentAttached: false,
+      providerMessageId: '',
     }
   }
 
@@ -3637,8 +3671,11 @@ async function tryDownloadOrderPrinterProPdfAttachment({ draftOrder, orderPrinte
   }
 }
 
-async function tryDownloadUploadedOrderEmailAttachment(attachment) {
-  if (!attachment?.downloadUrl) return null
+async function tryDownloadUploadedOrderEmailAttachment(attachment, { required = false } = {}) {
+  if (!attachment?.downloadUrl) {
+    if (required) throw new Error('The paid-order attachment is missing its Shopify download URL.')
+    return null
+  }
 
   try {
     return await downloadUploadedOrderEmailAttachment({
@@ -3648,6 +3685,9 @@ async function tryDownloadUploadedOrderEmailAttachment(attachment) {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown attachment download error.'
     console.warn(`Uploaded order attachment skipped: ${message}`)
+    if (required) {
+      throw new Error(`The paid-order attachment could not be downloaded for email: ${message}`)
+    }
     return null
   }
 }
@@ -6268,6 +6308,90 @@ function linkCompletedDraftMetadataToOrderJobs(jobs, draftOrders) {
   })
 }
 
+async function ensureOrderWebhooksOnStartup() {
+  if (!shopDomain || !adminToken) {
+    console.warn('Order webhook registration skipped: Shopify credentials are not configured.')
+    return
+  }
+
+  const baseUrl = resolveConfiguredPublicBaseUrl()
+  if (!baseUrl) {
+    console.warn('Order webhook registration skipped: no configured public application URL.')
+    return
+  }
+
+  const registration = await reconcileOrderWebhooks(baseUrl)
+  console.log(
+    `Order webhooks verified at ${registration.uri}: ${registration.actions
+      .map((item) => `${item.topic}=${item.action}`)
+      .join(', ')}`,
+  )
+}
+
+async function reconcileOrderWebhooks(baseUrl) {
+  return reconcileOrderWebhookSubscriptions({
+    baseUrl,
+    topics: requiredOrderWebhookTopics,
+    listSubscriptions: listOrderWebhookSubscriptions,
+    createSubscription: ({ topic, uri }) => registerWebhook(topic, uri),
+    updateSubscription: ({ id, uri }) => updateWebhook(id, uri),
+  })
+}
+
+async function listOrderWebhookSubscriptions(topics) {
+  const result = await shopifyGraphQL(
+    `
+      query ListOrderWebhookSubscriptions($topics: [WebhookSubscriptionTopic!]) {
+        webhookSubscriptions(first: 100, topics: $topics) {
+          nodes {
+            id
+            topic
+            uri
+          }
+        }
+      }
+    `,
+    { topics },
+  )
+
+  return result?.data?.webhookSubscriptions?.nodes ?? []
+}
+
+async function updateWebhook(id, uri) {
+  const result = await shopifyGraphQL(
+    `
+      mutation UpdateWebhook($id: ID!, $webhookSubscription: WebhookSubscriptionInput!) {
+        webhookSubscriptionUpdate(id: $id, webhookSubscription: $webhookSubscription) {
+          webhookSubscription {
+            id
+            topic
+            uri
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `,
+    {
+      id,
+      webhookSubscription: { uri },
+    },
+  )
+
+  const errors = result?.data?.webhookSubscriptionUpdate?.userErrors ?? []
+  if (errors.length > 0) {
+    throw new Error(
+      `Webhook subscription update error: ${errors.map((item) => item.message).join(', ')}`,
+    )
+  }
+
+  const subscription = result?.data?.webhookSubscriptionUpdate?.webhookSubscription
+  if (!subscription?.id) throw new Error('Webhook subscription update returned no subscription.')
+  return subscription
+}
+
 async function registerWebhook(topic, uri) {
   const result = await shopifyGraphQL(
     `
@@ -8754,11 +8878,18 @@ function verifyShopifyWebhook(request) {
   return received.length === expected.length && crypto.timingSafeEqual(received, expected)
 }
 
+function resolveConfiguredPublicBaseUrl() {
+  return (
+    cleanString(process.env.SHOPIFY_APP_URL) ||
+    cleanString(process.env.APP_URL) ||
+    cleanString(process.env.RENDER_EXTERNAL_URL)
+  )
+}
+
 function resolvePublicBaseUrl(request, explicitBaseUrl) {
   if (explicitBaseUrl) return String(explicitBaseUrl)
-  if (process.env.SHOPIFY_APP_URL) return process.env.SHOPIFY_APP_URL
-  if (process.env.APP_URL) return process.env.APP_URL
-  if (process.env.RENDER_EXTERNAL_URL) return process.env.RENDER_EXTERNAL_URL
+  const configuredBaseUrl = resolveConfiguredPublicBaseUrl()
+  if (configuredBaseUrl) return configuredBaseUrl
 
   const host = request.get('x-forwarded-host') ?? request.get('host')
   if (!host || host.includes('127.0.0.1') || host.includes('localhost')) return ''

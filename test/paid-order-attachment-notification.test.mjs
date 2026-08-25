@@ -111,6 +111,8 @@ test('records submission and paid attachment notifications on every matching ord
     recipient: 'jeremy@trinitybats.com',
     sentAt: '2026-08-11T20:00:00.000Z',
     method: 'shopify_draft_order_email',
+    providerMessageId: 'gmail-submission-1',
+    uploadedAttachmentAttached: true,
     shopifyDraftOrderId: 'gid://shopify/DraftOrder/201',
     shopifyDraftOrderName: '#D201',
     attachment,
@@ -120,6 +122,8 @@ test('records submission and paid attachment notifications on every matching ord
     recipient: 'jeremy@trinitybats.com',
     sentAt: '2026-08-11T20:30:01.000Z',
     method: 'shopify_flow_internal_email',
+    providerMessageId: 'gmail-paid-1',
+    uploadedAttachmentAttached: true,
     shopifyOrderId: 'gid://shopify/Order/101',
     shopifyOrderName: '#101',
     shopifyEventId: 'event-101',
@@ -136,6 +140,10 @@ test('records submission and paid attachment notifications on every matching ord
       ['submission', 'paid'],
     ],
   )
+  assert.equal(trackedJobs[0].internalAttachmentNotifications[0].providerMessageId, 'gmail-submission-1')
+  assert.equal(trackedJobs[0].internalAttachmentNotifications[0].uploadedAttachmentAttached, true)
+  assert.equal(trackedJobs[0].internalAttachmentNotifications[1].providerMessageId, 'gmail-paid-1')
+  assert.equal(trackedJobs[0].internalAttachmentNotifications[1].uploadedAttachmentAttached, true)
 })
 
 test('does not resend the paid attachment notification for a recorded order', () => {
