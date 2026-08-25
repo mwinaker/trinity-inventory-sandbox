@@ -46,9 +46,9 @@ export function normalizeInternalAttachmentNotification(notification) {
         recipient,
         cleanString(notification.shopifyEventId) ||
           cleanString(notification.shopifyOrderId) ||
-          cleanString(notification.shopifyDraftOrderId) ||
-          sentAt,
+          cleanString(notification.shopifyDraftOrderId),
         attachmentId || downloadUrl,
+        sentAt,
       ].join(':'),
     event,
     recipient,
@@ -159,7 +159,7 @@ export function recordInternalAttachmentNotification(jobs, notification) {
   })
 }
 
-function hasRecordedPaidNotification(jobs, recipient, attachment) {
+function hasConfirmedPaidAttachmentNotification(jobs, recipient, attachment) {
   const normalizedRecipient = normalizeEmail(recipient)
   const attachmentId = cleanString(attachment?.id)
   const downloadUrl = cleanString(attachment?.downloadUrl || attachment?.url)
@@ -169,6 +169,7 @@ function hasRecordedPaidNotification(jobs, recipient, attachment) {
       (notification) =>
         notification.event === 'paid' &&
         notification.recipient === normalizedRecipient &&
+        notification.uploadedAttachmentAttached === true &&
         (attachmentId
           ? notification.attachmentId === attachmentId
           : notification.downloadUrl === downloadUrl),
@@ -199,7 +200,10 @@ export function buildPaidOrderAttachmentNotification({
 
   const attachment = primaryJob.internalAttachment
   const normalizedRecipient = normalizeEmail(recipient)
-  if (!normalizedRecipient || hasRecordedPaidNotification(eligibleJobs, normalizedRecipient, attachment)) {
+  if (
+    !normalizedRecipient ||
+    hasConfirmedPaidAttachmentNotification(eligibleJobs, normalizedRecipient, attachment)
+  ) {
     return null
   }
 

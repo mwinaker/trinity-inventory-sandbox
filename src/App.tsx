@@ -9012,17 +9012,24 @@ function InternalApp({
                                   {notification.event === 'paid'
                                     ? notification.method === 'shopify_flow_internal_email'
                                       ? 'paid update queued for Shopify Flow email'
-                                      : 'paid update'
+                                      : notification.uploadedAttachmentAttached
+                                        ? 'paid update'
+                                        : 'paid update recorded'
                                     : 'submission'}
                                   {notification.event === 'paid' &&
                                   notification.method === 'shopify_flow_internal_email'
                                     ? ' to '
-                                    : ' sent to '}
+                                    : notification.event === 'paid' &&
+                                        !notification.uploadedAttachmentAttached
+                                      ? ' for '
+                                      : ' sent to '}
                                   {notification.recipient} · {formatOrderDateTime(notification.sentAt)}
                                   {notification.event === 'paid' &&
                                   notification.uploadedAttachmentAttached
                                     ? ' · uploaded file attached'
-                                    : ''}
+                                    : notification.event === 'paid'
+                                      ? ' · uploaded file was not confirmed as attached'
+                                      : ''}
                                 </p>
                               ))}
                             </>
@@ -9137,7 +9144,9 @@ function InternalApp({
                           job.shopifyDraftOrderId &&
                           job.internalAttachment?.downloadUrl &&
                           !job.internalAttachmentNotifications.some(
-                            (notification) => notification.event === 'paid',
+                            (notification) =>
+                              notification.event === 'paid' &&
+                              notification.uploadedAttachmentAttached,
                           ) ? (
                             <button
                               type="button"

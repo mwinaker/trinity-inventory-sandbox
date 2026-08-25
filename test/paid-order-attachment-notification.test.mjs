@@ -154,7 +154,10 @@ test('does not resend the paid attachment notification for a recorded order', ()
     shopifyEventId: 'event-101',
     sentAt: '2026-08-11T20:30:01.000Z',
   })
-  const trackedJobs = recordInternalAttachmentNotification(createJobs(), first.tracking)
+  const trackedJobs = recordInternalAttachmentNotification(createJobs(), {
+    ...first.tracking,
+    uploadedAttachmentAttached: true,
+  })
   const duplicate = buildPaidOrderAttachmentNotification({
     topic: 'orders/paid',
     order: { admin_graphql_api_id: 'gid://shopify/Order/101', name: '#101' },
@@ -164,6 +167,33 @@ test('does not resend the paid attachment notification for a recorded order', ()
   })
 
   assert.equal(duplicate, null)
+})
+
+test('retries a paid notification when the prior record did not confirm the uploaded attachment', () => {
+  const first = buildPaidOrderAttachmentNotification({
+    topic: 'orders/paid',
+    order: { admin_graphql_api_id: 'gid://shopify/Order/101', name: '#101' },
+    jobs: createJobs(),
+    sentAt: '2026-08-11T20:30:01.000Z',
+  })
+  const unconfirmedJobs = recordInternalAttachmentNotification(createJobs(), first.tracking)
+  const retry = buildPaidOrderAttachmentNotification({
+    topic: 'orders/paid',
+    order: { admin_graphql_api_id: 'gid://shopify/Order/101', name: '#101' },
+    jobs: unconfirmedJobs,
+    sentAt: '2026-08-11T20:31:00.000Z',
+  })
+
+  assert.ok(retry)
+  const deliveredJobs = recordInternalAttachmentNotification(unconfirmedJobs, {
+    ...retry.tracking,
+    providerMessageId: 'gmail-paid-retry-1',
+    uploadedAttachmentAttached: true,
+  })
+  assert.equal(deliveredJobs[0].internalAttachmentNotifications.length, 2)
+  assert.equal(deliveredJobs[0].internalAttachmentNotifications[0].uploadedAttachmentAttached, false)
+  assert.equal(deliveredJobs[0].internalAttachmentNotifications[1].uploadedAttachmentAttached, true)
+  assert.equal(deliveredJobs[0].internalAttachmentNotifications[1].providerMessageId, 'gmail-paid-retry-1')
 })
 
 test('sends the paid attachment notification when Shopify creates a completed draft already paid', () => {
