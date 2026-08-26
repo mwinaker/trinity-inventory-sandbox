@@ -2,8 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  buildCanonicalSalesSummary,
+  buildSalesReconciliationChecks,
   classifyPaidInvoiceSource,
+  classifySalesReportingCategory,
   getSuccessfulPaymentTimestamp,
+  getSalesOrderStatusBucket,
   isShopifyDraftOrderSource,
   isWebsiteOrderSource,
 } from '../shared/sales-payment-reconciliation.mjs'
@@ -76,4 +80,133 @@ test('includes Inventory-tagged and Shopify Draft Orders in paid invoice reporti
   assert.equal(classifyPaidInvoiceSource('shopify_draft_order', false), 'shopify_draft_order')
   assert.equal(classifyPaidInvoiceSource('web', false), '')
   assert.equal(classifyPaidInvoiceSource('pos', false), '')
+})
+
+test('classifies reporting channels with manual markers taking precedence', () => {
+  assert.equal(
+    classifySalesReportingCategory({
+      sourceName: 'web',
+      appName: 'Online Store',
+      hasInventoryMarker: true,
+    }),
+    'manual_sales_order_entry',
+  )
+  assert.equal(
+    classifySalesReportingCategory({
+      sourceName: 'shopify_draft_order',
+      appName: 'Draft Orders',
+      hasInventoryMarker: false,
+    }),
+    'manual_sales_order_entry',
+  )
+  assert.equal(
+    classifySalesReportingCategory({
+      sourceName: 'web',
+      appName: 'Online Store',
+      hasInventoryMarker: false,
+    }),
+    'online_store',
+  )
+  assert.equal(
+    classifySalesReportingCategory({ sourceName: 'web', appName: 'Shop' }),
+    'shop',
+  )
+  assert.equal(
+    classifySalesReportingCategory({ sourceName: 'pos', appName: 'Point of Sale' }),
+    'point_of_sale',
+  )
+  assert.equal(
+    classifySalesReportingCategory({ sourceName: 'web', appName: 'Unrecognized app' }),
+    'other_unresolved',
+  )
+})
+
+test('keeps zero-dollar completed orders as comped without inventing a payment event', () => {
+  assert.equal(
+    getSalesOrderStatusBucket({ financialStatus: 'PAID', total: 0, paidAt: '' }),
+    'comped',
+  )
+  assert.equal(
+    getSalesOrderStatusBucket({
+      financialStatus: 'PAID',
+      total: 125,
+      paidAt: '2026-08-01T12:00:00Z',
+    }),
+    'paid_positive',
+  )
+  assert.equal(
+    getSalesOrderStatusBucket({ financialStatus: 'PENDING', total: 125, paidAt: '' }),
+    'pending',
+  )
+  assert.equal(
+    getSalesOrderStatusBucket({ financialStatus: 'REFUNDED', total: 0, paidAt: '' }),
+    'refunded',
+  )
+})
+
+test('reconciles mutually exclusive channel and manual-status totals', () => {
+  const orders = [
+    {
+      orderId: '1',
+      orderName: '#1',
+      reportingCategory: 'manual_sales_order_entry',
+      statusBucket: 'paid_positive',
+      currentOrderValue: 100,
+      salesRepResolution: 'canonical',
+    },
+    {
+      orderId: '2',
+      orderName: '#2',
+      reportingCategory: 'manual_sales_order_entry',
+      statusBucket: 'comped',
+      currentOrderValue: 0,
+      salesRepResolution: 'unresolved',
+    },
+    {
+      orderId: '3',
+      orderName: '#3',
+      reportingCategory: 'online_store',
+      statusBucket: 'paid_positive',
+      currentOrderValue: 75.55,
+    },
+    {
+      orderId: '4',
+      orderName: '#4',
+      reportingCategory: 'shop',
+      statusBucket: 'paid_positive',
+      currentOrderValue: 20,
+    },
+  ]
+  const summary = buildCanonicalSalesSummary(orders)
+  const reconciliation = buildSalesReconciliationChecks(orders, summary)
+
+  assert.deepEqual(summary.total, { count: 4, value: 195.55 })
+  assert.deepEqual(summary.categories.manual_sales_order_entry, { count: 2, value: 100 })
+  assert.deepEqual(summary.manualStatuses.comped, { count: 1, value: 0 })
+  assert.equal(reconciliation.ok, true)
+  assert.deepEqual(reconciliation.unresolvedManualRepOrderNames, ['#2'])
+})
+
+test('fails reconciliation for duplicate order IDs and unresolved channels', () => {
+  const orders = [
+    {
+      orderId: '1',
+      orderName: '#1',
+      reportingCategory: 'online_store',
+      statusBucket: 'paid_positive',
+      currentOrderValue: 50,
+    },
+    {
+      orderId: '1',
+      orderName: '#2',
+      reportingCategory: 'other_unresolved',
+      statusBucket: 'other',
+      currentOrderValue: 25,
+    },
+  ]
+  const reconciliation = buildSalesReconciliationChecks(orders)
+
+  assert.equal(reconciliation.ok, false)
+  assert.deepEqual(reconciliation.duplicateOrderIds, ['1'])
+  assert.deepEqual(reconciliation.unresolvedOrderNames, ['#2'])
 })

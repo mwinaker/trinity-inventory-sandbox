@@ -536,6 +536,80 @@ type SalesWebsiteOrder = {
   financialStatus: string
 }
 
+type SalesReportingCategory =
+  | 'manual_sales_order_entry'
+  | 'online_store'
+  | 'shop'
+  | 'point_of_sale'
+  | 'other_unresolved'
+
+type SalesOrderStatusBucket =
+  | 'paid_positive'
+  | 'comped'
+  | 'pending'
+  | 'partially_paid'
+  | 'refunded'
+  | 'voided'
+  | 'other'
+
+type SalesSummaryBucket = {
+  count: number
+  value: number
+}
+
+type SalesCompletedOrder = {
+  orderId: string
+  orderName: string
+  draftOrderId: string
+  draftOrderName: string
+  intakeId: string
+  reportingCategory: SalesReportingCategory
+  sourceName: string
+  appName: string
+  sourceDetail: string
+  orderCreatedAt: string
+  submittedAt: string
+  paidAt: string
+  isPaid: boolean
+  isComped: boolean
+  financialStatus: string
+  statusBucket: SalesOrderStatusBucket
+  currentOrderValue: number
+  total: number
+  subtotal: number
+  shipping: number
+  tax: number
+  discounts: number
+  currency: string
+  salesRep: string
+  salesRepEmail: string
+  salesRepResolution: 'canonical' | 'inherited' | 'unresolved' | 'unassigned'
+  submissionMatched: boolean
+  customerName: string
+  payerName: string
+  manualEntrySource: 'inventory' | 'shopify_draft_order' | ''
+}
+
+type SalesCanonicalSummary = {
+  total: SalesSummaryBucket
+  categories: Record<SalesReportingCategory, SalesSummaryBucket>
+  manualStatuses: Record<SalesOrderStatusBucket, SalesSummaryBucket>
+}
+
+type SalesReconciliationCheck = {
+  key: string
+  ok: boolean
+  message: string
+}
+
+type SalesCanonicalReconciliation = {
+  ok: boolean
+  checks: SalesReconciliationCheck[]
+  duplicateOrderIds: string[]
+  unresolvedOrderNames: string[]
+  unresolvedManualRepOrderNames: string[]
+}
+
 type SalesPaymentReconciliationReport = {
   ok: boolean
   range: SalesDashboardRange
@@ -547,9 +621,36 @@ type SalesPaymentReconciliationReport = {
   source: string
   submissions: SalesDashboardSale[]
   orders: SalesPaymentReconciliationOrder[]
+  completedOrders: SalesCompletedOrder[]
+  summary: SalesCanonicalSummary
+  reconciliation: SalesCanonicalReconciliation
   websiteOrders: SalesWebsiteOrder[]
   teamLeaderboardRows: TeamLeaderboardRow[]
 }
+
+const salesReportingCategoryOptions: Array<{
+  value: SalesReportingCategory
+  label: string
+}> = [
+  { value: 'manual_sales_order_entry', label: 'Manual sales order entries' },
+  { value: 'online_store', label: 'Online Store orders' },
+  { value: 'shop', label: 'Shop orders' },
+  { value: 'point_of_sale', label: 'Point of Sale orders' },
+  { value: 'other_unresolved', label: 'Needs channel review' },
+]
+
+const salesOrderStatusBucketOptions: Array<{
+  value: SalesOrderStatusBucket
+  label: string
+}> = [
+  { value: 'paid_positive', label: 'Paid, positive value' },
+  { value: 'comped', label: 'Comped ($0)' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'partially_paid', label: 'Partially paid' },
+  { value: 'refunded', label: 'Refunded' },
+  { value: 'voided', label: 'Voided' },
+  { value: 'other', label: 'Needs status review' },
+]
 
 type SalesRepSummary = {
   key: string
@@ -2715,6 +2816,28 @@ function formatShopifyFinancialStatus(value: string) {
   const normalized = value.trim().toLowerCase().replace(/_/g, ' ')
   if (!normalized) return 'Unknown'
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function formatSalesReportingCategory(value: SalesReportingCategory) {
+  return {
+    manual_sales_order_entry: 'Manual sales order entry',
+    online_store: 'Online Store',
+    shop: 'Shop',
+    point_of_sale: 'Point of Sale',
+    other_unresolved: 'Needs channel review',
+  }[value]
+}
+
+function formatSalesOrderStatusBucket(value: SalesOrderStatusBucket) {
+  return {
+    paid_positive: 'Paid, positive value',
+    comped: 'Comped ($0)',
+    pending: 'Pending',
+    partially_paid: 'Partially paid',
+    refunded: 'Refunded',
+    voided: 'Voided',
+    other: 'Needs status review',
+  }[value]
 }
 
 function formatSalesDashboardSyncTime(value: string) {
@@ -6005,6 +6128,10 @@ function InternalApp({
           !payload.ok ||
           !Array.isArray(payload.submissions) ||
           !Array.isArray(payload.orders) ||
+          !Array.isArray(payload.completedOrders) ||
+          !payload.summary ||
+          !payload.reconciliation ||
+          !Array.isArray(payload.reconciliation.checks) ||
           !Array.isArray(payload.websiteOrders) ||
           !Array.isArray(payload.teamLeaderboardRows) ||
           payload.windowKey !== requestWindow.cacheKey
@@ -6495,6 +6622,10 @@ function InternalApp({
     (total, order) => total + order.total,
     0,
   )
+  const salesDashboardCompletedOrders = activeSalesPaymentReconciliation?.completedOrders ?? []
+  const salesDashboardCanonicalSummary = activeSalesPaymentReconciliation?.summary ?? null
+  const salesDashboardCanonicalReconciliation =
+    activeSalesPaymentReconciliation?.reconciliation ?? null
   const salesDashboardLeaderboardRows = useMemo(() => {
     const rows = activeSalesPaymentReconciliation
       ? activeSalesPaymentReconciliation.teamLeaderboardRows
@@ -9315,9 +9446,167 @@ function InternalApp({
             </div>
           </section>
 
+          {salesDashboardCanonicalSummary && salesDashboardCanonicalReconciliation ? (
+            <section className="panel canonical-sales-reconciliation">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">Completed Shopify orders</p>
+                  <h2>{salesDashboardWindowLabel} order reconciliation</h2>
+                  <p className="helper-text">
+                    Orders are counted once by Shopify order creation date. Only orders explicitly
+                    created by the Online Store app are Online Store orders. Inventory-tool orders
+                    and Shopify Draft Orders are combined as manual sales order entries.
+                  </p>
+                </div>
+                <div
+                  className={`canonical-reconciliation-status ${
+                    salesDashboardCanonicalReconciliation.ok ? 'reconciled' : 'attention'
+                  }`}
+                  role="status"
+                >
+                  <span>
+                    {salesDashboardCanonicalReconciliation.ok
+                      ? 'Accounting checks passed'
+                      : 'Reconciliation needs attention'}
+                  </span>
+                  <strong>
+                    {salesDashboardCanonicalSummary.total.count} orders ·{' '}
+                    {formatSalesOrderMoney(salesDashboardCanonicalSummary.total.value)}
+                  </strong>
+                </div>
+              </div>
+
+              <div className="canonical-channel-grid" aria-label="Completed orders by channel">
+                {salesReportingCategoryOptions
+                  .filter(
+                    (option) =>
+                      (hasAdminAccess || option.value === 'manual_sales_order_entry') &&
+                      (option.value !== 'other_unresolved' ||
+                        salesDashboardCanonicalSummary.categories[option.value].count > 0),
+                  )
+                  .map((option) => {
+                    const bucket = salesDashboardCanonicalSummary.categories[option.value]
+                    return (
+                      <article
+                        className={option.value === 'other_unresolved' ? 'attention' : ''}
+                        key={option.value}
+                      >
+                        <span>{option.label}</span>
+                        <strong>{bucket.count}</strong>
+                        <small>{formatSalesOrderMoney(bucket.value)}</small>
+                      </article>
+                    )
+                  })}
+                <article className="all-orders">
+                  <span>All completed orders</span>
+                  <strong>{salesDashboardCanonicalSummary.total.count}</strong>
+                  <small>{formatSalesOrderMoney(salesDashboardCanonicalSummary.total.value)}</small>
+                </article>
+              </div>
+
+              <div className="canonical-manual-statuses">
+                <div className="section-heading">
+                  <p className="eyebrow">Manual sales order entries</p>
+                  <h3>Completed-order status breakdown</h3>
+                </div>
+                <div className="canonical-status-grid">
+                  {salesOrderStatusBucketOptions
+                    .filter(
+                      (option) =>
+                        ['paid_positive', 'comped', 'pending'].includes(option.value) ||
+                        salesDashboardCanonicalSummary.manualStatuses[option.value].count > 0,
+                    )
+                    .map((option) => {
+                      const bucket = salesDashboardCanonicalSummary.manualStatuses[option.value]
+                      return (
+                        <article key={option.value}>
+                          <span>{option.label}</span>
+                          <strong>{bucket.count}</strong>
+                          <small>{formatSalesOrderMoney(bucket.value)}</small>
+                        </article>
+                      )
+                    })}
+                </div>
+              </div>
+
+              <div className="canonical-reconciliation-checks">
+                {salesDashboardCanonicalReconciliation.checks.map((check) => (
+                  <div className={check.ok ? 'passed' : 'failed'} key={check.key}>
+                    <span aria-hidden="true">{check.ok ? '✓' : '!'}</span>
+                    <p>{check.message}</p>
+                  </div>
+                ))}
+              </div>
+
+              {salesDashboardCanonicalReconciliation.unresolvedManualRepOrderNames.length > 0 ? (
+                <p className="canonical-reconciliation-warning" role="alert">
+                  Sales-rep ownership still needs review for{' '}
+                  {salesDashboardCanonicalReconciliation.unresolvedManualRepOrderNames.join(', ')}.
+                  These orders remain in the manual-order totals and are not silently assigned.
+                </p>
+              ) : null}
+
+              <details className="canonical-order-ledger">
+                <summary>
+                  View the canonical completed-order ledger ({salesDashboardCompletedOrders.length})
+                </summary>
+                <div className="table-wrap">
+                  <table className="payment-reconciliation-table canonical-order-table">
+                    <thead>
+                      <tr>
+                        <th>Created</th>
+                        <th>Order</th>
+                        <th>Reporting category</th>
+                        <th>Shopify source</th>
+                        <th>Status</th>
+                        <th>Sales rep</th>
+                        <th>Customer</th>
+                        <th>Current order value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salesDashboardCompletedOrders.map((order) => (
+                        <tr key={order.orderId}>
+                          <td>{formatSalesDashboardDate(order.orderCreatedAt)}</td>
+                          <td className="reconciliation-reference">
+                            <strong>{order.orderName || 'Unnumbered order'}</strong>
+                            {order.draftOrderName ? (
+                              <span>Original draft {order.draftOrderName}</span>
+                            ) : null}
+                          </td>
+                          <td>{formatSalesReportingCategory(order.reportingCategory)}</td>
+                          <td>{order.sourceDetail}</td>
+                          <td>
+                            <span
+                              className={`pill ${
+                                ['paid_positive', 'comped'].includes(order.statusBucket)
+                                  ? 'yes'
+                                  : ''
+                              }`}
+                            >
+                              {formatSalesOrderStatusBucket(order.statusBucket)}
+                            </span>
+                          </td>
+                          <td>
+                            {order.salesRep || order.salesRepEmail || 'Unassigned'}
+                            {order.salesRepResolution === 'unresolved' ? (
+                              <span className="reconciliation-date">Needs review</span>
+                            ) : null}
+                          </td>
+                          <td>{order.payerName || order.customerName || 'No customer saved'}</td>
+                          <td>{formatSalesOrderMoney(order.currentOrderValue)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            </section>
+          ) : null}
+
           <section className="metrics-grid sales-dashboard-metrics" aria-label="Sales summary">
             <article>
-              <span>Submitted orders</span>
+              <span>Manual entries submitted</span>
               <strong>{salesDashboardWindowSubmissions.length}</strong>
             </article>
             <article>
@@ -9325,11 +9614,11 @@ function InternalApp({
               <strong>{formatSalesOrderMoney(salesDashboardWindowSubmissionValue)}</strong>
             </article>
             <article>
-              <span>Paid invoices</span>
+              <span>Positive payment events</span>
               <strong>{salesDashboardWindowPayments.length}</strong>
             </article>
             <article>
-              <span>Paid invoice value</span>
+              <span>Paid-event value</span>
               <strong>{formatSalesOrderMoney(salesDashboardWindowPaymentValue)}</strong>
             </article>
           </section>
@@ -9343,9 +9632,11 @@ function InternalApp({
                 based on the successful Shopify transaction, regardless of the original submission
                 date. Both use the selected sales rep above. Submitted amounts show order-form
                 items; paid amounts show the full Shopify invoice, including shipping and fees.
-                Submitted orders and paid invoices both include Inventory-tool orders and Shopify
-                Draft Orders, deduplicated when both records describe the same sale. Draft Orders
-                without saved rep data are shown as unassigned instead of being omitted.
+                Submitted orders and positive payment events both use the single Manual sales order
+                entry category, which combines Inventory-tool orders and Shopify Draft Orders and
+                deduplicates records that describe the same sale. Comped orders remain in the
+                completed-order ledger above but do not create a fake payment event. Draft Orders
+                without resolved rep data are flagged instead of being omitted or silently assigned.
                 {hasAdminAccess
                   ? ' The admin-only website table below is separate and is not affected by the sales rep filter.'
                   : ''}
@@ -9396,9 +9687,7 @@ function InternalApp({
                               ) : null}
                             </td>
                             <td>
-                              {sale.submissionSource === 'shopify_draft_order'
-                                ? 'Shopify Draft Orders'
-                                : 'Inventory tool'}
+                              Manual sales order entry
                             </td>
                             <td>{sale.salesRep || sale.salesRepEmail || 'Unassigned'}</td>
                             <td>{sale.payerName || sale.customerName || 'No payer saved'}</td>
@@ -9472,9 +9761,7 @@ function InternalApp({
                               ) : null}
                             </td>
                             <td>
-                              {payment.paymentSource === 'shopify_draft_order'
-                                ? 'Shopify Draft Orders'
-                                : 'Inventory tool'}
+                              Manual sales order entry
                             </td>
                             <td>{payment.salesRep || payment.salesRepEmail || 'Unassigned'}</td>
                             <td>

@@ -105,9 +105,12 @@ import {
   normalizeSalesOrderShippingSpeed,
 } from '../shared/sales-order-shipping-policy.mjs'
 import {
+  buildCanonicalSalesSummary,
+  buildSalesReconciliationChecks,
   classifyPaidInvoiceSource,
+  classifySalesReportingCategory,
   getSuccessfulPaymentTimestamp,
-  isWebsiteOrderSource,
+  getSalesOrderStatusBucket,
 } from '../shared/sales-payment-reconciliation.mjs'
 import {
   isTimestampInsideSalesDashboardWindow,
@@ -1360,9 +1363,17 @@ app.get(
         through: getQueryParam(request, 'through'),
       })
       const report = await getSalesPaymentReconciliation(requestedWindow)
+      const completedOrders = filterCompletedSalesOrdersForSession(
+        report.completedOrders,
+        request.salesPortalSession,
+      )
+      const summary = buildCanonicalSalesSummary(completedOrders)
       response.json({
         ...report,
         orders: filterSalesPaymentsForSession(report.orders, request.salesPortalSession),
+        completedOrders,
+        summary,
+        reconciliation: buildSalesReconciliationChecks(completedOrders, summary),
         websiteOrders: filterWebsiteOrdersForSession(
           report.websiteOrders,
           request.salesPortalSession,
@@ -3160,6 +3171,20 @@ function filterSalesPaymentsForSession(payments, session) {
 
   return rows.filter(
     (payment) => getSalesPortalOwnerKey(payment?.salesRep, payment?.salesRepEmail) === owner.key,
+  )
+}
+
+function filterCompletedSalesOrdersForSession(orders, session) {
+  const rows = arrayFromPayload(orders)
+  if (!session || session.isAdmin) return rows
+
+  const owner = getSalesPortalOwnerForEmail(session.email)
+  if (!owner || session.role === 'production') return []
+
+  return rows.filter(
+    (order) =>
+      order?.reportingCategory === 'manual_sales_order_entry' &&
+      getSalesPortalOwnerKey(order?.salesRep, order?.salesRepEmail) === owner.key,
   )
 }
 
@@ -5880,6 +5905,9 @@ async function listOrdersUpdatedSince(sinceDate) {
               createdAt
               updatedAt
               sourceName
+              app {
+                name
+              }
               displayFinancialStatus
               tags
               customAttributes {
@@ -5887,6 +5915,30 @@ async function listOrdersUpdatedSince(sinceDate) {
                 value
               }
               currentTotalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              currentSubtotalPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              currentShippingPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              currentTotalTaxSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              currentTotalDiscountsSet {
                 shopMoney {
                   amount
                   currencyCode
@@ -6106,27 +6158,128 @@ function hasInventorySalesPaymentMarker(order, orderAttributes, matchingJobs) {
   )
 }
 
-function mapOrderToSalesPayment(order, orderJobs, completedDraftOrder) {
+function getCanonicalSalesPortalOwner(name, email) {
+  return getSalesPortalOwnerForEmail(email) ?? getSalesPortalOwnerForName(name)
+}
+
+function getCanonicalSubmissionMatchKeys(record) {
+  return [
+    record?.key,
+    record?.orderId,
+    record?.orderName,
+    record?.paidOrderName,
+    record?.draftOrderId,
+    record?.draftOrderName,
+    record?.intakeId,
+    record?.shopifyOrderId,
+    record?.shopifyOrderName,
+    record?.shopifyDraftOrderId,
+    record?.shopifyDraftOrderName,
+    record?.id,
+    record?.name,
+    record?.order?.id,
+    record?.order?.name,
+  ]
+    .map((value) => cleanString(value).toLowerCase())
+    .filter(Boolean)
+}
+
+function buildCanonicalSubmissionsByKey(submissions) {
+  const submissionsByKey = new Map()
+  for (const submission of arrayFromPayload(submissions)) {
+    for (const key of getCanonicalSubmissionMatchKeys(submission)) {
+      submissionsByKey.set(key, submission)
+    }
+  }
+  return submissionsByKey
+}
+
+function getMatchingCanonicalSubmission(
+  order,
+  orderAttributes,
+  matchingJobs,
+  completedDraftOrder,
+  submissionsByKey,
+) {
+  const keys = [
+    ...getCanonicalSubmissionMatchKeys(order),
+    ...getCanonicalSubmissionMatchKeys(completedDraftOrder),
+    ...getCanonicalSubmissionMatchKeys({
+      intakeId: orderAttributes?.trinity_intake_id,
+      draftOrderId: orderAttributes?.trinity_draft_order_id,
+    }),
+    ...matchingJobs.flatMap((job) => getCanonicalSubmissionMatchKeys(job)),
+  ]
+  return keys.map((key) => submissionsByKey.get(key)).find(Boolean) ?? null
+}
+
+function readShopMoney(moneyBag) {
+  const amount = Number(moneyBag?.shopMoney?.amount)
+  return Number.isFinite(amount) ? amount : 0
+}
+
+function mapOrderToCanonicalCompletedOrder(
+  order,
+  orderJobs,
+  completedDraftOrder,
+  submissionsByKey,
+) {
   const orderAttributes = attributesToRecord(order?.customAttributes)
   const matchingJobs = getSalesPaymentOrderJobs(order, orderJobs, orderAttributes)
+  const firstJob = matchingJobs[0] ?? {}
   const hasInventoryMarker = hasInventorySalesPaymentMarker(
     order,
     orderAttributes,
     matchingJobs,
   )
-  const paymentSource = classifyPaidInvoiceSource(order?.sourceName, hasInventoryMarker)
-  if (!paymentSource) return null
-
+  const reportingCategory = classifySalesReportingCategory({
+    sourceName: order?.sourceName,
+    appName: order?.app?.name,
+    hasInventoryMarker,
+  })
+  const submission = getMatchingCanonicalSubmission(
+    order,
+    orderAttributes,
+    matchingJobs,
+    completedDraftOrder,
+    submissionsByKey,
+  )
+  const directSalesRep =
+    cleanString(orderAttributes.trinity_sales_rep) || cleanString(firstJob?.salesRep)
+  const directSalesRepEmail =
+    normalizeEmail(orderAttributes.trinity_sales_rep_email) ||
+    normalizeEmail(firstJob?.salesRepEmail)
+  const inheritedSalesRep = directSalesRep || cleanString(submission?.salesRep)
+  const inheritedSalesRepEmail =
+    directSalesRepEmail || normalizeEmail(submission?.salesRepEmail)
+  const canonicalOwner = getCanonicalSalesPortalOwner(
+    inheritedSalesRep,
+    inheritedSalesRepEmail,
+  )
+  const salesRep = canonicalOwner?.label ?? canonicalOwner?.name ?? inheritedSalesRep
+  const salesRepEmail = normalizeEmail(canonicalOwner?.email) || inheritedSalesRepEmail
+  const salesRepResolution = canonicalOwner
+    ? directSalesRep || directSalesRepEmail
+      ? 'canonical'
+      : 'inherited'
+    : inheritedSalesRep || inheritedSalesRepEmail
+      ? 'unresolved'
+      : 'unassigned'
   const money =
     order?.currentTotalPriceSet?.shopMoney ?? order?.totalPriceSet?.shopMoney ?? {}
   const total = Number(money.amount)
-  const paidAt = getSuccessfulPaymentTimestamp(order?.transactions, total)
-  if (!paidAt) return null
-
-  const firstJob = matchingJobs[0] ?? {}
+  const safeTotal = Number.isFinite(total) ? total : 0
+  const paidAt = getSuccessfulPaymentTimestamp(order?.transactions, safeTotal)
+  const financialStatus = cleanString(order?.displayFinancialStatus)
+  const statusBucket = getSalesOrderStatusBucket({
+    financialStatus,
+    total: safeTotal,
+    paidAt,
+  })
   const submittedAt = getEarlierOrderTimestamp(
     orderAttributes.trinity_order_submitted_at,
     ...matchingJobs.flatMap((job) => [job?.orderSubmittedAt, job?.createdAt]),
+    submission?.submittedAt,
     completedDraftOrder?.createdAt,
     order?.createdAt,
   )
@@ -6139,50 +6292,94 @@ function mapOrderToSalesPayment(order, orderJobs, completedDraftOrder) {
       cleanString(orderAttributes.trinity_draft_order_id) ||
       cleanString(completedDraftOrder?.id),
     draftOrderName:
-      cleanString(firstJob?.shopifyDraftOrderName) || cleanString(completedDraftOrder?.name),
-    intakeId: cleanString(firstJob?.intakeId) || cleanString(orderAttributes.trinity_intake_id),
-    salesRep: cleanString(orderAttributes.trinity_sales_rep) || cleanString(firstJob?.salesRep),
-    salesRepEmail:
-      normalizeEmail(orderAttributes.trinity_sales_rep_email) ||
-      normalizeEmail(firstJob?.salesRepEmail),
+      cleanString(firstJob?.shopifyDraftOrderName) ||
+      cleanString(submission?.draftOrderName) ||
+      cleanString(completedDraftOrder?.name),
+    intakeId:
+      cleanString(firstJob?.intakeId) ||
+      cleanString(orderAttributes.trinity_intake_id) ||
+      cleanString(submission?.key),
+    reportingCategory,
+    sourceName: cleanString(order?.sourceName),
+    appName: cleanString(order?.app?.name),
+    sourceDetail:
+      [cleanString(order?.app?.name), cleanString(order?.sourceName)].filter(Boolean).join(' · ') ||
+      'Unknown source',
+    orderCreatedAt: cleanString(order?.createdAt),
+    submittedAt,
+    paidAt,
+    isPaid: Boolean(paidAt) || statusBucket === 'comped',
+    isComped: statusBucket === 'comped',
+    financialStatus,
+    statusBucket,
+    currentOrderValue: safeTotal,
+    total: safeTotal,
+    subtotal: readShopMoney(order?.currentSubtotalPriceSet),
+    shipping: readShopMoney(order?.currentShippingPriceSet),
+    tax: readShopMoney(order?.currentTotalTaxSet),
+    discounts: readShopMoney(order?.currentTotalDiscountsSet),
+    currency: cleanString(money.currencyCode) || shopCurrencyCode,
+    salesRep,
+    salesRepEmail,
+    salesRepResolution,
+    submissionMatched: Boolean(submission),
     customerName:
       cleanString(firstJob?.playerName) ||
       cleanString(firstJob?.customerName) ||
+      cleanString(submission?.customerName) ||
       cleanString(order?.customer?.displayName),
     payerName:
       cleanString(firstJob?.billingName) ||
+      cleanString(submission?.payerName) ||
       cleanString(order?.billingAddress?.name) ||
       cleanString(order?.billingAddress?.company) ||
       cleanString(order?.customer?.displayName),
-    submittedAt,
-    paidAt,
-    total: Number.isFinite(total) ? total : 0,
-    currency: cleanString(money.currencyCode) || shopCurrencyCode,
-    financialStatus: cleanString(order?.displayFinancialStatus),
-    paymentSource,
+    manualEntrySource:
+      reportingCategory === 'manual_sales_order_entry'
+        ? classifyPaidInvoiceSource(order?.sourceName, hasInventoryMarker)
+        : '',
   }
 }
 
-function mapOrderToWebsiteOrder(order) {
-  if (!isWebsiteOrderSource(order?.sourceName)) return null
-
-  const money =
-    order?.currentTotalPriceSet?.shopMoney ?? order?.totalPriceSet?.shopMoney ?? {}
-  const total = Number(money.amount)
+function mapCanonicalCompletedOrderToSalesPayment(order) {
+  if (
+    order?.reportingCategory !== 'manual_sales_order_entry' ||
+    !order?.paidAt
+  ) {
+    return null
+  }
 
   return {
-    orderId: cleanString(order?.id),
-    orderName: cleanString(order?.name),
-    sourceName: cleanString(order?.sourceName),
-    customerName:
-      cleanString(order?.customer?.displayName) ||
-      cleanString(order?.billingAddress?.name) ||
-      cleanString(order?.email),
-    orderedAt: cleanString(order?.createdAt),
-    paidAt: getSuccessfulPaymentTimestamp(order?.transactions, total),
-    total: Number.isFinite(total) ? total : 0,
-    currency: cleanString(money.currencyCode) || shopCurrencyCode,
-    financialStatus: cleanString(order?.displayFinancialStatus),
+    orderId: order.orderId,
+    orderName: order.orderName,
+    draftOrderId: order.draftOrderId,
+    draftOrderName: order.draftOrderName,
+    intakeId: order.intakeId,
+    salesRep: order.salesRep,
+    salesRepEmail: order.salesRepEmail,
+    customerName: order.customerName,
+    payerName: order.payerName,
+    submittedAt: order.submittedAt,
+    paidAt: order.paidAt,
+    total: order.currentOrderValue,
+    currency: order.currency,
+    financialStatus: order.financialStatus,
+    paymentSource: order.manualEntrySource,
+  }
+}
+
+function mapCanonicalCompletedOrderToWebsiteOrder(order) {
+  if (order?.reportingCategory !== 'online_store') return null
+  return {
+    orderId: order.orderId,
+    orderName: order.orderName,
+    sourceName: order.sourceName,
+    customerName: order.customerName || order.payerName,
+    orderedAt: order.orderCreatedAt,
+    paidAt: order.paidAt,
+    total: order.currentOrderValue,
+    currency: order.currency,
+    financialStatus: order.financialStatus,
   }
 }
 
@@ -6215,24 +6412,6 @@ async function getSalesPaymentReconciliation(
         .filter((draftOrder) => cleanString(draftOrder?.order?.id))
         .map((draftOrder) => [cleanString(draftOrder.order.id), draftOrder]),
     )
-    const payments = orders
-      .map((order) =>
-        mapOrderToSalesPayment(
-          order,
-          state.orderJobs,
-          completedDraftsByOrderId.get(cleanString(order?.id)),
-        ),
-      )
-      .filter((payment) =>
-        isTimestampInsideSalesDashboardWindow(payment?.paidAt, requestedWindow),
-      )
-      .sort((first, second) => Date.parse(second.paidAt) - Date.parse(first.paidAt))
-    const websiteOrders = orders
-      .map((order) => mapOrderToWebsiteOrder(order))
-      .filter((order) =>
-        isTimestampInsideSalesDashboardWindow(order?.orderedAt, requestedWindow),
-      )
-      .sort((first, second) => Date.parse(second.orderedAt) - Date.parse(first.orderedAt))
     const submissions = buildUnifiedSalesSubmissions(
       state.orderJobs,
       submittedDraftOrders,
@@ -6240,6 +6419,35 @@ async function getSalesPaymentReconciliation(
     ).filter((submission) =>
       isTimestampInsideSalesDashboardWindow(submission?.submittedAt, requestedWindow),
     )
+    const submissionsByKey = buildCanonicalSubmissionsByKey(submissions)
+    const canonicalOrders = orders.map((order) =>
+      mapOrderToCanonicalCompletedOrder(
+        order,
+        state.orderJobs,
+        completedDraftsByOrderId.get(cleanString(order?.id)),
+        submissionsByKey,
+      ),
+    )
+    const completedOrders = canonicalOrders
+      .filter((order) =>
+        isTimestampInsideSalesDashboardWindow(order?.orderCreatedAt, requestedWindow),
+      )
+      .sort(
+        (first, second) =>
+          Date.parse(second.orderCreatedAt) - Date.parse(first.orderCreatedAt),
+      )
+    const payments = canonicalOrders
+      .map((order) => mapCanonicalCompletedOrderToSalesPayment(order))
+      .filter((payment) =>
+        isTimestampInsideSalesDashboardWindow(payment?.paidAt, requestedWindow),
+      )
+      .sort((first, second) => Date.parse(second.paidAt) - Date.parse(first.paidAt))
+    const websiteOrders = completedOrders
+      .map((order) => mapCanonicalCompletedOrderToWebsiteOrder(order))
+      .filter(Boolean)
+      .sort((first, second) => Date.parse(second.orderedAt) - Date.parse(first.orderedAt))
+    const summary = buildCanonicalSalesSummary(completedOrders)
+    const reconciliation = buildSalesReconciliationChecks(completedOrders, summary)
     const teamLeaderboardRows = buildSalesLeaderboardFromSubmissions(
       submissions,
       salesPortalTeamMembers,
@@ -6257,9 +6465,12 @@ async function getSalesPaymentReconciliation(
       since: since?.toISOString() ?? '',
       through: through.toISOString(),
       refreshedAt: new Date().toISOString(),
-      source: 'shopify_successful_sale_capture_transactions',
+      source: 'shopify_orders_and_successful_sale_capture_transactions',
       submissions,
       orders: payments,
+      completedOrders,
+      summary,
+      reconciliation,
       websiteOrders,
       teamLeaderboardRows,
     }
