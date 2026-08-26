@@ -1,0 +1,10 @@
+api_version = "2025-10"
+[[extensions]]
+name = "t:name"
+handle = "production-attachment-link"
+type = "ui_extension"
+uid = "a60ef0f9-deeb-725e-f482-7bb7ae4a822ad195846d"
+
+[[extensions.targeting]]
+module = "./src/BlockExtension.jsx"
+target = "admin.order-details.block.render"

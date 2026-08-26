@@ -14,11 +14,13 @@ import {
   getDerivedCrmContactDeleteIds,
   getSalesOrderBoundsError,
   isFreshShopifyLaunchTimestamp,
+  isAllowedShopifyAttachmentUrl,
   isManualCrmContactRecord,
   isOrderJobLinkedToCrmContacts,
   isSalesPortalSessionCurrent,
   sanitizeOrderJobForTeamReporting,
 } from './security-policy.mjs'
+import { isShopifyOrderGid, parseOrderAttachmentLink } from './admin-order-attachment-link.mjs'
 import {
   getKnownProPlayerAffiliation,
   normalizePlayerNameKey,
@@ -782,7 +784,6 @@ const resourceConfigs = {
 
 let definitionPromise = null
 let orderProductionAttachmentMetafieldDefinitionPromise = null
-let orderProductionAttachmentLinkMetafieldDefinitionPromise = null
 let stateCacheValue = null
 let stateCacheExpiresAt = 0
 let stateCachePromise = null
@@ -1506,6 +1507,70 @@ app.post('/api/analytics/events', async (request, response) => {
 app.get('/api/internal-session', requireInternalAccess, (_request, response) => {
   response.set('Cache-Control', 'no-store')
   response.json({ ok: true })
+})
+
+function setAdminExtensionCorsHeaders(response) {
+  response.set('Access-Control-Allow-Origin', 'https://extensions.shopifycdn.com')
+  response.set('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+  response.set('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  response.set('Vary', 'Origin')
+}
+
+app.options('/api/order-attachment-link', (_request, response) => {
+  setAdminExtensionCorsHeaders(response)
+  response.status(204).end()
+})
+
+app.get('/api/order-attachment-link', (request, response, next) => {
+  setAdminExtensionCorsHeaders(response)
+  next()
+}, requireInternalAccess, async (request, response) => {
+  try {
+    response.set('Cache-Control', 'no-store')
+
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({
+        ok: false,
+        message: 'Shopify credentials are not configured on this server.',
+      })
+      return
+    }
+
+    const orderId = cleanString(request.query?.orderId)
+    if (!isShopifyOrderGid(orderId)) {
+      response.status(400).json({ ok: false, message: 'A valid Shopify order is required.' })
+      return
+    }
+
+    const result = await shopifyGraphQL(
+      `
+        query GetOrderProductionAttachment($id: ID!) {
+          order(id: $id) {
+            attachment: metafield(namespace: "trinity", key: "internal_attachment") {
+              value
+            }
+          }
+        }
+      `,
+      { id: orderId },
+    )
+    const attachment = parseOrderAttachmentLink(
+      orderId,
+      result?.data?.order?.attachment?.value,
+    )
+
+    if (!attachment || !isAllowedShopifyAttachmentUrl(attachment.downloadUrl)) {
+      response.status(404).json({ ok: false, message: 'No production attachment is available.' })
+      return
+    }
+
+    response.json({ ok: true, attachment })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message: error instanceof Error ? error.message : 'Could not load the production attachment.',
+    })
+  }
 })
 
 app.get('/api/state', requireInternalAccess, async (_request, response) => {
@@ -5175,7 +5240,6 @@ async function ensureDefinitionsInternal() {
   }
 
   await ensureOrderProductionAttachmentMetafieldDefinition()
-  await ensureOrderProductionAttachmentLinkMetafieldDefinition()
 }
 
 async function ensureOrderProductionAttachmentMetafieldDefinition() {
@@ -5298,132 +5362,6 @@ async function ensureOrderProductionAttachmentMetafieldDefinitionInternal() {
   if (meaningfulPinErrors.length > 0) {
     throw new Error(
       `Order production attachment pin error: ${meaningfulPinErrors
-        .map((item) => item.message)
-        .join(', ')}`,
-    )
-  }
-}
-
-async function ensureOrderProductionAttachmentLinkMetafieldDefinition() {
-  if (!orderProductionAttachmentLinkMetafieldDefinitionPromise) {
-    orderProductionAttachmentLinkMetafieldDefinitionPromise =
-      ensureOrderProductionAttachmentLinkMetafieldDefinitionInternal().catch((error) => {
-        orderProductionAttachmentLinkMetafieldDefinitionPromise = null
-        throw error
-      })
-  }
-
-  return orderProductionAttachmentLinkMetafieldDefinitionPromise
-}
-
-async function ensureOrderProductionAttachmentLinkMetafieldDefinitionInternal() {
-  const identifier = {
-    namespace: 'trinity',
-    key: 'production_attachment_link',
-    ownerType: 'ORDER',
-  }
-  const existingResult = await runWithShopifyRetry(() =>
-    shopifyGraphQL(
-      `
-        query OrderProductionAttachmentLinkMetafieldDefinition(
-          $identifier: MetafieldDefinitionIdentifierInput!
-        ) {
-          metafieldDefinition(identifier: $identifier) {
-            id
-            type {
-              name
-            }
-          }
-        }
-      `,
-      { identifier },
-    ),
-  )
-  const existingDefinition = existingResult?.data?.metafieldDefinition ?? null
-
-  if (existingDefinition && existingDefinition.type?.name !== 'link') {
-    throw new Error(
-      'The existing trinity.production_attachment_link order metafield must use the link type.',
-    )
-  }
-
-  if (!existingDefinition) {
-    const createResult = await runWithShopifyRetry(() =>
-      shopifyGraphQL(
-        `
-          mutation CreateOrderProductionAttachmentLinkMetafieldDefinition(
-            $definition: MetafieldDefinitionInput!
-          ) {
-            metafieldDefinitionCreate(definition: $definition) {
-              createdDefinition {
-                id
-                type {
-                  name
-                }
-              }
-              userErrors {
-                field
-                message
-                code
-              }
-            }
-          }
-        `,
-        {
-          definition: {
-            ...identifier,
-            name: 'View / print attachment',
-            description: 'One-click internal link for viewing or printing this production attachment.',
-            type: 'link',
-            pin: true,
-            access: {
-              admin: 'MERCHANT_READ',
-              storefront: 'NONE',
-            },
-          },
-        },
-      ),
-    )
-    const errors = createResult?.data?.metafieldDefinitionCreate?.userErrors ?? []
-    throwIfRetryableShopifyUserErrors(errors, 'Order production attachment link definition error')
-    if (errors.length > 0) {
-      throw new Error(
-        `Order production attachment link definition error: ${errors
-          .map((item) => item.message)
-          .join(', ')}`,
-      )
-    }
-  }
-
-  const pinResult = await runWithShopifyRetry(() =>
-    shopifyGraphQL(
-      `
-        mutation PinOrderProductionAttachmentLinkMetafieldDefinition(
-          $identifier: MetafieldDefinitionIdentifierInput!
-        ) {
-          metafieldDefinitionPin(identifier: $identifier) {
-            pinnedDefinition {
-              id
-            }
-            userErrors {
-              field
-              message
-              code
-            }
-          }
-        }
-      `,
-      { identifier },
-    ),
-  )
-  const pinErrors = pinResult?.data?.metafieldDefinitionPin?.userErrors ?? []
-  throwIfRetryableShopifyUserErrors(pinErrors, 'Order production attachment link pin error')
-  const meaningfulPinErrors = pinErrors.filter(
-    (item) => !/already pinned/i.test(String(item?.message ?? '')),
-  )
-  if (meaningfulPinErrors.length > 0) {
-    throw new Error(
-      `Order production attachment link pin error: ${meaningfulPinErrors
         .map((item) => item.message)
         .join(', ')}`,
     )
@@ -7189,9 +7127,6 @@ async function syncOrderJobMetafields(orderJobs) {
   if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.shopifyFileId))) {
     await ensureOrderProductionAttachmentMetafieldDefinition()
   }
-  if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.downloadUrl))) {
-    await ensureOrderProductionAttachmentLinkMetafieldDefinition()
-  }
 
   for (const job of jobsWithOrders) {
     const ownerId = toShopifyGid('Order', job.shopifyOrderId)
@@ -7245,18 +7180,6 @@ async function syncOrderJobMetafields(orderJobs) {
             ownerId,
             type: 'file_reference',
             value: job.internalAttachment.shopifyFileId,
-          }
-        : null,
-      job.internalAttachment?.downloadUrl
-        ? {
-            namespace: 'trinity',
-            key: 'production_attachment_link',
-            ownerId,
-            type: 'link',
-            value: JSON.stringify({
-              text: 'View / print attachment',
-              url: job.internalAttachment.downloadUrl,
-            }),
           }
         : null,
       normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications).length > 0
@@ -7342,18 +7265,6 @@ async function syncDraftOrderJobAttachmentMetafields(orderJobs) {
             type: 'file_reference',
             value: job.internalAttachment.shopifyFileId,
           },
-          job.internalAttachment?.downloadUrl
-            ? {
-                namespace: 'trinity',
-                key: 'production_attachment_link',
-                ownerId,
-                type: 'link',
-                value: JSON.stringify({
-                  text: 'View / print attachment',
-                  url: job.internalAttachment.downloadUrl,
-                }),
-              }
-            : null,
         ].filter(Boolean),
       },
     )
