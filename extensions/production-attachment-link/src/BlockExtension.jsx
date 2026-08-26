@@ -2,13 +2,21 @@ import "@shopify/ui-extensions/preact";
 import {render} from 'preact';
 import {useEffect, useState} from 'preact/hooks';
 
+const appBackendOrigin = 'https://trinity-billet-inventory.onrender.com';
+
 export default async () => {
   render(<Extension />, document.body);
 }
 
 async function getOrderAttachment(orderId) {
+  const token = await shopify.auth.idToken();
   const response = await fetch(
-    `/api/order-attachment-link?orderId=${encodeURIComponent(orderId)}`,
+    `${appBackendOrigin}/api/order-attachment-link?orderId=${encodeURIComponent(orderId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    },
   );
 
   if (response.status === 404) return null;

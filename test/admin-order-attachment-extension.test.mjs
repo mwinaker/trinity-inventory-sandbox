@@ -17,7 +17,10 @@ const extensionConfig = fs.readFileSync(
 
 test('the production attachment block renders on paid Shopify order details', () => {
   assert.match(extensionConfig, /target = "admin\.order-details\.block\.render"/)
+  assert.match(extensionSource, /shopify\.auth\.idToken\(\)/)
+  assert.match(extensionSource, /https:\/\/trinity-billet-inventory\.onrender\.com/)
   assert.match(extensionSource, /\/api\/order-attachment-link\?orderId=/)
+  assert.match(extensionSource, /Authorization: `Bearer \$\{token\}`/)
   assert.match(extensionSource, /<s-link/)
   assert.match(extensionSource, /href=\{attachment\.downloadUrl\}/)
   assert.match(extensionSource, /target="_blank"/)
