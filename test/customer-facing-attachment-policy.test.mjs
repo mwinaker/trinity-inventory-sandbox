@@ -49,6 +49,7 @@ test('order-job metafield sync provides Flow with the internal attachment URL', 
 
 test('paid Shopify orders receive a pinned internal file reference for production attachments', () => {
   const syncSource = extractFunctionSource('syncOrderJobMetafields')
+  const draftSyncSource = extractFunctionSource('syncDraftOrderJobAttachmentMetafields')
   const definitionSource = extractFunctionSource(
     'ensureOrderProductionAttachmentMetafieldDefinitionInternal',
   )
@@ -60,6 +61,10 @@ test('paid Shopify orders receive a pinned internal file reference for productio
   assert.equal(definitionSource.includes("pin: true"), true)
   assert.equal(definitionSource.includes("admin: 'MERCHANT_READ'"), true)
   assert.equal(definitionSource.includes("storefront: 'NONE'"), true)
+  assert.equal(draftSyncSource.includes("toShopifyGid('DraftOrder'"), true)
+  assert.equal(draftSyncSource.includes("key: 'production_attachment'"), true)
+  assert.equal(draftSyncSource.includes("type: 'file_reference'"), true)
+  assert.equal(draftSyncSource.includes('value: job.internalAttachment.shopifyFileId'), true)
 })
 
 test('internal order notifications include a prominent Shopify Files download link', () => {

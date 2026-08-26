@@ -7055,6 +7055,8 @@ async function registerWebhook(topic, uri) {
 }
 
 async function syncOrderJobMetafields(orderJobs) {
+  await syncDraftOrderJobAttachmentMetafields(orderJobs)
+
   const jobsWithOrders = orderJobs.filter((job) => job.shopifyOrderId)
   if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.shopifyFileId))) {
     await ensureOrderProductionAttachmentMetafieldDefinition()
@@ -7159,6 +7161,52 @@ async function syncOrderJobMetafields(orderJobs) {
     const errors = result?.data?.metafieldsSet?.userErrors ?? []
     if (errors.length > 0) {
       throw new Error(`Order metafield sync error: ${errors.map((item) => item.message).join(', ')}`)
+    }
+  }
+}
+
+async function syncDraftOrderJobAttachmentMetafields(orderJobs) {
+  const jobsWithDraftAttachments = orderJobs.filter(
+    (job) =>
+      cleanString(job.shopifyDraftOrderId) && cleanString(job.internalAttachment?.shopifyFileId),
+  )
+
+  for (const job of jobsWithDraftAttachments) {
+    const ownerId = toShopifyGid('DraftOrder', job.shopifyDraftOrderId)
+    const result = await shopifyGraphQL(
+      `
+        mutation SetDraftOrderAttachmentMetafield($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields {
+              key
+              namespace
+              value
+            }
+            userErrors {
+              field
+              message
+              code
+            }
+          }
+        }
+      `,
+      {
+        metafields: [
+          {
+            namespace: 'trinity',
+            key: 'production_attachment',
+            ownerId,
+            type: 'file_reference',
+            value: job.internalAttachment.shopifyFileId,
+          },
+        ],
+      },
+    )
+    const errors = result?.data?.metafieldsSet?.userErrors ?? []
+    if (errors.length > 0) {
+      throw new Error(
+        `Draft order attachment metafield sync error: ${errors.map((item) => item.message).join(', ')}`,
+      )
     }
   }
 }
