@@ -782,7 +782,7 @@ const resourceConfigs = {
 
 let definitionPromise = null
 let orderProductionAttachmentMetafieldDefinitionPromise = null
-let orderProductionAttachmentOpenUrlMetafieldDefinitionPromise = null
+let orderProductionAttachmentLinkMetafieldDefinitionPromise = null
 let stateCacheValue = null
 let stateCacheExpiresAt = 0
 let stateCachePromise = null
@@ -5175,7 +5175,7 @@ async function ensureDefinitionsInternal() {
   }
 
   await ensureOrderProductionAttachmentMetafieldDefinition()
-  await ensureOrderProductionAttachmentOpenUrlMetafieldDefinition()
+  await ensureOrderProductionAttachmentLinkMetafieldDefinition()
 }
 
 async function ensureOrderProductionAttachmentMetafieldDefinition() {
@@ -5304,28 +5304,28 @@ async function ensureOrderProductionAttachmentMetafieldDefinitionInternal() {
   }
 }
 
-async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinition() {
-  if (!orderProductionAttachmentOpenUrlMetafieldDefinitionPromise) {
-    orderProductionAttachmentOpenUrlMetafieldDefinitionPromise =
-      ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal().catch((error) => {
-        orderProductionAttachmentOpenUrlMetafieldDefinitionPromise = null
+async function ensureOrderProductionAttachmentLinkMetafieldDefinition() {
+  if (!orderProductionAttachmentLinkMetafieldDefinitionPromise) {
+    orderProductionAttachmentLinkMetafieldDefinitionPromise =
+      ensureOrderProductionAttachmentLinkMetafieldDefinitionInternal().catch((error) => {
+        orderProductionAttachmentLinkMetafieldDefinitionPromise = null
         throw error
       })
   }
 
-  return orderProductionAttachmentOpenUrlMetafieldDefinitionPromise
+  return orderProductionAttachmentLinkMetafieldDefinitionPromise
 }
 
-async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal() {
+async function ensureOrderProductionAttachmentLinkMetafieldDefinitionInternal() {
   const identifier = {
     namespace: 'trinity',
-    key: 'production_attachment_open_url',
+    key: 'production_attachment_link',
     ownerType: 'ORDER',
   }
   const existingResult = await runWithShopifyRetry(() =>
     shopifyGraphQL(
       `
-        query OrderProductionAttachmentOpenUrlMetafieldDefinition(
+        query OrderProductionAttachmentLinkMetafieldDefinition(
           $identifier: MetafieldDefinitionIdentifierInput!
         ) {
           metafieldDefinition(identifier: $identifier) {
@@ -5341,9 +5341,9 @@ async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal
   )
   const existingDefinition = existingResult?.data?.metafieldDefinition ?? null
 
-  if (existingDefinition && existingDefinition.type?.name !== 'url') {
+  if (existingDefinition && existingDefinition.type?.name !== 'link') {
     throw new Error(
-      'The existing trinity.production_attachment_open_url order metafield must use the url type.',
+      'The existing trinity.production_attachment_link order metafield must use the link type.',
     )
   }
 
@@ -5351,7 +5351,7 @@ async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal
     const createResult = await runWithShopifyRetry(() =>
       shopifyGraphQL(
         `
-          mutation CreateOrderProductionAttachmentOpenUrlMetafieldDefinition(
+          mutation CreateOrderProductionAttachmentLinkMetafieldDefinition(
             $definition: MetafieldDefinitionInput!
           ) {
             metafieldDefinitionCreate(definition: $definition) {
@@ -5372,9 +5372,9 @@ async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal
         {
           definition: {
             ...identifier,
-            name: 'Open / print attachment',
-            description: 'Direct internal link for viewing or printing this production attachment.',
-            type: 'url',
+            name: 'View / print attachment',
+            description: 'One-click internal link for viewing or printing this production attachment.',
+            type: 'link',
             pin: true,
             access: {
               admin: 'MERCHANT_READ',
@@ -5385,10 +5385,10 @@ async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal
       ),
     )
     const errors = createResult?.data?.metafieldDefinitionCreate?.userErrors ?? []
-    throwIfRetryableShopifyUserErrors(errors, 'Order production attachment URL definition error')
+    throwIfRetryableShopifyUserErrors(errors, 'Order production attachment link definition error')
     if (errors.length > 0) {
       throw new Error(
-        `Order production attachment URL definition error: ${errors
+        `Order production attachment link definition error: ${errors
           .map((item) => item.message)
           .join(', ')}`,
       )
@@ -5398,7 +5398,7 @@ async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal
   const pinResult = await runWithShopifyRetry(() =>
     shopifyGraphQL(
       `
-        mutation PinOrderProductionAttachmentOpenUrlMetafieldDefinition(
+        mutation PinOrderProductionAttachmentLinkMetafieldDefinition(
           $identifier: MetafieldDefinitionIdentifierInput!
         ) {
           metafieldDefinitionPin(identifier: $identifier) {
@@ -5417,13 +5417,13 @@ async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal
     ),
   )
   const pinErrors = pinResult?.data?.metafieldDefinitionPin?.userErrors ?? []
-  throwIfRetryableShopifyUserErrors(pinErrors, 'Order production attachment URL pin error')
+  throwIfRetryableShopifyUserErrors(pinErrors, 'Order production attachment link pin error')
   const meaningfulPinErrors = pinErrors.filter(
     (item) => !/already pinned/i.test(String(item?.message ?? '')),
   )
   if (meaningfulPinErrors.length > 0) {
     throw new Error(
-      `Order production attachment URL pin error: ${meaningfulPinErrors
+      `Order production attachment link pin error: ${meaningfulPinErrors
         .map((item) => item.message)
         .join(', ')}`,
     )
@@ -7190,7 +7190,7 @@ async function syncOrderJobMetafields(orderJobs) {
     await ensureOrderProductionAttachmentMetafieldDefinition()
   }
   if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.downloadUrl))) {
-    await ensureOrderProductionAttachmentOpenUrlMetafieldDefinition()
+    await ensureOrderProductionAttachmentLinkMetafieldDefinition()
   }
 
   for (const job of jobsWithOrders) {
@@ -7250,10 +7250,13 @@ async function syncOrderJobMetafields(orderJobs) {
       job.internalAttachment?.downloadUrl
         ? {
             namespace: 'trinity',
-            key: 'production_attachment_open_url',
+            key: 'production_attachment_link',
             ownerId,
-            type: 'url',
-            value: job.internalAttachment.downloadUrl,
+            type: 'link',
+            value: JSON.stringify({
+              text: 'View / print attachment',
+              url: job.internalAttachment.downloadUrl,
+            }),
           }
         : null,
       normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications).length > 0
@@ -7342,10 +7345,13 @@ async function syncDraftOrderJobAttachmentMetafields(orderJobs) {
           job.internalAttachment?.downloadUrl
             ? {
                 namespace: 'trinity',
-                key: 'production_attachment_open_url',
+                key: 'production_attachment_link',
                 ownerId,
-                type: 'url',
-                value: job.internalAttachment.downloadUrl,
+                type: 'link',
+                value: JSON.stringify({
+                  text: 'View / print attachment',
+                  url: job.internalAttachment.downloadUrl,
+                }),
               }
             : null,
         ].filter(Boolean),

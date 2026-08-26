@@ -53,8 +53,8 @@ test('paid Shopify orders receive a pinned internal file reference for productio
   const definitionSource = extractFunctionSource(
     'ensureOrderProductionAttachmentMetafieldDefinitionInternal',
   )
-  const openUrlDefinitionSource = extractFunctionSource(
-    'ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal',
+  const linkDefinitionSource = extractFunctionSource(
+    'ensureOrderProductionAttachmentLinkMetafieldDefinitionInternal',
   )
 
   assert.equal(syncSource.includes("key: 'production_attachment'"), true)
@@ -68,14 +68,17 @@ test('paid Shopify orders receive a pinned internal file reference for productio
   assert.equal(draftSyncSource.includes("key: 'production_attachment'"), true)
   assert.equal(draftSyncSource.includes("type: 'file_reference'"), true)
   assert.equal(draftSyncSource.includes('value: job.internalAttachment.shopifyFileId'), true)
-  assert.equal(syncSource.includes("key: 'production_attachment_open_url'"), true)
-  assert.equal(syncSource.includes("type: 'url'"), true)
-  assert.equal(syncSource.includes('value: job.internalAttachment.downloadUrl'), true)
-  assert.equal(openUrlDefinitionSource.includes("ownerType: 'ORDER'"), true)
-  assert.equal(openUrlDefinitionSource.includes("pin: true"), true)
-  assert.equal(openUrlDefinitionSource.includes("storefront: 'NONE'"), true)
-  assert.equal(draftSyncSource.includes("key: 'production_attachment_open_url'"), true)
-  assert.equal(draftSyncSource.includes("type: 'url'"), true)
+  assert.equal(syncSource.includes("key: 'production_attachment_link'"), true)
+  assert.equal(syncSource.includes("type: 'link'"), true)
+  assert.equal(syncSource.includes("text: 'View / print attachment'"), true)
+  assert.equal(syncSource.includes('url: job.internalAttachment.downloadUrl'), true)
+  assert.equal(linkDefinitionSource.includes("ownerType: 'ORDER'"), true)
+  assert.equal(linkDefinitionSource.includes("pin: true"), true)
+  assert.equal(linkDefinitionSource.includes("storefront: 'NONE'"), true)
+  assert.equal(draftSyncSource.includes("key: 'production_attachment_link'"), true)
+  assert.equal(draftSyncSource.includes("type: 'link'"), true)
+  assert.equal(draftSyncSource.includes("text: 'View / print attachment'"), true)
+  assert.equal(draftSyncSource.includes('url: job.internalAttachment.downloadUrl'), true)
 })
 
 test('internal order notifications include a prominent Shopify Files download link', () => {
