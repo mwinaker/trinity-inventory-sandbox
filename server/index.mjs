@@ -782,6 +782,7 @@ const resourceConfigs = {
 
 let definitionPromise = null
 let orderProductionAttachmentMetafieldDefinitionPromise = null
+let orderProductionAttachmentOpenUrlMetafieldDefinitionPromise = null
 let stateCacheValue = null
 let stateCacheExpiresAt = 0
 let stateCachePromise = null
@@ -5174,6 +5175,7 @@ async function ensureDefinitionsInternal() {
   }
 
   await ensureOrderProductionAttachmentMetafieldDefinition()
+  await ensureOrderProductionAttachmentOpenUrlMetafieldDefinition()
 }
 
 async function ensureOrderProductionAttachmentMetafieldDefinition() {
@@ -5296,6 +5298,132 @@ async function ensureOrderProductionAttachmentMetafieldDefinitionInternal() {
   if (meaningfulPinErrors.length > 0) {
     throw new Error(
       `Order production attachment pin error: ${meaningfulPinErrors
+        .map((item) => item.message)
+        .join(', ')}`,
+    )
+  }
+}
+
+async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinition() {
+  if (!orderProductionAttachmentOpenUrlMetafieldDefinitionPromise) {
+    orderProductionAttachmentOpenUrlMetafieldDefinitionPromise =
+      ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal().catch((error) => {
+        orderProductionAttachmentOpenUrlMetafieldDefinitionPromise = null
+        throw error
+      })
+  }
+
+  return orderProductionAttachmentOpenUrlMetafieldDefinitionPromise
+}
+
+async function ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal() {
+  const identifier = {
+    namespace: 'trinity',
+    key: 'production_attachment_open_url',
+    ownerType: 'ORDER',
+  }
+  const existingResult = await runWithShopifyRetry(() =>
+    shopifyGraphQL(
+      `
+        query OrderProductionAttachmentOpenUrlMetafieldDefinition(
+          $identifier: MetafieldDefinitionIdentifierInput!
+        ) {
+          metafieldDefinition(identifier: $identifier) {
+            id
+            type {
+              name
+            }
+          }
+        }
+      `,
+      { identifier },
+    ),
+  )
+  const existingDefinition = existingResult?.data?.metafieldDefinition ?? null
+
+  if (existingDefinition && existingDefinition.type?.name !== 'url') {
+    throw new Error(
+      'The existing trinity.production_attachment_open_url order metafield must use the url type.',
+    )
+  }
+
+  if (!existingDefinition) {
+    const createResult = await runWithShopifyRetry(() =>
+      shopifyGraphQL(
+        `
+          mutation CreateOrderProductionAttachmentOpenUrlMetafieldDefinition(
+            $definition: MetafieldDefinitionInput!
+          ) {
+            metafieldDefinitionCreate(definition: $definition) {
+              createdDefinition {
+                id
+                type {
+                  name
+                }
+              }
+              userErrors {
+                field
+                message
+                code
+              }
+            }
+          }
+        `,
+        {
+          definition: {
+            ...identifier,
+            name: 'Open / print attachment',
+            description: 'Direct internal link for viewing or printing this production attachment.',
+            type: 'url',
+            pin: true,
+            access: {
+              admin: 'MERCHANT_READ',
+              storefront: 'NONE',
+            },
+          },
+        },
+      ),
+    )
+    const errors = createResult?.data?.metafieldDefinitionCreate?.userErrors ?? []
+    throwIfRetryableShopifyUserErrors(errors, 'Order production attachment URL definition error')
+    if (errors.length > 0) {
+      throw new Error(
+        `Order production attachment URL definition error: ${errors
+          .map((item) => item.message)
+          .join(', ')}`,
+      )
+    }
+  }
+
+  const pinResult = await runWithShopifyRetry(() =>
+    shopifyGraphQL(
+      `
+        mutation PinOrderProductionAttachmentOpenUrlMetafieldDefinition(
+          $identifier: MetafieldDefinitionIdentifierInput!
+        ) {
+          metafieldDefinitionPin(identifier: $identifier) {
+            pinnedDefinition {
+              id
+            }
+            userErrors {
+              field
+              message
+              code
+            }
+          }
+        }
+      `,
+      { identifier },
+    ),
+  )
+  const pinErrors = pinResult?.data?.metafieldDefinitionPin?.userErrors ?? []
+  throwIfRetryableShopifyUserErrors(pinErrors, 'Order production attachment URL pin error')
+  const meaningfulPinErrors = pinErrors.filter(
+    (item) => !/already pinned/i.test(String(item?.message ?? '')),
+  )
+  if (meaningfulPinErrors.length > 0) {
+    throw new Error(
+      `Order production attachment URL pin error: ${meaningfulPinErrors
         .map((item) => item.message)
         .join(', ')}`,
     )
@@ -7061,6 +7189,9 @@ async function syncOrderJobMetafields(orderJobs) {
   if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.shopifyFileId))) {
     await ensureOrderProductionAttachmentMetafieldDefinition()
   }
+  if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.downloadUrl))) {
+    await ensureOrderProductionAttachmentOpenUrlMetafieldDefinition()
+  }
 
   for (const job of jobsWithOrders) {
     const ownerId = toShopifyGid('Order', job.shopifyOrderId)
@@ -7114,6 +7245,15 @@ async function syncOrderJobMetafields(orderJobs) {
             ownerId,
             type: 'file_reference',
             value: job.internalAttachment.shopifyFileId,
+          }
+        : null,
+      job.internalAttachment?.downloadUrl
+        ? {
+            namespace: 'trinity',
+            key: 'production_attachment_open_url',
+            ownerId,
+            type: 'url',
+            value: job.internalAttachment.downloadUrl,
           }
         : null,
       normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications).length > 0
@@ -7199,7 +7339,16 @@ async function syncDraftOrderJobAttachmentMetafields(orderJobs) {
             type: 'file_reference',
             value: job.internalAttachment.shopifyFileId,
           },
-        ],
+          job.internalAttachment?.downloadUrl
+            ? {
+                namespace: 'trinity',
+                key: 'production_attachment_open_url',
+                ownerId,
+                type: 'url',
+                value: job.internalAttachment.downloadUrl,
+              }
+            : null,
+        ].filter(Boolean),
       },
     )
     const errors = result?.data?.metafieldsSet?.userErrors ?? []

@@ -53,6 +53,9 @@ test('paid Shopify orders receive a pinned internal file reference for productio
   const definitionSource = extractFunctionSource(
     'ensureOrderProductionAttachmentMetafieldDefinitionInternal',
   )
+  const openUrlDefinitionSource = extractFunctionSource(
+    'ensureOrderProductionAttachmentOpenUrlMetafieldDefinitionInternal',
+  )
 
   assert.equal(syncSource.includes("key: 'production_attachment'"), true)
   assert.equal(syncSource.includes("type: 'file_reference'"), true)
@@ -65,6 +68,14 @@ test('paid Shopify orders receive a pinned internal file reference for productio
   assert.equal(draftSyncSource.includes("key: 'production_attachment'"), true)
   assert.equal(draftSyncSource.includes("type: 'file_reference'"), true)
   assert.equal(draftSyncSource.includes('value: job.internalAttachment.shopifyFileId'), true)
+  assert.equal(syncSource.includes("key: 'production_attachment_open_url'"), true)
+  assert.equal(syncSource.includes("type: 'url'"), true)
+  assert.equal(syncSource.includes('value: job.internalAttachment.downloadUrl'), true)
+  assert.equal(openUrlDefinitionSource.includes("ownerType: 'ORDER'"), true)
+  assert.equal(openUrlDefinitionSource.includes("pin: true"), true)
+  assert.equal(openUrlDefinitionSource.includes("storefront: 'NONE'"), true)
+  assert.equal(draftSyncSource.includes("key: 'production_attachment_open_url'"), true)
+  assert.equal(draftSyncSource.includes("type: 'url'"), true)
 })
 
 test('internal order notifications include a prominent Shopify Files download link', () => {
