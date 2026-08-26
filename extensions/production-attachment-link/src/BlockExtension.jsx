@@ -20,7 +20,7 @@ async function getOrderAttachment(orderId) {
   );
 
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error('The production attachment could not be loaded.');
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
   const payload = await response.json();
   return payload?.ok ? payload.attachment ?? null : null;
@@ -29,7 +29,7 @@ async function getOrderAttachment(orderId) {
 function Extension() {
   const orderId = shopify.data.selected?.[0]?.id;
   const [attachment, setAttachment] = useState(undefined);
-  const [loadError, setLoadError] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -47,8 +47,10 @@ function Extension() {
       .then((nextAttachment) => {
         if (active) setAttachment(nextAttachment);
       })
-      .catch(() => {
-        if (active) setLoadError(true);
+      .catch((error) => {
+        if (active) {
+          setLoadError(error instanceof Error ? error.message : 'Unknown error');
+        }
       });
 
     return () => {
@@ -73,7 +75,7 @@ function Extension() {
           </>
         )}
         {attachment === null && <s-text>No production attachment is available for this order.</s-text>}
-        {loadError && <s-text tone="critical">Could not load the production attachment.</s-text>}
+        {loadError && <s-text tone="critical">Could not load the production attachment ({loadError}).</s-text>}
       </s-stack>
     </s-admin-block>
   );
