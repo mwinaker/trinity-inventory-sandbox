@@ -5733,6 +5733,7 @@ function InternalApp({
   const [isImportingOrders, setIsImportingOrders] = useState(false)
   const [isRegisteringWebhooks, setIsRegisteringWebhooks] = useState(false)
   const [retryingPaidAttachmentJobId, setRetryingPaidAttachmentJobId] = useState('')
+  const [syncingShopifyAttachmentJobId, setSyncingShopifyAttachmentJobId] = useState('')
   const [newDeliveryDate, setNewDeliveryDate] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
@@ -7232,6 +7233,51 @@ function InternalApp({
       )
     } finally {
       setRetryingPaidAttachmentJobId('')
+    }
+  }
+
+  async function syncAttachmentToShopifyOrder(job: OrderJob) {
+    if (!job.shopifyDraftOrderId || !job.internalAttachment?.shopifyFileId) return
+
+    try {
+      setSyncingShopifyAttachmentJobId(job.id)
+      setOrderActionMessage(
+        `Making ${job.internalAttachment.filename || 'the production attachment'} available on the paid Shopify order...`,
+      )
+      const response = await fetchApi('/api/orders/sync-attachment-to-shopify-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ draftOrderId: job.shopifyDraftOrderId }),
+      })
+      const payload = (await response.json()) as {
+        ok?: boolean
+        message?: string
+        orderName?: string
+        attachmentFilename?: string
+        attachmentFileReference?: boolean
+        orderJobs?: OrderJob[]
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message ?? 'Could not sync the production attachment to Shopify.')
+      }
+      if (!payload.attachmentFileReference) {
+        throw new Error('Shopify did not confirm the direct production attachment reference.')
+      }
+
+      mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      setOrderActionMessage(
+        `${payload.attachmentFilename || 'Production attachment'} is available directly on ${
+          payload.orderName || 'the paid Shopify order'
+        }.`,
+      )
+    } catch (error) {
+      setOrderActionMessage(
+        error instanceof Error ? error.message : 'Could not sync the production attachment to Shopify.',
+      )
+    } finally {
+      setSyncingShopifyAttachmentJobId('')
     }
   }
 
@@ -9288,6 +9334,21 @@ function InternalApp({
                               {retryingPaidAttachmentJobId === job.id
                                 ? 'Retrying paid attachment...'
                                 : 'Retry paid attachment delivery'}
+                            </button>
+                          ) : null}
+
+                          {hasAdminAccess &&
+                          job.shopifyDraftOrderId &&
+                          job.internalAttachment?.shopifyFileId ? (
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => syncAttachmentToShopifyOrder(job)}
+                              disabled={Boolean(syncingShopifyAttachmentJobId)}
+                            >
+                              {syncingShopifyAttachmentJobId === job.id
+                                ? 'Syncing Shopify attachment...'
+                                : 'Make attachment available on paid order'}
                             </button>
                           ) : null}
 

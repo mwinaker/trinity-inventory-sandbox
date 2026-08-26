@@ -781,6 +781,7 @@ const resourceConfigs = {
 }
 
 let definitionPromise = null
+let orderProductionAttachmentMetafieldDefinitionPromise = null
 let stateCacheValue = null
 let stateCacheExpiresAt = 0
 let stateCachePromise = null
@@ -2127,6 +2128,94 @@ app.post('/api/webhooks/register', requireSalesPortalAdminOrInternalAccess, asyn
     })
   }
 })
+
+app.post(
+  '/api/orders/sync-attachment-to-shopify-order',
+  requireSalesPortalAdminOrInternalAccess,
+  async (request, response) => {
+    try {
+      if (!shopDomain || !adminToken) {
+        response.status(503).json({
+          ok: false,
+          message: 'Shopify credentials are not configured on this server.',
+        })
+        return
+      }
+
+      const draftOrderId = cleanString(request.body?.draftOrderId)
+      if (!draftOrderId) {
+        response.status(400).json({
+          ok: false,
+          message: 'A Shopify Draft Order ID is required to sync its production attachment.',
+        })
+        return
+      }
+
+      const draftOrder = await getDraftOrderForPaidAttachmentRetry(draftOrderId)
+      const paidOrder = draftOrder?.order
+      if (!paidOrder?.id) {
+        response.status(404).json({
+          ok: false,
+          message: 'This draft order has not been completed into a Shopify order yet.',
+        })
+        return
+      }
+      if (cleanString(paidOrder.displayFinancialStatus).toLowerCase() !== 'paid') {
+        response.status(409).json({
+          ok: false,
+          message: `${paidOrder.name || 'This order'} is not paid, so its production attachment was not synced.`,
+        })
+        return
+      }
+
+      const existingJobs = await listRecords(resourceConfigs.orderJobs)
+      const matchingJobs = existingJobs
+        .filter(
+          (job) =>
+            job?.origin === 'internal_sales' &&
+            cleanString(job.shopifyDraftOrderId) === draftOrderId &&
+            cleanString(job.internalAttachment?.shopifyFileId),
+        )
+        .map((job) => ({
+          ...job,
+          shopifyOrderId: paidOrder.id,
+          shopifyOrderName: paidOrder.name ?? '',
+          financialStatus: 'paid',
+          invoiceStatus: 'paid',
+          updatedAt: new Date().toISOString(),
+        }))
+      if (matchingJobs.length === 0) {
+        response.status(404).json({
+          ok: false,
+          message: 'No Shopify-file attachment was found for this completed draft order.',
+        })
+        return
+      }
+
+      await ensureOrderProductionAttachmentMetafieldDefinition()
+      await Promise.all([
+        Promise.all(matchingJobs.map((job) => upsertRecord(resourceConfigs.orderJobs, job))),
+        rememberOrderJobContacts(matchingJobs),
+      ])
+      await syncOrderJobMetafields(matchingJobs)
+      invalidateSalesPaymentReconciliationCache()
+
+      response.json({
+        ok: true,
+        orderName: paidOrder.name ?? '',
+        orderId: paidOrder.id,
+        attachmentFilename: matchingJobs[0]?.internalAttachment?.filename ?? '',
+        attachmentFileReference: true,
+        orderJobs: matchingJobs,
+      })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown Shopify attachment sync error.'
+      console.error(`Shopify production attachment sync error: ${message}`)
+      response.status(500).json({ ok: false, message })
+    }
+  },
+)
 
 app.post(
   '/api/orders/retry-paid-attachment-notification',
@@ -5083,6 +5172,134 @@ async function ensureDefinitionsInternal() {
       await ensureDefinitionFields(definitionId, config)
     })
   }
+
+  await ensureOrderProductionAttachmentMetafieldDefinition()
+}
+
+async function ensureOrderProductionAttachmentMetafieldDefinition() {
+  if (!orderProductionAttachmentMetafieldDefinitionPromise) {
+    orderProductionAttachmentMetafieldDefinitionPromise =
+      ensureOrderProductionAttachmentMetafieldDefinitionInternal().catch((error) => {
+        orderProductionAttachmentMetafieldDefinitionPromise = null
+        throw error
+      })
+  }
+
+  return orderProductionAttachmentMetafieldDefinitionPromise
+}
+
+async function ensureOrderProductionAttachmentMetafieldDefinitionInternal() {
+  const identifier = {
+    namespace: 'trinity',
+    key: 'production_attachment',
+    ownerType: 'ORDER',
+  }
+  const existingResult = await runWithShopifyRetry(() =>
+    shopifyGraphQL(
+      `
+        query OrderProductionAttachmentMetafieldDefinition(
+          $identifier: MetafieldDefinitionIdentifierInput!
+        ) {
+          metafieldDefinition(identifier: $identifier) {
+            id
+            type {
+              name
+            }
+          }
+        }
+      `,
+      { identifier },
+    ),
+  )
+  const existingDefinition = existingResult?.data?.metafieldDefinition ?? null
+
+  if (existingDefinition && existingDefinition.type?.name !== 'file_reference') {
+    throw new Error(
+      'The existing trinity.production_attachment order metafield must use the file_reference type.',
+    )
+  }
+
+  if (!existingDefinition) {
+    const createResult = await runWithShopifyRetry(() =>
+      shopifyGraphQL(
+        `
+          mutation CreateOrderProductionAttachmentMetafieldDefinition(
+            $definition: MetafieldDefinitionInput!
+          ) {
+            metafieldDefinitionCreate(definition: $definition) {
+              createdDefinition {
+                id
+                type {
+                  name
+                }
+              }
+              userErrors {
+                field
+                message
+                code
+              }
+            }
+          }
+        `,
+        {
+          definition: {
+            ...identifier,
+            name: 'Production attachment',
+            description: 'Internal production file attached to this Trinity sales order.',
+            type: 'file_reference',
+            pin: true,
+            access: {
+              admin: 'MERCHANT_READ',
+              storefront: 'NONE',
+            },
+          },
+        },
+      ),
+    )
+    const errors = createResult?.data?.metafieldDefinitionCreate?.userErrors ?? []
+    throwIfRetryableShopifyUserErrors(errors, 'Order production attachment definition error')
+    if (errors.length > 0) {
+      throw new Error(
+        `Order production attachment definition error: ${errors
+          .map((item) => item.message)
+          .join(', ')}`,
+      )
+    }
+  }
+
+  const pinResult = await runWithShopifyRetry(() =>
+    shopifyGraphQL(
+      `
+        mutation PinOrderProductionAttachmentMetafieldDefinition(
+          $identifier: MetafieldDefinitionIdentifierInput!
+        ) {
+          metafieldDefinitionPin(identifier: $identifier) {
+            pinnedDefinition {
+              id
+            }
+            userErrors {
+              field
+              message
+              code
+            }
+          }
+        }
+      `,
+      { identifier },
+    ),
+  )
+  const pinErrors = pinResult?.data?.metafieldDefinitionPin?.userErrors ?? []
+  throwIfRetryableShopifyUserErrors(pinErrors, 'Order production attachment pin error')
+  const meaningfulPinErrors = pinErrors.filter(
+    (item) => !/already pinned/i.test(String(item?.message ?? '')),
+  )
+  if (meaningfulPinErrors.length > 0) {
+    throw new Error(
+      `Order production attachment pin error: ${meaningfulPinErrors
+        .map((item) => item.message)
+        .join(', ')}`,
+    )
+  }
 }
 
 async function listRecords(config) {
@@ -6839,6 +7056,10 @@ async function registerWebhook(topic, uri) {
 
 async function syncOrderJobMetafields(orderJobs) {
   const jobsWithOrders = orderJobs.filter((job) => job.shopifyOrderId)
+  if (jobsWithOrders.some((job) => cleanString(job.internalAttachment?.shopifyFileId))) {
+    await ensureOrderProductionAttachmentMetafieldDefinition()
+  }
+
   for (const job of jobsWithOrders) {
     const ownerId = toShopifyGid('Order', job.shopifyOrderId)
     const metafields = [
@@ -6882,6 +7103,15 @@ async function syncOrderJobMetafields(orderJobs) {
             ownerId,
             type: 'single_line_text_field',
             value: job.internalAttachment.downloadUrl,
+          }
+        : null,
+      job.internalAttachment?.shopifyFileId
+        ? {
+            namespace: 'trinity',
+            key: 'production_attachment',
+            ownerId,
+            type: 'file_reference',
+            value: job.internalAttachment.shopifyFileId,
           }
         : null,
       normalizeInternalAttachmentNotifications(job.internalAttachmentNotifications).length > 0
