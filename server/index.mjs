@@ -88,6 +88,7 @@ import {
   isValidTeamAccessPin,
   teamAccessSessionHeaderName,
 } from './team-access-pin.mjs'
+import { resolveInternalSessionSigning } from './internal-session-secret.mjs'
 import {
   needsSalesRepPlayerEmailProtection,
   protectSalesRepPlayerEmail,
@@ -193,8 +194,13 @@ const salesPortalSessionMaxAgeMs = salesPortalSessionMaxAgeDays * 24 * 60 * 60 *
 const salesPortalLoginCodeMaxAgeMs = 10 * 60 * 1000
 const invoiceSendTokenMaxAgeMs = 24 * 60 * 60 * 1000
 const orderAttachmentUploadTokenMaxAgeMs = 2 * 60 * 60 * 1000
-const internalSessionSecret =
-  process.env.TRINITY_INTERNAL_SESSION_SECRET ?? shopifyApiSecret ?? adminToken ?? ''
+const internalSessionSigning = resolveInternalSessionSigning(process.env)
+const internalSessionSecret = internalSessionSigning.secret
+if (!internalSessionSigning.stable) {
+  console.error(
+    'TRINITY_INTERNAL_SESSION_SECRET must be configured with at least 32 characters. Team PIN and signed internal access are disabled.',
+  )
+}
 const standaloneInternalAccessQueryParam = 'access'
 const embeddedAnalyticsCollectorEnabled =
   process.env.ENABLE_EMBEDDED_ANALYTICS_COLLECTOR === 'true'
@@ -1029,10 +1035,14 @@ app.options('/api/analytics/events', (request, response) => {
 
 app.get('/api/health', async (_request, response) => {
   response.json({
-    ok: Boolean(shopDomain && adminToken),
+    ok: Boolean(shopDomain && adminToken && internalSessionSigning.stable),
     service: 'trinity-billet-inventory',
     shop: shopDomain ?? null,
     apiVersion,
+    security: {
+      stableInternalSigning: internalSessionSigning.stable,
+      internalSigningSource: internalSessionSigning.source,
+    },
     analytics: {
       embeddedCollector: embeddedAnalyticsCollectorEnabled,
       ga4Forwarding: Boolean(ga4MeasurementId && ga4ApiSecret),
@@ -3167,7 +3177,10 @@ function hashSalesPortalLoginCode(email, code) {
 }
 
 function getSalesPortalSigningSecret() {
-  return internalSessionSecret || 'trinity-sales-portal-local-preview'
+  if (!internalSessionSecret) {
+    throw new Error('Stable Trinity internal signing is not configured.')
+  }
+  return internalSessionSecret
 }
 
 function createSalesPortalSignedPayload(payload) {
