@@ -9,6 +9,7 @@ export type TrinityTeamMember = {
 }
 
 export const trinityTeamMembers: readonly TrinityTeamMember[]
+export const trinityAdminEmails: readonly string[]
 
 export function isAdminTeamMember(
   member: TrinityTeamMember | null | undefined,

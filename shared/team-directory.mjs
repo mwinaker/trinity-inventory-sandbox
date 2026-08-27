@@ -74,12 +74,21 @@ export const trinityTeamMembers = Object.freeze([
   },
 ])
 
+export const trinityAdminEmails = Object.freeze([
+  'keith@trinitybats.com',
+  'jeremy@trinitybats.com',
+  'matt@trinitybats.com',
+  'stefan@trinitybats.com',
+])
+
+const trinityAdminEmailSet = new Set(trinityAdminEmails)
+
 export function isAdminTeamMember(member) {
-  return member?.role === 'admin'
+  return member?.role === 'admin' && trinityAdminEmailSet.has(member.email)
 }
 
 export function isSalesTeamMember(member) {
-  return member?.role === 'sales' || member?.role === 'admin'
+  return member?.role === 'sales' || isAdminTeamMember(member)
 }
 
 export function isTeamToolMember(member) {
@@ -88,7 +97,7 @@ export function isTeamToolMember(member) {
 
 export function canTeamMemberAccessToolSection(member, section) {
   if (!member) return false
-  if (member.role === 'admin') return true
+  if (isAdminTeamMember(member)) return true
   if (member.role === 'production') {
     return ['inventory', 'production', 'players', 'models', 'costs'].includes(section)
   }
