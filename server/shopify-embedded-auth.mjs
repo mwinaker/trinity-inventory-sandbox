@@ -118,6 +118,17 @@ export function renderShopifySessionBounce(apiKey = '') {
         const retry = document.getElementById('retry')
         let signInAttempt = 0
 
+        function getReloadTarget() {
+          const reloadPath =
+            new URLSearchParams(window.location.search).get('shopify-reload') || '/'
+          const target = new URL(reloadPath, window.location.origin)
+          if (!isAllowedReloadTarget(target)) {
+            throw new Error('Invalid Shopify reload target')
+          }
+          target.searchParams.delete('shopify-reload')
+          return target
+        }
+
         function isAllowedReloadTarget(target) {
           return (
             target.origin === window.location.origin &&
@@ -138,12 +149,7 @@ export function renderShopifySessionBounce(apiKey = '') {
           retry.hidden = true
 
           try {
-            const reloadPath =
-              new URLSearchParams(window.location.search).get('shopify-reload') || '/'
-            const target = new URL(reloadPath, window.location.origin)
-            if (!isAllowedReloadTarget(target)) {
-              throw new Error('Invalid Shopify reload target')
-            }
+            const target = getReloadTarget()
 
             if (!window.shopify || typeof window.shopify.idToken !== 'function') {
               throw new Error('Shopify App Bridge is unavailable')
@@ -160,11 +166,16 @@ export function renderShopifySessionBounce(apiKey = '') {
               throw new Error('Shopify returned an empty session token')
             }
 
-            target.searchParams.delete('shopify-reload')
             target.searchParams.set('id_token', token.trim())
             window.location.replace(target.href)
           } catch {
             if (currentAttempt !== signInAttempt) return
+            try {
+              const target = getReloadTarget()
+              target.searchParams.set('shopify_auth_failed', '1')
+              window.location.replace(target.href)
+              return
+            } catch {}
             status.textContent = 'Shopify could not complete sign-in'
             detail.textContent = 'Tap below to request a fresh Shopify session.'
             retry.hidden = false

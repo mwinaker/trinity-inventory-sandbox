@@ -2481,6 +2481,7 @@ function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
   const hasCryptographicallyVerifiedLaunch = hasValidShopifyLaunch(request)
   const hasInternalSession = hasValidInternalSession(request)
+  const hasShopifyAuthFailed = getQueryParam(request, 'shopify_auth_failed') === '1'
   const isNavigationRequest = isHtmlNavigationRequest(request)
   const isEmbeddedInternalNavigation =
     isNavigationRequest &&
@@ -2494,7 +2495,8 @@ function establishInternalSession(request, response, next) {
     isEmbeddedInternalNavigation &&
     !hasCryptographicallyVerifiedLaunch &&
     !hasStandaloneAccess &&
-    !hasInternalSession
+    !hasInternalSession &&
+    !hasShopifyAuthFailed
   ) {
     response.redirect(302, buildShopifySessionBounceLocation(request.originalUrl))
     return

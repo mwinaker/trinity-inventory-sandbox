@@ -179,8 +179,10 @@ test('session-token bounce actively returns to the requested app path with a fre
   assert.equal(result.elements.retry.hidden, true)
 })
 
-test('session-token bounce fails visibly instead of hanging when Shopify does not respond', async () => {
+test('session-token bounce falls through to the app shell when Shopify does not respond', async () => {
   const result = await runBounceInlineScript({
+    search:
+      '?embedded=1&shopify-reload=%2Finventory-tool%3Fembedded%3D1%26host%3Dencoded-host',
     idToken: async () => new Promise(() => {}),
     setTimeout(callback) {
       callback()
@@ -188,14 +190,25 @@ test('session-token bounce fails visibly instead of hanging when Shopify does no
     },
   })
 
-  assert.equal(result.replacedLocation, '')
-  assert.equal(result.elements.status.textContent, 'Shopify could not complete sign-in')
   assert.equal(
-    result.elements.detail.textContent,
-    'Tap below to request a fresh Shopify session.',
+    result.replacedLocation,
+    'https://trinity.local/inventory-tool?embedded=1&host=encoded-host&shopify_auth_failed=1',
   )
-  assert.equal(result.elements.retry.hidden, false)
-  assert.equal(typeof result.elements.retry.handler, 'function')
+  assert.equal(result.elements.retry.hidden, true)
+})
+
+test('session-token bounce falls through to the app shell when App Bridge is unavailable', async () => {
+  const result = await runBounceInlineScript({
+    search:
+      '?embedded=1&shopify-reload=%2Finventory-tool%3Fembedded%3D1%26host%3Dencoded-host',
+    idToken: null,
+  })
+
+  assert.equal(
+    result.replacedLocation,
+    'https://trinity.local/inventory-tool?embedded=1&host=encoded-host&shopify_auth_failed=1',
+  )
+  assert.equal(result.elements.retry.hidden, true)
 })
 
 test('session-token bounce rejects navigation outside the Trinity app origin', async () => {
