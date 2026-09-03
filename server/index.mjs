@@ -4714,17 +4714,28 @@ async function getSalesOrderCatalogProducts() {
 
 async function loadSharedState() {
   await ensureDefinitions()
-  const billets = (await listRecords(resourceConfigs.billets)).map(sanitizeBilletWorkflowRecord)
-  const players = (await listRecords(resourceConfigs.players)).map((player) =>
-    hydrateKnownProPlayerAffiliation(player),
-  )
-  const producedBats = (await listRecords(resourceConfigs.producedBats)).map(
-    sanitizeBatModelDataPoint,
-  )
-  const customBatModels = await listRecords(resourceConfigs.customBatModels)
-  const orderJobs = await listRecords(resourceConfigs.orderJobs)
-  const billingContacts = await listRecords(resourceConfigs.billingContacts)
-  const crmContacts = getManualCrmContactRecords(await listRecords(resourceConfigs.crmContacts))
+  const [
+    billetRecords,
+    playerRecords,
+    producedBatRecords,
+    customBatModels,
+    orderJobs,
+    billingContacts,
+    crmContactRecords,
+  ] = await Promise.all([
+    listRecords(resourceConfigs.billets),
+    listRecords(resourceConfigs.players),
+    listRecords(resourceConfigs.producedBats),
+    listRecords(resourceConfigs.customBatModels),
+    listRecords(resourceConfigs.orderJobs),
+    listRecords(resourceConfigs.billingContacts),
+    listRecords(resourceConfigs.crmContacts),
+  ])
+
+  const billets = billetRecords.map(sanitizeBilletWorkflowRecord)
+  const players = playerRecords.map((player) => hydrateKnownProPlayerAffiliation(player))
+  const producedBats = producedBatRecords.map(sanitizeBatModelDataPoint)
+  const crmContacts = getManualCrmContactRecords(crmContactRecords)
 
   return {
     ok: true,
