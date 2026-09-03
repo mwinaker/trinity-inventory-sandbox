@@ -226,17 +226,17 @@ test('session-token bounce rejects navigation outside the Trinity app origin', a
   assert.equal(result.elements.retry.hidden, false)
 })
 
-test('internal app shell loads App Bridge without forcing standalone desktop redirects', () => {
+test('internal app shell keeps app identity without loading App Bridge', () => {
   const template = '<head><!-- TRINITY_SHOPIFY_APP_BRIDGE --></head>'
   const html = renderAppShell(template, {
-    includeShopifyAppBridge: true,
+    includeShopifyAppBridge: false,
     includeTeamPinFallback: true,
     apiKey,
   })
 
   assert.match(html, /name="shopify-api-key" content="trinity-client-id"/)
-  assert.match(html, /name="shopify-disabled-features" content="auto-redirect"/)
-  assert.match(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
+  assert.doesNotMatch(html, /shopify-disabled-features/)
+  assert.doesNotMatch(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
   assert.doesNotMatch(html, /TRINITY_SHOPIFY_APP_BRIDGE/)
 })
 

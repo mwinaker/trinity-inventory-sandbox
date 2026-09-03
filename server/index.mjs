@@ -72,8 +72,6 @@ import {
 } from './order-webhook-subscriptions.mjs'
 import {
   allowsLocalInternalAccess,
-  buildShopifySessionBounceLocation,
-  hasEmbeddedShopifyContext,
   isInternalAppShellPath,
   renderAppShell,
   renderShopifySessionBounce,
@@ -2452,14 +2450,9 @@ function servePublicAppShell(_request, response) {
 
 function serveInternalAppShell(request, response) {
   const isInternalShell = isInternalAppShellPath(request.path)
-  const hasShopifyAuthFailed = getQueryParam(request, 'shopify_auth_failed') === '1'
-  const isEmbeddedLaunch = hasEmbeddedShopifyContext({
-    embedded: getQueryParam(request, 'embedded'),
-    host: getQueryParam(request, 'host'),
-  })
 
   serveAppShell(response, {
-    includeShopifyAppBridge: isInternalShell && isEmbeddedLaunch && !hasShopifyAuthFailed,
+    includeShopifyAppBridge: false,
     includeTeamPinFallback: isInternalShell,
   })
 }
@@ -2482,26 +2475,7 @@ function establishInternalSession(request, response, next) {
   const hasStandaloneAccess = hasValidStandaloneInternalAccess(request)
   const hasCryptographicallyVerifiedLaunch = hasValidShopifyLaunch(request)
   const hasInternalSession = hasValidInternalSession(request)
-  const hasShopifyAuthFailed = getQueryParam(request, 'shopify_auth_failed') === '1'
   const isNavigationRequest = isHtmlNavigationRequest(request)
-  const isEmbeddedInternalNavigation =
-    isNavigationRequest &&
-    isInternalAppShellPath(request.path) &&
-    hasEmbeddedShopifyContext({
-      embedded: getQueryParam(request, 'embedded'),
-      host: getQueryParam(request, 'host'),
-    })
-
-  if (
-    isEmbeddedInternalNavigation &&
-    !hasCryptographicallyVerifiedLaunch &&
-    !hasStandaloneAccess &&
-    !hasInternalSession &&
-    !hasShopifyAuthFailed
-  ) {
-    response.redirect(302, buildShopifySessionBounceLocation(request.originalUrl))
-    return
-  }
 
   if (
     isNavigationRequest &&
