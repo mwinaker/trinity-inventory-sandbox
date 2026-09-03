@@ -2744,6 +2744,21 @@ td select {
   margin: 0;
 }
 
+.job-billet-assignment {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.job-billet-assignment > span {
+  color: #6e5b49;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.job-billet-assignment > strong {
+  line-height: 1.4;
+}
+
 @media (max-width: 640px) {
   .progressive-list-controls {
     align-items: stretch;

@@ -5741,6 +5741,7 @@ function InternalApp({
   const [isRegisteringWebhooks, setIsRegisteringWebhooks] = useState(false)
   const [retryingPaidAttachmentJobId, setRetryingPaidAttachmentJobId] = useState('')
   const [syncingShopifyAttachmentJobId, setSyncingShopifyAttachmentJobId] = useState('')
+  const [billetPickerOrderJobId, setBilletPickerOrderJobId] = useState('')
   const [newDeliveryDate, setNewDeliveryDate] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
@@ -9282,22 +9283,48 @@ function InternalApp({
                             </select>
                           </label>
 
-                          <label>
-                            Assigned billet
-                            <select
-                              value={job.assignedBilletId}
-                              onChange={(event) =>
-                                assignBilletToOrderJob(job.id, event.target.value)
+                          <div className="job-billet-assignment">
+                            <span>Assigned billet</span>
+                            <strong>
+                              {assignedBillet
+                                ? getBilletLabel(assignedBillet)
+                                : 'No billet assigned'}
+                            </strong>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              aria-expanded={billetPickerOrderJobId === job.id}
+                              onClick={() =>
+                                setBilletPickerOrderJobId((current) =>
+                                  current === job.id ? '' : job.id,
+                                )
                               }
                             >
-                              <option value="">No billet assigned</option>
-                              {availableBilletsForJob.map((billet) => (
-                                <option key={billet.id} value={billet.id}>
-                                  {getBilletLabel(billet)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                              {billetPickerOrderJobId === job.id
+                                ? 'Close billet picker'
+                                : 'Change billet'}
+                            </button>
+                          </div>
+
+                          {billetPickerOrderJobId === job.id ? (
+                            <label>
+                              Choose assigned billet
+                              <select
+                                value={job.assignedBilletId}
+                                onChange={(event) => {
+                                  assignBilletToOrderJob(job.id, event.target.value)
+                                  setBilletPickerOrderJobId('')
+                                }}
+                              >
+                                <option value="">No billet assigned</option>
+                                {availableBilletsForJob.map((billet) => (
+                                  <option key={billet.id} value={billet.id}>
+                                    {getBilletLabel(billet)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                          ) : null}
 
                           <div className="form-row">
                             <label>
