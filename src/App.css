@@ -2731,6 +2731,26 @@ td select {
   flex-wrap: wrap;
 }
 
+.progressive-list-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.progressive-list-controls .helper-text {
+  margin: 0;
+}
+
+@media (max-width: 640px) {
+  .progressive-list-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
 .inventory-sort-hint {
   margin: 0;
   color: #8e5d36;

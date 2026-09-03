@@ -65,7 +65,14 @@ import {
   normalizePlayerLevel,
   playerLevelOptions,
 } from './player-profile-export.ts'
+import {
+  getNextProgressiveListLimit,
+  getProgressiveListSlice,
+} from './progressive-list.ts'
 import './App.css'
+
+const inventoryRenderBatchSize = 50
+const productionRenderBatchSize = 10
 
 type SpeechRecognitionResultEvent = {
   resultIndex: number
@@ -5750,6 +5757,8 @@ function InternalApp({
   const [inventorySort, setInventorySort] = useState<InventorySort>('barcode_asc')
   const [minWeightFilter, setMinWeightFilter] = useState('')
   const [maxWeightFilter, setMaxWeightFilter] = useState('')
+  const [inventoryRenderLimit, setInventoryRenderLimit] = useState(inventoryRenderBatchSize)
+  const [productionRenderLimit, setProductionRenderLimit] = useState(productionRenderBatchSize)
   const [build, setBuild] = useState(initialBuild)
   const [profileKindDraft, setProfileKindDraft] = useState<ProfileKind>('Player')
   const [playerNameDraft, setPlayerNameDraft] = useState('')
@@ -6312,6 +6321,7 @@ function InternalApp({
     )
   })
   const filteredBilletCount = filteredBillets.length
+  const renderedBillets = getProgressiveListSlice(filteredBillets, inventoryRenderLimit)
   const inventoryStatusMatchLabel =
     inventoryStatusFilter === 'all'
       ? 'billet'
@@ -6496,6 +6506,7 @@ function InternalApp({
       }),
     [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs],
   )
+  const renderedOrderJobs = getProgressiveListSlice(filteredOrderJobs, productionRenderLimit)
   const activeSalesPaymentReconciliation = useMemo(() => {
     const requestedWindow = salesDashboardRequestedWindowResult.window
     return requestedWindow &&
@@ -8872,7 +8883,7 @@ function InternalApp({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredBillets.map((billet) => (
+                  {renderedBillets.map((billet) => (
                     <tr key={billet.id}>
                       <td>
                         <strong>{billet.barcode}</strong>
@@ -8975,6 +8986,30 @@ function InternalApp({
                 </tbody>
               </table>
             </div>
+            {renderedBillets.length < filteredBilletCount ? (
+              <div className="progressive-list-controls">
+                <p className="helper-text">
+                  Showing {renderedBillets.length} of {filteredBilletCount} matching billets to keep
+                  mobile loading responsive.
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() =>
+                    setInventoryRenderLimit((current) =>
+                      getNextProgressiveListLimit(
+                        current,
+                        filteredBilletCount,
+                        inventoryRenderBatchSize,
+                      ),
+                    )
+                  }
+                >
+                  Show next{' '}
+                  {Math.min(inventoryRenderBatchSize, filteredBilletCount - renderedBillets.length)}
+                </button>
+              </div>
+            ) : null}
           </section>
         </>
       ) : activeSection === 'orders' ? (
@@ -9121,7 +9156,7 @@ function InternalApp({
               {filteredOrderJobs.length === 0 ? (
                 <p className="empty-state">No order jobs match this view yet.</p>
               ) : (
-                filteredOrderJobs.map((job) => {
+                renderedOrderJobs.map((job) => {
                   const assignedBillet = billets.find((billet) => billet.id === job.assignedBilletId)
                   const availableBilletsForJob = billets.filter(
                     (billet) => billet.status === 'storage' || billet.id === job.assignedBilletId,
@@ -9394,6 +9429,33 @@ function InternalApp({
                 })
               )}
             </div>
+            {renderedOrderJobs.length < filteredOrderJobs.length ? (
+              <div className="progressive-list-controls">
+                <p className="helper-text">
+                  Showing {renderedOrderJobs.length} of {filteredOrderJobs.length} matching jobs to
+                  keep mobile loading responsive.
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() =>
+                    setProductionRenderLimit((current) =>
+                      getNextProgressiveListLimit(
+                        current,
+                        filteredOrderJobs.length,
+                        productionRenderBatchSize,
+                      ),
+                    )
+                  }
+                >
+                  Show next{' '}
+                  {Math.min(
+                    productionRenderBatchSize,
+                    filteredOrderJobs.length - renderedOrderJobs.length,
+                  )}
+                </button>
+              </div>
+            ) : null}
           </section>
         </section>
       ) : activeSection === 'sales' ? (
