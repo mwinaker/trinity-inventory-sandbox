@@ -2452,13 +2452,14 @@ function servePublicAppShell(_request, response) {
 
 function serveInternalAppShell(request, response) {
   const isInternalShell = isInternalAppShellPath(request.path)
+  const hasShopifyAuthFailed = getQueryParam(request, 'shopify_auth_failed') === '1'
   const isEmbeddedLaunch = hasEmbeddedShopifyContext({
     embedded: getQueryParam(request, 'embedded'),
     host: getQueryParam(request, 'host'),
   })
 
   serveAppShell(response, {
-    includeShopifyAppBridge: isInternalShell && isEmbeddedLaunch,
+    includeShopifyAppBridge: isInternalShell && isEmbeddedLaunch && !hasShopifyAuthFailed,
     includeTeamPinFallback: isInternalShell,
   })
 }

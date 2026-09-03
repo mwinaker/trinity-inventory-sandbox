@@ -253,6 +253,19 @@ test('desktop Team PIN shell keeps its app identity without loading App Bridge',
   assert.doesNotMatch(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
 })
 
+test('Shopify Mobile PIN fallback shell keeps app identity without blocking on App Bridge', () => {
+  const template = '<head><!-- TRINITY_SHOPIFY_APP_BRIDGE --></head>'
+  const html = renderAppShell(template, {
+    includeShopifyAppBridge: false,
+    includeTeamPinFallback: true,
+    apiKey,
+  })
+
+  assert.match(html, /name="shopify-api-key" content="trinity-client-id"/)
+  assert.doesNotMatch(html, /shopify-disabled-features/)
+  assert.doesNotMatch(html, /cdn\.shopify\.com\/shopifycloud\/app-bridge\.js/)
+})
+
 test('public shells omit Shopify identity and App Bridge', () => {
   const template = '<head><!-- TRINITY_SHOPIFY_APP_BRIDGE --></head>'
   const html = renderAppShell(template, { apiKey })
