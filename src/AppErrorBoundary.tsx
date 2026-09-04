@@ -1,4 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { getAppErrorDiagnostic } from './app-error.ts'
+import { clearLegacyLocalToolState } from './app-storage.ts'
 
 type AppErrorBoundaryProps = {
   children: ReactNode
@@ -6,16 +8,17 @@ type AppErrorBoundaryProps = {
 
 type AppErrorBoundaryState = {
   failed: boolean
+  diagnostic: string
 }
 
 export class AppErrorBoundary extends Component<
   AppErrorBoundaryProps,
   AppErrorBoundaryState
 > {
-  state: AppErrorBoundaryState = { failed: false }
+  state: AppErrorBoundaryState = { failed: false, diagnostic: '' }
 
-  static getDerivedStateFromError(): AppErrorBoundaryState {
-    return { failed: true }
+  static getDerivedStateFromError(error: unknown): AppErrorBoundaryState {
+    return { failed: true, diagnostic: getAppErrorDiagnostic(error) }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -23,6 +26,19 @@ export class AppErrorBoundary extends Component<
       message: error.message,
       componentStack: info.componentStack,
     })
+
+    void fetch('/api/client-errors', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      keepalive: true,
+      body: JSON.stringify({
+        name: error.name,
+        message: error.message,
+        path: window.location.pathname,
+        userAgent: window.navigator.userAgent,
+      }),
+    }).catch(() => {})
   }
 
   render() {
@@ -36,11 +52,24 @@ export class AppErrorBoundary extends Component<
             <h1>The tool did not finish opening</h1>
           </div>
           <p className="empty-state">
-            This is a display failure, not an automatic PIN reset. Reload the tool to retry the
-            live Shopify connection.
+            This is a display failure, not an automatic PIN reset. Retry will clear only obsolete
+            device-cached inventory and reload the live Shopify source of truth. Your PIN session
+            will stay signed in.
           </p>
-          <button type="button" onClick={() => window.location.reload()}>
-            Reload Trinity tool
+          {this.state.diagnostic ? (
+            <details className="shopify-reconnect-fallback">
+              <summary>Technical detail</summary>
+              <code>{this.state.diagnostic}</code>
+            </details>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              clearLegacyLocalToolState()
+              window.location.reload()
+            }}
+          >
+            Clear device cache and retry
           </button>
         </section>
       </main>

@@ -965,6 +965,29 @@ app.post(
 
 app.use(express.json({ limit: '5mb' }))
 
+app.post('/api/client-errors', (request, response) => {
+  const requestOrigin = cleanString(request.get('origin'))
+  const forwardedHost = cleanString(request.get('x-forwarded-host')).split(',')[0].trim()
+  const forwardedProto = cleanString(request.get('x-forwarded-proto')).split(',')[0].trim()
+  const requestHost = forwardedHost || cleanString(request.get('host'))
+  const requestProto = forwardedProto || request.protocol
+  const expectedOrigin = requestHost ? `${requestProto}://${requestHost}` : ''
+
+  if (!requestOrigin || requestOrigin !== expectedOrigin) {
+    response.status(403).json({ ok: false, message: 'Client error report origin was rejected.' })
+    return
+  }
+
+  const report = {
+    name: cleanString(request.body?.name).slice(0, 120),
+    message: cleanString(request.body?.message).slice(0, 500),
+    path: cleanString(request.body?.path).slice(0, 240),
+    userAgent: cleanString(request.body?.userAgent).slice(0, 500),
+  }
+  console.error(`[client-error] ${JSON.stringify(report)}`)
+  response.status(204).end()
+})
+
 app.get('/api/internal-email/google/authorize', (request, response) => {
   if (
     !googleWorkspaceInternalEmailConfig.clientId ||

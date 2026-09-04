@@ -69,6 +69,27 @@ import {
   getNextProgressiveListLimit,
   getProgressiveListSlice,
 } from './progressive-list.ts'
+import {
+  billingContactStorageKey,
+  billetStorageKey,
+  crmActiveOwnerStorageKey,
+  crmContactStorageKey,
+  customBatModelStorageKey,
+  legacyLocalStateBackupKey,
+  legacyLocalStateKeys,
+  orderJobStorageKey,
+  playerStorageKey,
+  producedBatStorageKey,
+  readLocalStorageJson,
+  readLocalStorageValue,
+  removeLocalStorageValue,
+  salesPortalOrderStorageKey,
+  salesPortalSessionStorageKey,
+  shouldUseLocalToolStorage,
+  teamAccessTokenStorageKey,
+  writeLocalStorageJson,
+  writeLocalStorageValue,
+} from './app-storage.ts'
 import './App.css'
 
 const inventoryRenderBatchSize = 50
@@ -815,29 +836,6 @@ type SalesPortalOrder = {
   status: 'local_saved' | 'submitted'
   draft: SalesOrderDraft
 }
-
-const billetStorageKey = 'trinity-billet-sandbox-v5'
-const playerStorageKey = 'trinity-player-profiles-v3'
-const producedBatStorageKey = 'trinity-produced-bats-v1'
-const customBatModelStorageKey = 'trinity-custom-bat-models-v1'
-const orderJobStorageKey = 'trinity-order-jobs-v1'
-const billingContactStorageKey = 'trinity-billing-contacts-v1'
-const crmContactStorageKey = 'trinity-crm-sandbox-contacts-v1'
-const crmActiveOwnerStorageKey = 'trinity-crm-sandbox-active-owner-v1'
-const salesPortalSessionStorageKey = 'trinity-sales-portal-session-v1'
-const teamAccessTokenStorageKey = 'trinity-team-access-token-v1'
-const salesPortalOrderStorageKey = 'trinity-sales-portal-orders-v1'
-const legacyLocalStateBackupKey = 'trinity-local-recovery-backup-v1'
-const legacyLocalStateKeys = [
-  billetStorageKey,
-  playerStorageKey,
-  producedBatStorageKey,
-  customBatModelStorageKey,
-  orderJobStorageKey,
-  billingContactStorageKey,
-  crmContactStorageKey,
-  crmActiveOwnerStorageKey,
-]
 
 const billetDiameterWeightCorrectionOz = 1.75
 const defaultMoisture = 8
@@ -3379,17 +3377,19 @@ function createNextBilletDraft(current: Omit<Billet, 'id'>, allBillets: Billet[]
 }
 
 function backupLegacyLocalState() {
+  if (!isLocalPreviewHost()) return
+
   try {
-    if (window.localStorage.getItem(legacyLocalStateBackupKey)) return
+    if (readLocalStorageValue(legacyLocalStateBackupKey)) return
 
     const values = Object.fromEntries(
       legacyLocalStateKeys
-        .map((key) => [key, window.localStorage.getItem(key)] as const)
+        .map((key) => [key, readLocalStorageValue(key)] as const)
         .filter(([, value]) => value !== null),
     )
     if (Object.keys(values).length === 0) return
 
-    window.localStorage.setItem(
+    writeLocalStorageValue(
       legacyLocalStateBackupKey,
       JSON.stringify({
         backedUpAt: new Date().toISOString(),
@@ -4117,7 +4117,7 @@ function isInternalToolRoute() {
 }
 
 function isLocalPreviewHost() {
-  return ['localhost', '127.0.0.1', ''].includes(window.location.hostname)
+  return shouldUseLocalToolStorage(window.location.hostname)
 }
 
 function isCrmSandboxPreviewRoute() {
@@ -4132,7 +4132,7 @@ function getInitialActiveSection(): ActiveSection {
 
 function fetchApi(path: string, init?: RequestInit) {
   const headers = new Headers(init?.headers)
-  const teamAccessToken = window.localStorage.getItem(teamAccessTokenStorageKey)
+  const teamAccessToken = readLocalStorageValue(teamAccessTokenStorageKey)
   if (teamAccessToken && !headers.has('X-Trinity-Team-Session')) {
     headers.set('X-Trinity-Team-Session', teamAccessToken)
   }
@@ -4141,10 +4141,14 @@ function fetchApi(path: string, init?: RequestInit) {
 
 function saveTeamAccessToken(token: string) {
   if (token) {
-    window.localStorage.setItem(teamAccessTokenStorageKey, token)
+    writeLocalStorageValue(teamAccessTokenStorageKey, token)
   } else {
-    window.localStorage.removeItem(teamAccessTokenStorageKey)
+    removeLocalStorageValue(teamAccessTokenStorageKey)
   }
+}
+
+function readLocalToolState<T>(key: string, fallback: T): T {
+  return isLocalPreviewHost() ? readLocalStorageJson(key, fallback) : fallback
 }
 
 function isShopifyEmbeddedApp() {
@@ -5647,6 +5651,7 @@ function InternalApp({
   const canAccessToolSection = (section: ActiveSection) =>
     !accessSession || canTeamMemberAccessToolSection(accessMember, section)
   const stateEndpoint = hasTeamToolSession ? '/api/team-tool/state' : '/api/state'
+  const shouldPersistLocalToolState = isLocalPreviewHost()
   const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
     const initialSection = getInitialActiveSection()
     return accessSession && !canTeamMemberAccessToolSection(accessMember, initialSection)
@@ -5654,43 +5659,36 @@ function InternalApp({
       : initialSection
   })
   const [billets, setBillets] = useState<Billet[]>(() => {
-    const stored = window.localStorage.getItem(billetStorageKey)
-    const parsed = stored ? (JSON.parse(stored) as Billet[]) : seedBillets
+    const parsed = readLocalToolState<Billet[]>(billetStorageKey, seedBillets)
     return parsed.map((billet) => normalizeBillet(billet))
   })
   const [players, setPlayers] = useState<PlayerProfile[]>(() => {
-    const stored = window.localStorage.getItem(playerStorageKey)
-    const parsed = stored ? (JSON.parse(stored) as PlayerProfile[]) : seedPlayers
+    const parsed = readLocalToolState<PlayerProfile[]>(playerStorageKey, seedPlayers)
     return parsed
       .map((player) => normalizePlayerProfile(player))
       .map((player) => hydratePlayerProfileBilletTargets(player, billets))
   })
   const [producedBats, setProducedBats] = useState<ProducedBatRecord[]>(() => {
-    const stored = window.localStorage.getItem(producedBatStorageKey)
-    return stored
-      ? (JSON.parse(stored) as ProducedBatRecord[]).map((record) =>
-          normalizeProducedBatRecord(record),
-        )
-      : []
+    return readLocalToolState<ProducedBatRecord[]>(producedBatStorageKey, []).map((record) =>
+      normalizeProducedBatRecord(record),
+    )
   })
   const [customBatModels, setCustomBatModels] = useState<BatModelProduct[]>(() => {
-    const stored = window.localStorage.getItem(customBatModelStorageKey)
-    return stored ? (JSON.parse(stored) as BatModelProduct[]) : []
+    return readLocalToolState<BatModelProduct[]>(customBatModelStorageKey, [])
   })
   const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
-    const stored = window.localStorage.getItem(orderJobStorageKey)
-    return stored ? (JSON.parse(stored) as OrderJob[]).map((job) => normalizeOrderJob(job)) : []
+    return readLocalToolState<OrderJob[]>(orderJobStorageKey, []).map((job) =>
+      normalizeOrderJob(job),
+    )
   })
   const [billingContacts, setBillingContacts] = useState<BillingContact[]>(() => {
-    const stored = window.localStorage.getItem(billingContactStorageKey)
-    const parsed = stored ? (JSON.parse(stored) as BillingContact[]) : []
+    const parsed = readLocalToolState<BillingContact[]>(billingContactStorageKey, [])
     return mergeRecordsByKey(seedBillingContacts, parsed, (contact) => contact.id).map((contact) =>
       normalizeBillingContact(contact),
     )
   })
   const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
-    const stored = window.localStorage.getItem(crmContactStorageKey)
-    return stored ? getManualCrmContacts(JSON.parse(stored) as CrmContact[]) : []
+    return getManualCrmContacts(readLocalToolState<CrmContact[]>(crmContactStorageKey, []))
   })
   const [draft, setDraft] = useState(emptyBillet)
   const [salesOrderDraft, setSalesOrderDraft] = useState<SalesOrderDraft>(() => ({
@@ -5718,7 +5716,7 @@ function InternalApp({
   const [crmQuery, setCrmQuery] = useState('')
   const [crmStageFilter, setCrmStageFilter] = useState<'all' | CrmStage>('all')
   const [crmOwnerFilter, setCrmOwnerFilter] = useState(() =>
-    accessOwner?.key || window.localStorage.getItem(crmActiveOwnerStorageKey) || 'all',
+    accessOwner?.key || readLocalStorageValue(crmActiveOwnerStorageKey) || 'all',
   )
   const [selectedCrmContactId, setSelectedCrmContactId] = useState('')
   const [selectedCrmEngagementId, setSelectedCrmEngagementId] = useState('')
@@ -5815,35 +5813,37 @@ function InternalApp({
   }, [])
 
   useEffect(() => {
-    window.localStorage.setItem(billetStorageKey, JSON.stringify(billets))
-  }, [billets])
+    if (shouldPersistLocalToolState) writeLocalStorageJson(billetStorageKey, billets)
+  }, [billets, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(playerStorageKey, JSON.stringify(players))
-  }, [players])
+    if (shouldPersistLocalToolState) writeLocalStorageJson(playerStorageKey, players)
+  }, [players, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(producedBatStorageKey, JSON.stringify(producedBats))
-  }, [producedBats])
+    if (shouldPersistLocalToolState) writeLocalStorageJson(producedBatStorageKey, producedBats)
+  }, [producedBats, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(customBatModelStorageKey, JSON.stringify(customBatModels))
-  }, [customBatModels])
+    if (shouldPersistLocalToolState) writeLocalStorageJson(customBatModelStorageKey, customBatModels)
+  }, [customBatModels, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(orderJobStorageKey, JSON.stringify(orderJobs))
-  }, [orderJobs])
+    if (shouldPersistLocalToolState) writeLocalStorageJson(orderJobStorageKey, orderJobs)
+  }, [orderJobs, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(billingContactStorageKey, JSON.stringify(billingContacts))
-  }, [billingContacts])
+    if (shouldPersistLocalToolState) writeLocalStorageJson(billingContactStorageKey, billingContacts)
+  }, [billingContacts, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(crmContactStorageKey, JSON.stringify(getManualCrmContacts(crmContacts)))
-  }, [crmContacts])
+    if (shouldPersistLocalToolState) {
+      writeLocalStorageJson(crmContactStorageKey, getManualCrmContacts(crmContacts))
+    }
+  }, [crmContacts, shouldPersistLocalToolState])
 
   useEffect(() => {
-    window.localStorage.setItem(crmActiveOwnerStorageKey, crmOwnerFilter)
+    writeLocalStorageValue(crmActiveOwnerStorageKey, crmOwnerFilter)
   }, [crmOwnerFilter])
 
   function getCurrentRemoteState(): RemoteState {
@@ -12161,8 +12161,7 @@ function SalesPortalApp() {
   const isDemoSession = Boolean(demoEmail)
   const [session, setSession] = useState<SalesPortalSession | null>(() => {
     if (demoEmail) return createDemoSalesPortalSession(demoEmail)
-    const stored = window.localStorage.getItem(salesPortalSessionStorageKey)
-    return stored ? (JSON.parse(stored) as SalesPortalSession) : null
+    return readLocalStorageJson<SalesPortalSession | null>(salesPortalSessionStorageKey, null)
   })
   const [loginEmail, setLoginEmail] = useState(session?.email ?? '')
   const [loginMessage, setLoginMessage] = useState('')
@@ -12182,17 +12181,18 @@ function SalesPortalApp() {
   const [crmSearchQuery, setCrmSearchQuery] = useState('')
   const [crmContacts, setCrmContacts] = useState<CrmContact[]>(() => {
     if (!isDemoSession) return []
-    const stored = window.localStorage.getItem(crmContactStorageKey)
-    if (stored) {
-      const savedContacts = getManualCrmContacts(JSON.parse(stored) as CrmContact[])
-      return isDemoSession && savedContacts.length === 0 ? createSalesPortalDemoContacts() : savedContacts
+    const savedContacts = readLocalStorageJson<CrmContact[] | null>(crmContactStorageKey, null)
+    if (savedContacts) {
+      const manualContacts = getManualCrmContacts(savedContacts)
+      return isDemoSession && manualContacts.length === 0
+        ? createSalesPortalDemoContacts()
+        : manualContacts
     }
     return isDemoSession ? createSalesPortalDemoContacts() : []
   })
   const [portalOrders, setPortalOrders] = useState<SalesPortalOrder[]>(() => {
     if (!isDemoSession) return []
-    const stored = window.localStorage.getItem(salesPortalOrderStorageKey)
-    return stored ? (JSON.parse(stored) as SalesPortalOrder[]) : []
+    return readLocalStorageJson<SalesPortalOrder[]>(salesPortalOrderStorageKey, [])
   })
   const [orderJobs, setOrderJobs] = useState<OrderJob[]>(() => {
     return []
@@ -12488,21 +12488,21 @@ function SalesPortalApp() {
 
   useEffect(() => {
     if (isDemoSession && session) {
-      window.localStorage.setItem(salesPortalSessionStorageKey, JSON.stringify(session))
+      writeLocalStorageJson(salesPortalSessionStorageKey, session)
     } else {
-      window.localStorage.removeItem(salesPortalSessionStorageKey)
+      removeLocalStorageValue(salesPortalSessionStorageKey)
     }
   }, [isDemoSession, session])
 
   useEffect(() => {
     if (isDemoSession) {
-      window.localStorage.setItem(crmContactStorageKey, JSON.stringify(getManualCrmContacts(crmContacts)))
+      writeLocalStorageJson(crmContactStorageKey, getManualCrmContacts(crmContacts))
     }
   }, [crmContacts, isDemoSession])
 
   useEffect(() => {
     if (isDemoSession) {
-      window.localStorage.setItem(salesPortalOrderStorageKey, JSON.stringify(portalOrders))
+      writeLocalStorageJson(salesPortalOrderStorageKey, portalOrders)
     }
   }, [isDemoSession, portalOrders])
 
