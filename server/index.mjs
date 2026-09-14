@@ -1,3 +1,4 @@
+import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -6456,13 +6457,8 @@ function getSalesPaymentOrderJobs(order, orderJobs, orderAttributes) {
   })
 }
 
-function hasInventorySalesPaymentMarker(order, orderAttributes, matchingJobs) {
-  if (orderAttributes?.trinity_origin === 'internal_sales') return true
-  if (matchingJobs.length > 0) return true
-
-  return arrayFromPayload(order?.tags).some((tag) =>
-    ['internal sales', 'trinity intake'].includes(cleanString(tag).toLowerCase()),
-  )
+function hasInventorySalesPaymentMarker(order, _orderAttributes, matchingJobs, linkedDraft) {
+  return hasTrinityManualOrderMarker(order, matchingJobs, linkedDraft)
 }
 
 function getCanonicalSalesPortalOwner(name, email) {
@@ -6538,6 +6534,7 @@ function mapOrderToCanonicalCompletedOrder(
     order,
     orderAttributes,
     matchingJobs,
+    completedDraftOrder,
   )
   const reportingCategory = classifySalesReportingCategory({
     sourceName: order?.sourceName,
@@ -6609,9 +6606,7 @@ function mapOrderToCanonicalCompletedOrder(
     reportingCategory,
     sourceName: cleanString(order?.sourceName),
     appName: cleanString(order?.app?.name),
-    sourceDetail:
-      [cleanString(order?.app?.name), cleanString(order?.sourceName)].filter(Boolean).join(' · ') ||
-      'Unknown source',
+    sourceDetail: getManualOrderSourceDetail(order, hasInventoryMarker),
     orderCreatedAt: cleanString(order?.createdAt),
     submittedAt,
     paidAt,
@@ -8590,12 +8585,8 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     currency: shopCurrencyCode,
     financialStatus: 'PENDING',
     ...(purchaseOrder ? { poNumber: purchaseOrder } : {}),
-    ...(proOrderNotificationLabel
-      ? {
-          sourceName: proOrderNotificationLabel,
-          sourceIdentifier: intakeId,
-        }
-      : {}),
+    sourceName: manualOrderSourceName,
+    sourceIdentifier: intakeId,
     ...(shippingAddress ? { shippingAddress } : {}),
     ...(shippingLine ? { shippingLines: [shippingLine] } : {}),
     note,
@@ -8607,6 +8598,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     ),
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
+      trinity_entry_source: 'trinity_inventory_tool',
       trinity_intake_id: intakeId,
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
@@ -8743,6 +8735,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     ),
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
+      trinity_entry_source: 'trinity_inventory_tool',
       trinity_intake_id: intakeId,
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
@@ -9130,7 +9123,7 @@ function mapCreatedOrderToJobs(
 
 function mapGraphQLOrderToJobs(order) {
   const orderAttributes = attributesToRecord(order.customAttributes)
-  const origin = orderAttributes.trinity_origin === 'internal_sales' ? 'internal_sales' : 'website'
+  const origin = hasTrinityManualOrderMarker(order) ? 'internal_sales' : 'website'
   const rawLines = order.lineItems?.nodes ?? []
   const lines =
     origin === 'internal_sales'
@@ -9144,7 +9137,7 @@ function mapGraphQLOrderToJobs(order) {
     const product = variant?.product ?? null
     const specs = extractSpecs(orderAttributes, lineAttributes)
     const itemType = normalizeSalesOrderItemType(
-      lineAttributes.trinity_item_type || (isShirtProductLike(product) ? 'shirt' : 'bat'),
+      lineAttributes.trinity_item_type || (isShirtProductLike(product ?? { title: line.title }) ? 'shirt' : 'bat'),
     )
     const identity = extractOrderIdentity(
       orderAttributes,
@@ -9245,7 +9238,7 @@ function getGraphQLMoneyAmount(moneySet) {
 
 function mapOrderWebhookToJobs(order, topic) {
   const orderAttributes = attributesToRecord(order.note_attributes ?? order.customAttributes)
-  const origin = orderAttributes.trinity_origin === 'internal_sales' ? 'internal_sales' : 'website'
+  const origin = hasTrinityManualOrderMarker(order) ? 'internal_sales' : 'website'
   const rawLines = order.line_items ?? []
   const lines =
     origin === 'internal_sales'

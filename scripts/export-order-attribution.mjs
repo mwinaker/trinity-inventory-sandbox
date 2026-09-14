@@ -1,3 +1,4 @@
+import { hasTrinityManualOrderMarker } from '../shared/manual-order-provenance.mjs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -427,8 +428,7 @@ function summarizeBy(rows, selector) {
 }
 
 function classifyOrder(order) {
-  const attributes = Object.fromEntries((order.customAttributes ?? []).map((item) => [item.key, item.value]))
-  if (attributes.trinity_origin === 'internal_sales' || order.tags?.includes('Internal Sales')) {
+  if (hasTrinityManualOrderMarker(order)) {
     return 'internal_sales'
   }
   if (order.sourceName === 'web' || order.app?.name === 'Online Store') return 'online_store'
