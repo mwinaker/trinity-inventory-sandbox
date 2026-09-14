@@ -1,3 +1,5 @@
+import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderReference, needsTrinityOrderReference, readReferenceResource } from './order-reference.mjs'
+import { isFullyPaidFinancialStatus } from '../shared/order-payment-status.mjs'
 import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
 import express from 'express'
 import path from 'node:path'
@@ -817,7 +819,18 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
       return
     }
 
-    const payload = JSON.parse(request.body.toString('utf8'))
+    let payload = JSON.parse(request.body.toString('utf8'))
+    if (topic === 'draft_orders/create') {
+      if (needsTrinityOrderReference(payload)) {
+        await ensureTrinityOrderReference(shopifyGraphQL, payload.admin_graphql_api_id || toShopifyGid('DraftOrder', payload.id))
+      }
+      response.status(200).send('Draft reference verified')
+      return
+    }
+    if (needsTrinityOrderReference(payload)) {
+      const referenced = await ensureTrinityOrderReference(shopifyGraphQL, payload.admin_graphql_api_id || toShopifyGid('Order', payload.id))
+      payload = { ...payload, note_attributes: referenced.customAttributes.map(a => ({ name: a.key, value: a.value })), tags: referenced.tags.join(', ') }
+    }
     const mappedIncomingJobs = mapOrderWebhookToJobs(payload, topic)
     console.log(
       `Received Shopify order webhook: topic=${topic || 'unknown'} event=${shopifyEventId || 'unknown'} order=${cleanString(payload?.name || payload?.id) || 'unknown'} jobs=${mappedIncomingJobs.length}`,
@@ -1061,6 +1074,7 @@ app.get('/api/health', async (_request, response) => {
     service: 'trinity-billet-inventory',
     shop: shopDomain ?? null,
     apiVersion,
+    orderReferences: { format: 'T-00000', ready: referenceNumberingReady },
     security: {
       stableInternalSigning: internalSessionSigning.stable,
       internalSigningSource: internalSessionSigning.source,
@@ -2460,6 +2474,19 @@ app.use(
 
 app.get('/{*path}', serveInternalAppShell)
 
+// Validate this deployment's app-owned sequence before it can pass Render's
+// health check. Never initialize or reset a production sequence on startup.
+let referenceNumberingReady = false
+if (shopDomain && adminToken) {
+  const referenceStore = createReferenceStore(shopifyGraphQL)
+  await referenceStore.prepare()
+  const sequence = await referenceStore.readSequence()
+  if (!sequence || !/^\d+$/.test(sequence.value) || !Number.isSafeInteger(Number(sequence.value))) {
+    throw new Error('Permanent order reference sequence is missing or invalid. Deployment stopped without resetting it.')
+  }
+  referenceNumberingReady = true
+}
+
 app.listen(port, () => {
   console.log(`Trinity billet server listening on http://127.0.0.1:${port}`)
   void ensureOrderWebhooksOnStartup().catch((error) => {
@@ -3758,7 +3785,7 @@ function buildInternalOrderCopyRecipients(payload) {
 }
 
 function buildInternalOrderCopySubject({ draftOrder = null, order = null }) {
-  const orderName = cleanString(draftOrder?.name || order?.name) || 'Trinity manual order'
+  const orderName = cleanString(getTrinityOrderReference(draftOrder) || getTrinityOrderReference(order) || draftOrder?.name || order?.name) || 'Trinity manual order'
   return `${orderName} submitted from Trinity order form`
 }
 
@@ -3780,7 +3807,7 @@ function buildInternalOrderCopyMessage({
   const salesRepEmail = normalizeEmail(payload.salesRepEmail)
   const internalAttachment = normalizeOrderAttachment(payload.attachment)
   const shippingOption = resolveShippingOption(payload, requiresShippingForOrder(payload))
-  const orderName = cleanString(draftOrder?.name || order?.name)
+  const orderName = cleanString(getTrinityOrderReference(draftOrder) || getTrinityOrderReference(order) || draftOrder?.name || order?.name)
   const invoiceUrl = normalizeDraftInvoiceUrl(draftOrder?.invoiceUrl)
   const orderLines = lines.map(formatInternalOrderLine).filter(Boolean)
   const salesRepLine =
@@ -5928,7 +5955,8 @@ async function createDraftOrder(input) {
     throw new Error(`Draft order error: ${errors.map((item) => item.message).join(', ')}`)
   }
 
-  return normalizeDraftOrderInvoiceUrl(result?.data?.draftOrderCreate?.draftOrder)
+  const draft = normalizeDraftOrderInvoiceUrl(result?.data?.draftOrderCreate?.draftOrder)
+  return { ...draft, ...await ensureTrinityOrderReference(shopifyGraphQL, draft.id) }
 }
 
 async function createPendingOrder(order, options = {}) {
@@ -6036,110 +6064,16 @@ async function createPendingOrder(order, options = {}) {
     throw new Error(`Shopify order error: ${errors.map((item) => item.message).join(', ')}`)
   }
 
-  return result?.data?.orderCreate?.order
-}
-
-async function completeDraftOrderAsPending(draftOrderId) {
-  const result = await shopifyGraphQL(
-    `
-      mutation CompleteSalesDraftOrder($id: ID!) {
-        draftOrderComplete(id: $id) {
-          draftOrder {
-            id
-            name
-            poNumber
-            status
-            order {
-              id
-              name
-              email
-              createdAt
-              updatedAt
-              displayFinancialStatus
-              displayFulfillmentStatus
-              tags
-              note
-              customAttributes {
-                key
-                value
-              }
-              currentTotalPriceSet {
-                shopMoney {
-                  amount
-                  currencyCode
-                }
-              }
-              customer {
-                id
-                displayName
-                email
-              }
-              lineItems(first: 50) {
-                nodes {
-                  id
-                  title
-                  quantity
-                  originalUnitPriceSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  discountedUnitPriceSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  originalTotalSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  discountedTotalSet {
-                    shopMoney {
-                      amount
-                      currencyCode
-                    }
-                  }
-                  variant {
-                    id
-                    title
-                    sku
-                    product {
-                      id
-                      title
-                      productType
-                    }
-                  }
-                  customAttributes {
-                    key
-                    value
-                  }
-                }
-              }
-            }
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }
-    `,
-    { id: draftOrderId },
-  )
-
-  const errors = result?.data?.draftOrderComplete?.userErrors ?? []
-  if (errors.length > 0) {
-    throw new Error(`Draft order completion error: ${errors.map((item) => item.message).join(', ')}`)
-  }
-
-  return result?.data?.draftOrderComplete?.draftOrder
+  const created = result?.data?.orderCreate?.order
+  return { ...created, ...await ensureTrinityOrderReference(shopifyGraphQL, created.id) }
 }
 
 async function sendDraftOrderInvoice(draftOrderId, emailInput) {
+  const resource = await readReferenceResource(shopifyGraphQL, draftOrderId)
+  if (needsTrinityOrderReference(resource)) {
+    const verified = await ensureTrinityOrderReference(shopifyGraphQL, draftOrderId)
+    emailInput = { ...emailInput, customMessage: `Order reference: ${verified.orderReference}\n${emailInput?.customMessage || ''}` }
+  }
   const result = await shopifyGraphQL(
     `
       mutation SendDraftOrderInvoice($id: ID!, $email: EmailInput) {
@@ -8247,7 +8181,7 @@ function buildRememberedBillingContactFromJob(job) {
   if (!name && !email && !phone && !company) return null
 
   const playerName = cleanString(job?.playerName)
-  const orderName = cleanString(job?.shopifyOrderName || job?.shopifyDraftOrderName)
+  const orderName = cleanString(job?.orderReference || job?.shopifyOrderName || job?.shopifyDraftOrderName)
   const orderSubmittedAt = cleanString(job?.orderSubmittedAt || job?.createdAt)
   const notes = [
     orderSubmittedAt ? `Last invoice/order: ${orderSubmittedAt}` : '',
@@ -8437,8 +8371,8 @@ function buildOrderInvoiceEmailInput(payload, order) {
   const emailInput = {
     to: payer.email,
     subject: isZeroDollarOrder
-            ? `${order?.name ?? 'Shopify order'} $0 sample documentation from Trinity Sports Group`
-          : `${order?.name ?? 'Shopify order'} invoice from Trinity Sports Group`,
+            ? `${getTrinityOrderReference(order) || order?.name || 'Shopify order'} $0 sample documentation from Trinity Sports Group`
+          : `${getTrinityOrderReference(order) || order?.name || 'Shopify order'} invoice from Trinity Sports Group`,
     customMessage,
   }
 
@@ -8470,7 +8404,7 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
 
   return {
     to: payer.email,
-    subject: `${draftOrder?.name ?? 'Shopify order'} Draft Order Submitted`,
+    subject: `${getTrinityOrderReference(draftOrder) || draftOrder?.name || 'Shopify order'} Draft Order Submitted`,
     customMessage,
   }
 }
@@ -8478,7 +8412,7 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
 function buildDraftOrderInvoiceEmailInput(jobs) {
   const primaryJob = Array.isArray(jobs) ? (jobs[0] ?? {}) : {}
   const invoiceUrl = normalizeDraftInvoiceUrl(primaryJob.shopifyDraftInvoiceUrl)
-  const draftOrderName = cleanString(primaryJob.shopifyDraftOrderName) || 'Trinity order'
+  const draftOrderName = cleanString(primaryJob.orderReference || primaryJob.shopifyDraftOrderName) || 'Trinity order'
   const recipientEmail = cleanString(primaryJob.billingEmail || primaryJob.customerEmail)
   const playerName = cleanString(primaryJob.playerName)
   const purchaseOrder = cleanString(primaryJob.purchaseOrder)
@@ -8599,6 +8533,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
       trinity_entry_source: 'trinity_inventory_tool',
+      trinity_reference_version: '1',
       trinity_intake_id: intakeId,
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
@@ -8736,6 +8671,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
       trinity_entry_source: 'trinity_inventory_tool',
+      trinity_reference_version: '1',
       trinity_intake_id: intakeId,
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
@@ -9003,6 +8939,7 @@ function mapDraftOrderToJobs(
       shopifyOrderName: '',
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
+      orderReference: getTrinityOrderReference(draftOrder),
       shopifyDraftInvoiceUrl: draftInvoiceUrl,
       lineItemId: draftLine.id ?? '',
       orderSubmittedAt,
@@ -9070,6 +9007,7 @@ function mapCompletedDraftOrderToJobs(
       intakeId,
       shopifyDraftOrderId: draftOrder.id,
       shopifyDraftOrderName: draftOrder.name ?? '',
+      orderReference: getTrinityOrderReference(draftOrder),
       shopifyDraftInvoiceUrl: normalizeDraftInvoiceUrl(draftOrder.invoiceUrl),
       orderSubmittedAt: orderSubmittedAt || job.orderSubmittedAt,
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
@@ -9161,6 +9099,7 @@ function mapGraphQLOrderToJobs(order) {
       playerProfileId: '',
       shopifyOrderId: order.id,
       shopifyOrderName: order.name ?? '',
+      orderReference: getTrinityOrderReference(order),
       shopifyDraftOrderId: '',
       shopifyDraftOrderName: '',
       lineItemId: line.id,
@@ -9182,8 +9121,10 @@ function mapGraphQLOrderToJobs(order) {
       shopifyVariantId: variant?.id ?? '',
       quantity: Number(line.quantity || 1),
       financialStatus: order.displayFinancialStatus ?? '',
+      test: Boolean(order.test),
+      cancelledAt: order.cancelledAt || '',
       fulfillmentStatus: order.displayFulfillmentStatus ?? '',
-      invoiceStatus: String(order.displayFinancialStatus ?? '').toLowerCase().includes('paid')
+      invoiceStatus: isFullyPaidFinancialStatus(order.displayFinancialStatus)
         ? 'paid'
         : origin === 'website'
           ? 'not_required'
@@ -9288,6 +9229,7 @@ function mapOrderWebhookToJobs(order, topic) {
       playerProfileId: '',
       shopifyOrderId: orderId,
       shopifyOrderName: order.name ?? '',
+      orderReference: getTrinityOrderReference(order),
       shopifyDraftOrderId: orderAttributes.trinity_draft_order_id ?? '',
       shopifyDraftOrderName: '',
       lineItemId,
@@ -9310,6 +9252,8 @@ function mapOrderWebhookToJobs(order, topic) {
       shopifyVariantId: line.variant_id ? toShopifyGid('ProductVariant', line.variant_id) : '',
       quantity: Number(line.quantity || 1),
       financialStatus: order.financial_status ?? '',
+      test: Boolean(order.test),
+      cancelledAt: order.cancelled_at || '',
       fulfillmentStatus: order.fulfillment_status ?? 'unfulfilled',
       invoiceStatus:
         String(order.financial_status ?? '').toLowerCase() === 'paid'
@@ -9358,6 +9302,7 @@ function mergeOrderJob(existing, incoming) {
       incoming.productionStatus === 'cancelled'
         ? 'cancelled'
         : existing.productionStatus || incoming.productionStatus,
+    orderReference: incoming.orderReference || existing.orderReference || '',
     shopifyDraftOrderId: existing.shopifyDraftOrderId || incoming.shopifyDraftOrderId,
     shopifyDraftOrderName: existing.shopifyDraftOrderName || incoming.shopifyDraftOrderName,
     shopifyDraftInvoiceUrl: existing.shopifyDraftInvoiceUrl || incoming.shopifyDraftInvoiceUrl,

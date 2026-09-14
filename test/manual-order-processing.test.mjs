@@ -51,3 +51,15 @@ test('legacy tagged custom orders remain manual on import and webhook refresh', 
   assert.equal(refreshed.length, 1)
   assert.equal(refreshed[0].origin, 'internal_sales')
 })
+
+test('T-reference survives draft mapping and payment refresh independently of financial state', () => {
+  const draft={id:'gid://shopify/DraftOrder/123',name:'#D123',orderReference:'T-00001',lineItems:{nodes:[{id:'line',name:'Fake item',quantity:1}]}}
+  const payload={lines:[{title:'Fake item',itemType:'misc',quantity:1,unitPrice:'1.00'}]}
+  const initial=context.mapDraftOrderToJobs(draft,payload,'intake',false,'2026-09-14T20:00:00Z')[0]
+  assert.equal(initial.orderReference,'T-00001');assert.equal(initial.financialStatus,'draft');assert.equal(initial.invoiceStatus,'draft')
+  for(const status of ['pending','unpaid','partially_paid','authorized','paid']){
+    const incoming=context.mapOrderWebhookToJobs({id:456,name:'#TBC456',financial_status:status,tags:'Internal Sales',note_attributes:[{name:'trinity_order_reference',value:'T-00001'}],line_items:[{id:1,title:'Fake item',quantity:1,price:'1.00'}]},'orders/paid')[0]
+    const merged=context.mergeOrderJob(initial,incoming)
+    assert.equal(merged.orderReference,'T-00001');assert.equal(merged.shopifyDraftOrderId,draft.id);assert.equal(merged.invoiceStatus==='paid',status==='paid');assert.equal(modules.isFullyPaidFinancialStatus(merged.financialStatus),status==='paid')
+  }
+})

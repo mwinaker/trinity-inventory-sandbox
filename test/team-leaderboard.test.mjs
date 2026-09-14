@@ -36,6 +36,7 @@ test('leaderboard counts a submitted draft and its paid order only once', () => 
       },
       {
         id: 'paid-line',
+        financialStatus: 'PAID',
         origin: 'internal_sales',
         intakeId: 'sales-1',
         orderSubmittedAt: '2026-07-10T12:00:00.000Z',

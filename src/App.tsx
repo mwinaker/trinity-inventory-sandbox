@@ -1,3 +1,4 @@
+import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 import {
   type Dispatch,
   type SetStateAction,
@@ -350,6 +351,9 @@ type InternalAttachmentNotification = {
 }
 
 type OrderJob = {
+  orderReference?: string
+  test?: boolean
+  cancelledAt?: string
   id: string
   itemType: SalesOrderItemType
   origin: OrderOrigin
@@ -516,6 +520,7 @@ type SalesDashboardWindow = {
 }
 
 type SalesDashboardSale = {
+  orderReference?: string
   key: string
   draftOrderName: string
   paidOrderName: string
@@ -789,6 +794,7 @@ type CrmContactSummary = {
 }
 
 type PlayerOrderHistoryRecord = {
+  orderReference?: string
   key: string
   jobs: OrderJob[]
   shopifyOrderName: string
@@ -1726,6 +1732,9 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     playerProfileId: record.playerProfileId ?? '',
     shopifyOrderId: record.shopifyOrderId ?? '',
     shopifyOrderName: record.shopifyOrderName ?? '',
+    orderReference: record.orderReference ?? '',
+    test: Boolean(record.test),
+    cancelledAt: record.cancelledAt ?? '',
     shopifyDraftOrderId: record.shopifyDraftOrderId ?? '',
     shopifyDraftOrderName: record.shopifyDraftOrderName ?? '',
     shopifyDraftInvoiceUrl: record.shopifyDraftInvoiceUrl ?? '',
@@ -1749,7 +1758,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     quantity: Number(record.quantity ?? 1),
     financialStatus: record.financialStatus ?? '',
     fulfillmentStatus: record.fulfillmentStatus ?? '',
-    invoiceStatus: normalizeInvoiceStatus(record.invoiceStatus),
+    invoiceStatus: isOrderJobPaid(record) ? 'paid' : normalizeInvoiceStatus(record.invoiceStatus === 'paid' ? 'sent' : record.invoiceStatus),
     productionStatus: normalizeProductionStatus(record.productionStatus),
     assignedBilletId: record.assignedBilletId ?? '',
     linkedProducedBatId: record.linkedProducedBatId ?? '',
@@ -2393,6 +2402,7 @@ function buildPlayerOrderHistory(orderJobs: OrderJob[]) {
       return {
         key,
         jobs,
+        orderReference: jobs.find((job) => job.orderReference)?.orderReference ?? '',
         shopifyOrderName:
           displayJobs.find((job) => job.shopifyOrderName)?.shopifyOrderName ?? '',
         shopifyDraftOrderName:
@@ -2923,11 +2933,7 @@ function getSalesDashboardLineValue(job: OrderJob) {
 }
 
 function isSalesDashboardPaid(job: OrderJob) {
-  return (
-    job.invoiceStatus === 'paid' ||
-    job.financialStatus.toLowerCase().includes('paid') ||
-    Boolean(job.salesRepPaidNotificationSentAt)
-  )
+  return isOrderJobPaid(job)
 }
 
 function getInvoiceStatusPriority(status: InvoiceStatus) {
@@ -3054,6 +3060,7 @@ function buildSalesDashboardSales(orderJobs: OrderJob[]): SalesDashboardSale[] {
     existing.countedRowKeys.add(rowKey)
 
     existing.draftOrderName ||= job.shopifyDraftOrderName
+    existing.orderReference ||= job.orderReference
     existing.paidOrderName ||= job.shopifyOrderName
     existing.salesRep ||= job.salesRep
     existing.salesRepEmail ||= job.salesRepEmail
@@ -4016,6 +4023,7 @@ type SalesOrderApiResponse = {
   draftOrder?: {
     id?: string
     name?: string
+    orderReference?: string
     invoiceUrl?: string
     totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
     shippingLine?: {
@@ -4032,7 +4040,7 @@ type SalesOrderApiResponse = {
       }>
     }
   }
-  order?: { name?: string }
+  order?: { name?: string; orderReference?: string }
   internalNotificationRecipients?: string[]
 }
 
@@ -4191,7 +4199,7 @@ function getSalesOrderSuccessMessage(
     ? `, but attachment notification tracking failed: ${payload.internalOrderAttachmentTrackingError}`
     : ''
 
-  return `${payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}${attachmentTrackingMessage}.`
+  return `${payload.order?.orderReference ?? payload.draftOrder?.orderReference ?? payload.order?.name ?? payload.draftOrder?.name ?? 'Shopify order'} created${emailMessage}${draftReviewMessage}${internalCopyMessage}${attachmentTrackingMessage}.`
 }
 
 function getCrmTouchpointDayTimestamp(touchpoint: CrmTouchpoint) {
@@ -5358,7 +5366,7 @@ function PublicSalesOrderForm() {
           invoiceSendToken: payload.invoiceSendToken,
           invoiceSent: false,
         })
-        setMessage(`${payload.draftOrder.name ?? 'Shopify draft invoice'} is ready for review.`)
+        setMessage(`${payload.draftOrder.orderReference ?? payload.draftOrder.name ?? 'Shopify draft invoice'} is ready for review.`)
       } else {
         setPendingDraftReview(null)
         setMessage(getSalesOrderSuccessMessage(submittedDraft, payload))
@@ -5382,7 +5390,7 @@ function PublicSalesOrderForm() {
 
     try {
       setIsSendingInvoice(true)
-      setMessage(`Sending ${pendingDraftReview.draftOrder.name ?? 'draft invoice'}...`)
+      setMessage(`Sending ${pendingDraftReview.draftOrder.orderReference ?? pendingDraftReview.draftOrder.name ?? 'draft invoice'}...`)
       const response = await fetchApi('/api/sales-orders/send-draft-invoice', {
         method: 'POST',
         headers: {
@@ -5396,7 +5404,7 @@ function PublicSalesOrderForm() {
       if (!response.ok || !payload.ok) throw new Error(payload.message ?? 'Invoice send failed')
 
       setPendingDraftReview((current) => (current ? { ...current, invoiceSent: true } : current))
-      setMessage(`${pendingDraftReview.draftOrder.name ?? 'Shopify draft invoice'} sent.`)
+      setMessage(`${pendingDraftReview.draftOrder.orderReference ?? pendingDraftReview.draftOrder.name ?? 'Shopify draft invoice'} sent.`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not send the invoice.')
     } finally {
@@ -5424,7 +5432,7 @@ function PublicSalesOrderForm() {
         <section className="panel public-order-panel public-invoice-review">
           <div className="section-heading">
             <p className="eyebrow">Invoice review</p>
-            <h2>{pendingDraftReview.draftOrder.name ?? 'Shopify draft invoice'}</h2>
+            <h2>{pendingDraftReview.draftOrder.orderReference ?? pendingDraftReview.draftOrder.name ?? 'Shopify draft invoice'}</h2>
           </div>
 
           <div className="invoice-review-summary">
@@ -6464,6 +6472,7 @@ function InternalApp({
           ? billetById.get(job.assignedBilletId)?.barcode ?? job.assignedBilletId
           : ''
         const searchable = [
+          job.orderReference,
           job.shopifyOrderName,
           job.shopifyDraftOrderName,
           job.customerName,
@@ -6746,7 +6755,8 @@ function InternalApp({
             ...summary.contact.playerNames,
             ...summary.contact.tags,
             ...summary.orders.flatMap((job) => [
-              job.shopifyOrderName,
+              job.orderReference,
+          job.shopifyOrderName,
               job.shopifyDraftOrderName,
               job.productTitle,
               job.specs.model,
@@ -7755,7 +7765,7 @@ function InternalApp({
         currencies.join(' | '),
         orderHistory[0]?.submittedAt || orderHistory[0]?.shopifyCreatedAt || '',
         orderHistory
-          .map((order) => order.shopifyOrderName || order.shopifyDraftOrderName)
+          .map((order) => order.orderReference || order.shopifyOrderName || order.shopifyDraftOrderName)
           .filter(Boolean)
           .join(' | '),
       ]
@@ -9174,7 +9184,7 @@ function InternalApp({
                             {job.origin === 'website' ? 'Website' : 'Sales intake'}
                           </span>
                           <h3>
-                            {job.shopifyOrderName ||
+                            {job.orderReference || job.shopifyOrderName ||
                               job.shopifyDraftOrderName ||
                               'Unnumbered Shopify order'}
                           </h3>
@@ -9830,7 +9840,7 @@ function InternalApp({
                             <td>{formatSalesDashboardDate(sale.submittedAt)}</td>
                             <td className="reconciliation-reference">
                               <strong>
-                                {sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}
+                                {sale.orderReference || sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}
                               </strong>
                               {sale.paidOrderName && sale.paidOrderName !== sale.draftOrderName ? (
                                 <span>Paid order {sale.paidOrderName}</span>
@@ -10080,7 +10090,7 @@ function InternalApp({
                     <article className="sales-dashboard-card" key={sale.key}>
                       <div>
                         <span className="profile-type-pill">
-                          {sale.draftOrderName || 'Draft pending'}
+                          {sale.orderReference || sale.draftOrderName || 'Draft pending'}
                         </span>
                         <h3>{sale.payerName || sale.customerName || 'No payer saved'}</h3>
                         <p>{sale.productSummary}</p>
@@ -10112,7 +10122,7 @@ function InternalApp({
                       <span className={`pill ${sale.isPaid ? 'yes' : ''}`}>
                         {sale.isPaid ? 'Paid' : invoiceStatusLabels[sale.invoiceStatus]}
                       </span>
-                      <h3>{sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}</h3>
+                      <h3>{sale.orderReference || sale.draftOrderName || sale.paidOrderName || 'Unnumbered sale'}</h3>
                       <p>
                         {sale.salesRep || sale.salesRepEmail || 'Unassigned'} ·{' '}
                         {sale.payerName || sale.customerName || 'No payer saved'}
@@ -10985,7 +10995,7 @@ function InternalApp({
                               <option value="">No related order</option>
                               {selectedCrmSummary.orders.map((job) => (
                                 <option key={job.id} value={job.id}>
-                                  {job.shopifyOrderName ||
+                                  {job.orderReference || job.shopifyOrderName ||
                                     job.shopifyDraftOrderName ||
                                     job.productTitle ||
                                     job.id}
@@ -11027,7 +11037,7 @@ function InternalApp({
                                   {order.isPaid ? 'Paid' : 'Open'}
                                 </span>
                                 <h3>
-                                  {order.shopifyOrderName ||
+                                  {order.orderReference || order.shopifyOrderName ||
                                     order.shopifyDraftOrderName ||
                                     'Unnumbered order'}
                                 </h3>
@@ -11511,7 +11521,7 @@ function InternalApp({
                                   {order.isPaid ? 'Paid' : 'Open'}
                                 </span>
                                 <h3>
-                                  {order.shopifyOrderName ||
+                                  {order.orderReference || order.shopifyOrderName ||
                                     order.shopifyDraftOrderName ||
                                     'Shopify order'}
                                 </h3>
@@ -13385,7 +13395,7 @@ function SalesPortalApp() {
                               {order.isPaid ? 'Paid' : 'Open'}
                             </span>
                             <h3>
-                              {order.shopifyOrderName ||
+                              {order.orderReference || order.shopifyOrderName ||
                                 order.shopifyDraftOrderName ||
                                 'Shopify order'}
                             </h3>

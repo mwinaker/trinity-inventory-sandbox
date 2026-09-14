@@ -70,11 +70,11 @@ export function getSalesOrderStatusBucket({ financialStatus, total, paidAt }) {
   }
   if (normalizedStatus === 'VOIDED' || normalizedStatus === 'EXPIRED') return 'voided'
   if (safeTotal <= 0 && normalizedStatus === 'PAID') return 'comped'
-  if (cleanString(paidAt) && safeTotal > 0) return 'paid_positive'
-  if (normalizedStatus === 'PARTIALLY_PAID' || normalizedStatus === 'AUTHORIZED') {
+  if (normalizedStatus === 'PAID' && cleanString(paidAt) && safeTotal > 0) return 'paid_positive'
+  if (normalizedStatus === 'PARTIALLY_PAID') {
     return 'partially_paid'
   }
-  if (normalizedStatus === 'PENDING' || !normalizedStatus) return 'pending'
+  if (['PENDING', 'AUTHORIZED', 'UNPAID', ''].includes(normalizedStatus)) return 'pending'
   return 'other'
 }
 

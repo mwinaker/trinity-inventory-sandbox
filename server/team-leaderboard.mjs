@@ -1,3 +1,4 @@
+import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 function cleanString(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -20,11 +21,7 @@ function getTimestamp(value) {
 }
 
 function isPaidJob(job) {
-  return (
-    cleanString(job?.invoiceStatus).toLowerCase() === 'paid' ||
-    cleanString(job?.financialStatus).toLowerCase().includes('paid') ||
-    Boolean(cleanString(job?.salesRepPaidNotificationSentAt))
-  )
+  return isOrderJobPaid(job)
 }
 
 function getOrderKey(job) {
@@ -115,7 +112,7 @@ function getInvoiceStatusPriority(status) {
 }
 
 function getDraftInvoiceStatus(draftOrder) {
-  if (cleanString(draftOrder?.order?.displayFinancialStatus).toLowerCase().includes('paid')) {
+  if (isOrderJobPaid({ financialStatus: draftOrder?.order?.displayFinancialStatus, test: draftOrder?.order?.test, cancelledAt: draftOrder?.order?.cancelledAt })) {
     return 'paid'
   }
   return cleanString(draftOrder?.status).toUpperCase() === 'OPEN' ? 'draft' : 'sent'
@@ -124,6 +121,7 @@ function getDraftInvoiceStatus(draftOrder) {
 function createSubmissionState(key) {
   return {
     key,
+    orderReference: '',
     matchKeys: new Set(),
     draftOrderName: '',
     paidOrderName: '',
@@ -215,6 +213,7 @@ export function buildUnifiedSalesSubmissions(orderJobs, draftOrders, teamMembers
     state.countedJobRows.add(rowKey)
 
     state.submissionSource = 'inventory'
+    state.orderReference ||= cleanString(job?.orderReference)
     state.draftOrderName ||= cleanString(job?.shopifyDraftOrderName)
     state.paidOrderName ||= cleanString(job?.shopifyOrderName)
     state.salesRep ||= cleanString(job?.salesRep)
@@ -242,7 +241,7 @@ export function buildUnifiedSalesSubmissions(orderJobs, draftOrders, teamMembers
       if (productTitle) state.jobDraftProductTitles.add(productTitle)
     }
 
-    const invoiceStatus = paid ? 'paid' : cleanString(job?.invoiceStatus) || 'draft'
+    const invoiceStatus = paid ? 'paid' : job?.invoiceStatus === 'paid' ? 'sent' : cleanString(job?.invoiceStatus) || 'draft'
     if (getInvoiceStatusPriority(invoiceStatus) > getInvoiceStatusPriority(state.invoiceStatus)) {
       state.invoiceStatus = invoiceStatus
     }
@@ -252,6 +251,7 @@ export function buildUnifiedSalesSubmissions(orderJobs, draftOrders, teamMembers
   for (const draftOrder of Array.isArray(draftOrders) ? draftOrders : []) {
     const attributes = attributesToRecord(draftOrder?.customAttributes)
     const orderAttributes = attributesToRecord(draftOrder?.order?.customAttributes)
+    const reference = attributes.trinity_order_reference || orderAttributes.trinity_order_reference || ''
     const matchRecord = {
       ...draftOrder,
       intakeId: attributes.trinity_intake_id || orderAttributes.trinity_intake_id,
@@ -289,6 +289,7 @@ export function buildUnifiedSalesSubmissions(orderJobs, draftOrders, teamMembers
       cleanString(draftOrder?.customer?.displayName)
 
     state.draftOrderName ||= cleanString(draftOrder?.name)
+    state.orderReference ||= reference
     state.paidOrderName ||= cleanString(draftOrder?.order?.name)
     if (salesRep) state.salesRep = salesRep
     if (salesRepEmail) state.salesRepEmail = salesRepEmail
@@ -307,7 +308,10 @@ export function buildUnifiedSalesSubmissions(orderJobs, draftOrders, teamMembers
     if (getInvoiceStatusPriority(invoiceStatus) > getInvoiceStatusPriority(state.invoiceStatus)) {
       state.invoiceStatus = invoiceStatus
     }
-    if (invoiceStatus === 'paid') state.isPaid = true
+    if (draftOrder?.order?.displayFinancialStatus) {
+      state.isPaid = invoiceStatus === 'paid'
+      state.invoiceStatus = invoiceStatus
+    }
   }
 
   return states
@@ -330,6 +334,7 @@ export function buildUnifiedSalesSubmissions(orderJobs, draftOrders, teamMembers
 
       return {
         key: state.key,
+        orderReference: state.orderReference,
         draftOrderName: state.draftOrderName,
         paidOrderName: state.paidOrderName,
         salesRep: owner?.label ?? owner?.name ?? state.salesRep,

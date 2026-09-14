@@ -1,4 +1,5 @@
 export const requiredOrderWebhookTopics = Object.freeze([
+  'DRAFT_ORDERS_CREATE',
   'ORDERS_CREATE',
   'ORDERS_PAID',
   'ORDERS_CANCELLED',
