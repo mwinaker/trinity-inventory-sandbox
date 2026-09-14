@@ -147,6 +147,9 @@ const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
 const shopifyApiKey = process.env.SHOPIFY_API_KEY ?? ''
 const shopifyApiSecret = process.env.SHOPIFY_API_SECRET ?? process.env.SHOPIFY_WEBHOOK_SECRET ?? ''
 const webhookSecret = process.env.SHOPIFY_WEBHOOK_SECRET ?? shopifyApiSecret
+// New permanent references require the owning app's dedicated webhook signer.
+// Preserve the existing submission flow until this configuration is present.
+const permanentOrderReferencesEnabled = Boolean(process.env.SHOPIFY_WEBHOOK_SECRET?.trim())
 const shopCurrencyCode = process.env.SHOPIFY_CURRENCY_CODE ?? 'USD'
 const draftInvoiceHost =
   normalizeHostname(process.env.TRINITY_DRAFT_INVOICE_HOST) || normalizeHostname(shopDomain)
@@ -1074,7 +1077,7 @@ app.get('/api/health', async (_request, response) => {
     service: 'trinity-billet-inventory',
     shop: shopDomain ?? null,
     apiVersion,
-    orderReferences: { format: 'T-00000', ready: referenceNumberingReady },
+    orderReferences: { format: 'T-00000', enabled: permanentOrderReferencesEnabled, ready: referenceNumberingReady },
     security: {
       stableInternalSigning: internalSessionSigning.stable,
       internalSigningSource: internalSessionSigning.source,
@@ -2477,7 +2480,7 @@ app.get('/{*path}', serveInternalAppShell)
 // Validate this deployment's app-owned sequence before it can pass Render's
 // health check. Never initialize or reset a production sequence on startup.
 let referenceNumberingReady = false
-if (shopDomain && adminToken) {
+if (permanentOrderReferencesEnabled && shopDomain && adminToken) {
   const referenceStore = createReferenceStore(shopifyGraphQL)
   await referenceStore.prepare()
   const sequence = await referenceStore.readSequence()
@@ -5956,7 +5959,7 @@ async function createDraftOrder(input) {
   }
 
   const draft = normalizeDraftOrderInvoiceUrl(result?.data?.draftOrderCreate?.draftOrder)
-  return { ...draft, ...await ensureTrinityOrderReference(shopifyGraphQL, draft.id) }
+  return permanentOrderReferencesEnabled ? { ...draft, ...await ensureTrinityOrderReference(shopifyGraphQL, draft.id) } : draft
 }
 
 async function createPendingOrder(order, options = {}) {
@@ -6065,7 +6068,7 @@ async function createPendingOrder(order, options = {}) {
   }
 
   const created = result?.data?.orderCreate?.order
-  return { ...created, ...await ensureTrinityOrderReference(shopifyGraphQL, created.id) }
+  return permanentOrderReferencesEnabled ? { ...created, ...await ensureTrinityOrderReference(shopifyGraphQL, created.id) } : created
 }
 
 async function sendDraftOrderInvoice(draftOrderId, emailInput) {
@@ -8533,7 +8536,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
       trinity_entry_source: 'trinity_inventory_tool',
-      trinity_reference_version: '1',
+      trinity_reference_version: permanentOrderReferencesEnabled ? '1' : '',
       trinity_intake_id: intakeId,
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',
@@ -8671,7 +8674,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     customAttributes: compactAttributes({
       trinity_origin: 'internal_sales',
       trinity_entry_source: 'trinity_inventory_tool',
-      trinity_reference_version: '1',
+      trinity_reference_version: permanentOrderReferencesEnabled ? '1' : '',
       trinity_intake_id: intakeId,
       trinity_has_pro_order: hasProOrder ? 'true' : '',
       trinity_order_type: hasProOrder ? 'Pro Order' : '',

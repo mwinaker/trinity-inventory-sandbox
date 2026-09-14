@@ -14,7 +14,7 @@ for (const statement of ast.statements) {
     Object.assign(modules, await import(new URL(statement.moduleSpecifier.text, serverUrl)))
   }
 }
-const context = vm.createContext({ ...modules, path, URL, Buffer, shopCurrencyCode: 'USD', rushProductionSurchargeAmount: '50.00', internalOrderNotificationEmails: [] })
+const context = vm.createContext({ ...modules, permanentOrderReferencesEnabled: true, path, URL, Buffer, shopCurrencyCode: 'USD', rushProductionSurchargeAmount: '50.00', internalOrderNotificationEmails: [] })
 vm.runInContext(ast.statements.filter(ts.isFunctionDeclaration).map(n => n.getText(ast)).join('\n'), context)
 
 for (const [name, line] of [
@@ -62,4 +62,14 @@ test('T-reference survives draft mapping and payment refresh independently of fi
     const merged=context.mergeOrderJob(initial,incoming)
     assert.equal(merged.orderReference,'T-00001');assert.equal(merged.shopifyDraftOrderId,draft.id);assert.equal(merged.invoiceStatus==='paid',status==='paid');assert.equal(modules.isFullyPaidFinancialStatus(merged.financialStatus),status==='paid')
   }
+})
+
+test('new numbering stays inactive until a dedicated webhook signer is configured', () => {
+  context.permanentOrderReferencesEnabled = false
+  try {
+    const payload = {requiresShipping: false, lines: [{itemType: 'misc', title: 'Fake', quantity: 1, unitPrice: '1.00'}]}
+    for (const input of [context.buildDraftOrderInput(payload, 'test'), context.buildOrderCreateInput(payload, 'test')]) {
+      assert.equal(input.customAttributes.some(a => a.key === 'trinity_reference_version'), false)
+    }
+  } finally { context.permanentOrderReferencesEnabled = true }
 })
