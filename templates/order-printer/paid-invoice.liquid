@@ -11,7 +11,7 @@
       {% endif %}
     </div>
     <div class="document-title">
-      {% if trinity_reference != blank %}<strong>{% if name contains "#D" %}Draft invoice{% elsif financial_status == "paid" %}Paid invoice{% else %}Invoice{% endif %}<br>{% if trinity_reference_verified %}{{ trinity_reference | escape }}{% else %}Reference pending{% endif %}</strong><br>Shopify {{ name }}<br>{% if cancelled_at != blank %}CANCELLED{% elsif financial_status == "paid" %}PAID{% elsif financial_status == "partially_paid" %}PARTIALLY PAID{% elsif financial_status == "refunded" %}REFUNDED{% elsif financial_status == "partially_refunded" %}PARTIALLY REFUNDED{% else %}UNPAID{% endif %}<br>{% else %}<strong>Receipt / Tax Invoice {{ name }}</strong><br>{% endif %}
+      {% if trinity_reference != blank %}<strong>{% if name contains "#D" %}Invoice{% elsif financial_status == "paid" %}Paid invoice{% else %}Invoice{% endif %}<br>{% if trinity_reference_verified %}{{ trinity_reference | escape }}{% else %}Reference pending{% endif %}</strong><br>Shopify {{ name }}<br>{% if cancelled_at != blank %}CANCELLED{% elsif financial_status == "paid" %}PAID{% elsif financial_status == "partially_paid" %}PARTIALLY PAID{% elsif financial_status == "refunded" %}REFUNDED{% elsif financial_status == "partially_refunded" %}PARTIALLY REFUNDED{% else %}UNPAID{% endif %}<br>{% else %}<strong>Receipt / Tax Invoice {{ name }}</strong><br>{% endif %}
       {{ created_at | date: document_date_format }}
     </div>
   </div>

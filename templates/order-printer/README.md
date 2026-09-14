@@ -11,3 +11,5 @@ The signed DRAFT_ORDERS_CREATE webhook handles copied tool drafts; ORDERS_CREATE
 Deployment checks the existing app-owned sequence before listening. If missing, restore access to the original Shopify app and sequence; never recreate it at zero. Template rollback can restore the prior layouts, but permanent reservations must remain intact.
 
 Activation requires the dedicated SHOPIFY_WEBHOOK_SECRET for the same app that owns the subscriptions. Until configured, new submissions keep their prior numbering behavior; permanent number allocation is inactive. Do not treat generic service health as proof of authenticated webhook delivery. Verify an actual draft-create and payment event before declaring activation complete.
+
+Customer-facing unpaid PDFs are titled Invoice, including records without a T-reference, and show their actual payment status. The word Draft is not printed; draft status remains internal to Shopify. The paid invoice heading remains Paid invoice.
