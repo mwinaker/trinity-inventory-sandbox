@@ -9793,3 +9793,64 @@ function toNumericValue(value) {
   if (value === undefined || value === null || value === '') return null
   return String(value)
 }
+
+// Temporary account recovery requested by Matt; removed after verification.
+async function resetMattPinFromDeployment() {
+  const raw = process.env.TRINITY_MATT_PIN_RESET_20260927
+  if (!raw) return
+  const fail = (code) => {
+    const error = new Error(code)
+    error.pinResetCode = code
+    throw error
+  }
+  const request = JSON.parse(raw)
+  const email = 'matt@trinitybats.com'
+  if (shopDomain !== 'trinitybatco.myshopify.com' ||
+      process.env.RENDER_SERVICE_ID !== 'srv-d7m40jgg4nts73af91og') fail('WRONG_SERVICE')
+  if (request.email !== email || !/^[0-9]{4}$/.test(request.pin) ||
+      !/^[a-f0-9]{32}$/.test(request.nonce)) fail('INVALID_REQUEST')
+  const requestedAt = Date.parse(request.requestedAt)
+  const expiresAt = Date.parse(request.expiresAt)
+  if (!Number.isFinite(requestedAt) || !Number.isFinite(expiresAt) ||
+      requestedAt > Date.now() || expiresAt <= Date.now() ||
+      expiresAt - requestedAt > 60 * 60 * 1000) fail('EXPIRED_REQUEST')
+  const config = resourceConfigs.salesPortalUsers
+  const users = await listRecords(config)
+  if (users.filter((user) => normalizeSalesPortalEmail(user.email) === email).length !== 1) {
+    fail('AMBIGUOUS_ACCOUNT')
+  }
+  const user = await getRecordByHandle(config, email)
+  if (user?.id !== email || normalizeSalesPortalEmail(user?.email) !== email ||
+      user.role !== 'admin' || user.status !== 'active') fail('INVALID_ACCOUNT')
+  const nextHash = hashSalesPortalAccessCode(email, request.pin)
+  const collision = users.some((other) => {
+    const address = normalizeSalesPortalEmail(other.email)
+    return address && address !== email && other.accessCodeHash &&
+      safeEqual(other.accessCodeHash, hashSalesPortalAccessCode(address, request.pin), 'utf8')
+  })
+  if (collision) fail('PIN_COLLISION')
+  if (safeEqual(user.accessCodeHash || '', nextHash, 'utf8')) {
+    if (!(Date.parse(user.accessCodeRotatedAt) >= requestedAt)) fail('PIN_NOT_NEW')
+  } else {
+    const now = new Date().toISOString()
+    await upsertRecord(config, {
+      ...user,
+      accessCodeHash: nextHash,
+      accessCodeRotatedAt: now,
+      updatedAt: now,
+    })
+  }
+  const saved = await verifySalesPortalPin(request.pin)
+  if (saved?.id !== user.id || normalizeSalesPortalEmail(saved?.email) !== email ||
+      saved?.accessCodeHash !== nextHash ||
+      !(Date.parse(saved.accessCodeRotatedAt) >= requestedAt)) fail('VERIFICATION_FAILED')
+  const changedKeys = new Set(['accessCodeHash', 'accessCodeRotatedAt', 'updatedAt'])
+  if (!Object.entries(user).every(([key, value]) =>
+    changedKeys.has(key) || JSON.stringify(saved[key]) === JSON.stringify(value))) {
+    fail('ACCOUNT_DATA_MISMATCH')
+  }
+  console.log('[MATT_PIN_RESET] VERIFIED ' + request.nonce)
+}
+void resetMattPinFromDeployment().catch((error) => {
+  console.error('[MATT_PIN_RESET] FAILED ' + (error.pinResetCode || 'REQUEST_FAILED'))
+})
