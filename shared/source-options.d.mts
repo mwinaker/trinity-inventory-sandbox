@@ -4,6 +4,7 @@ export const billetSourceOptions: readonly [
   'Maine Billets',
   'Cahan',
   'Champeau',
+  'Leatherstocking',
 ]
 
 export type BilletSource = (typeof billetSourceOptions)[number]
@@ -15,7 +16,7 @@ export const oversizedBilletDiameter: 2.79
 export function isOversizedBilletSource(source: unknown): boolean
 export function getBilletDimensionsForSource(source: unknown): {
   length: 37
-  diameter: 2.75 | 2.79
+  diameter: 2.75 | 2.78 | 2.79
 }
 
 export function inferBilletSourceFromText(value: unknown): BilletSource | null

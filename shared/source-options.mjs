@@ -4,6 +4,7 @@ export const billetSourceOptions = [
   'Maine Billets',
   'Cahan',
   'Champeau',
+  'Leatherstocking',
 ]
 
 export const standardBilletLength = 37
@@ -19,7 +20,9 @@ export function isOversizedBilletSource(source) {
 export function getBilletDimensionsForSource(source) {
   return {
     length: standardBilletLength,
-    diameter: isOversizedBilletSource(source)
+    diameter: source === 'Leatherstocking'
+      ? 2.78
+      : isOversizedBilletSource(source)
       ? oversizedBilletDiameter
       : standardBilletDiameter,
   }
@@ -34,6 +37,7 @@ export function inferBilletSourceFromText(value) {
     return 'Maine Billets'
   }
   if (normalized.includes('champeau')) return 'Champeau'
+  if (normalized.includes('leatherstocking')) return 'Leatherstocking'
   if (normalized.includes('cahan')) return 'Cahan'
   if (
     normalized.includes('rj') ||

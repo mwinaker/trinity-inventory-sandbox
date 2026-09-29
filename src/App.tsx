@@ -853,6 +853,7 @@ const sourceGradeOptions: Record<Source, Grade[]> = {
   'Maine Billets': ['Prime', 'Select', 'Choice'],
   Cahan: ['Prime', 'Select', 'Choice'],
   Champeau: ['Pro', 'Semi-Pro', 'Promo', 'Blem'],
+  Leatherstocking: allGradeOptions,
 }
 const woodTierOptions: WoodTier[] = ['Prime', 'Select', 'Choice', 'Pro', 'Semi-Pro', 'Promo', 'Blem']
 const sourceOptions: readonly Source[] = billetSourceOptions
