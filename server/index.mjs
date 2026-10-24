@@ -1,3 +1,4 @@
+import { calculateSalesOrderTax } from './sales-order-tax.mjs'
 import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderReference, needsTrinityOrderReference, readReferenceResource } from './order-reference.mjs'
 import { isFullyPaidFinancialStatus } from '../shared/order-payment-status.mjs'
 import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
@@ -1875,6 +1876,34 @@ app.patch('/api/state', requireInternalAccess, async (request, response) => {
   }
 })
 
+app.post('/api/sales-orders/tax-preview', async (request, response) => {
+  try {
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({ ok: false, message: 'Shopify tax calculation is unavailable.' })
+      return
+    }
+    const isAuthenticatedOperator = await hasAuthenticatedSalesOrderAccess(request)
+    if (request.salesPortalSession?.role === 'production') {
+      response.status(403).json({ ok: false, message: 'Production accounts cannot preview sales orders.' })
+      return
+    }
+    if (!isAuthenticatedOperator && !applyRateLimit(publicSalesOrderRateLimiter, request, response)) return
+    const prepared = prepareSalesOrderPayloadForRequest(request.body ?? {}, {
+      isAuthenticatedOperator, salesPortalSession: request.salesPortalSession,
+    })
+    const error = prepared.error || validateSalesOrderPayload(prepared.payload)
+    if (error) {
+      response.status(400).json({ ok: false, message: error })
+      return
+    }
+    const input = buildDraftOrderInput(prepared.payload, 'tax-preview')
+    const tax = await calculateSalesOrderTax(shopifyGraphQL, input)
+    response.set('Cache-Control', 'no-store').json({ ok: true, tax })
+  } catch (error) {
+    response.status(422).json({ ok: false, message: error instanceof Error ? error.message : 'Tax calculation failed.' })
+  }
+})
+
 app.post('/api/sales-orders', async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
@@ -1928,6 +1957,8 @@ app.post('/api/sales-orders', async (request, response) => {
     const shouldCreateDraftOrder = payload.createDraftOrder !== false
     const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
 
+    // Calculate before writing any draft, customer record, or sending an invoice.
+    await calculateSalesOrderTax(shopifyGraphQL, buildDraftOrderInput(payload, intakeId, orderSubmittedAt))
     await ensureDefinitions()
     if (needsSalesRepPlayerEmailProtection(payload)) {
       const savedCrmContacts = getManualCrmContactRecords(
@@ -2017,19 +2048,17 @@ app.post('/api/sales-orders', async (request, response) => {
     const payerEmail = resolvePayer(payload).email
     const shouldSendInvoice =
       Boolean(payerEmail) && (payload.sendInvoice !== false || isZeroDollarOrder)
-    const orderInput = buildOrderCreateInput(payload, intakeId, orderSubmittedAt)
-    const order = await createPendingOrder(orderInput, {
-      sendReceipt: shouldSendInvoice && isZeroDollarOrder,
-    })
-
-    let invoiceSent = shouldSendInvoice && isZeroDollarOrder
-    if (shouldSendInvoice && !isZeroDollarOrder && order?.id) {
-      await sendOrderInvoice(order.id, buildOrderInvoiceEmailInput(payload, order))
-      invoiceSent = true
-    }
+    const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
+    const { order, sourceDraft } = await createTaxCalculatedPendingOrder(draftInput)
+    const payerInvoice = await trySendCompletedOrderInvoice(order, payload, shouldSendInvoice)
+    const invoiceSent = payerInvoice.sent
 
     const jobs = await attachOrderJobsToPlayerProfiles(
-      mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt),
+      mapCreatedOrderToJobs(order, payload, intakeId, invoiceSent, orderSubmittedAt).map((job) => ({
+        ...job,
+        shopifyDraftOrderId: sourceDraft.id,
+        shopifyDraftOrderName: sourceDraft.name,
+      })),
     )
     const [rememberedContacts] = await Promise.all([
       rememberOrderJobContacts(jobs),
@@ -2042,7 +2071,7 @@ app.post('/api/sales-orders', async (request, response) => {
       orderSubmittedAt,
       invoiceSent,
       invoiceRecipient: payerEmail,
-      invoiceError: '',
+      invoiceError: payerInvoice.error,
     })
     const attachmentTracking = await tryRecordSubmittedAttachmentNotification({
       jobs,
@@ -2057,11 +2086,8 @@ app.post('/api/sales-orders', async (request, response) => {
       order,
       invoiceSent,
       zeroDollarDocumentationInvoice: isZeroDollarOrder,
-      emailNotificationMethod: shouldSendInvoice
-        ? isZeroDollarOrder
-          ? 'order_receipt'
-          : 'order_invoice'
-        : 'none',
+      emailNotificationMethod: invoiceSent ? 'order_invoice' : 'none',
+      payerNotificationError: payerInvoice.error,
       internalNotificationRecipients: internalOrderNotification.recipients,
       internalOrderNotificationSent: Boolean(internalOrderNotification.sentAt),
       internalOrderNotificationMethod: internalOrderNotification.deliveryMethod,
@@ -5892,6 +5918,8 @@ async function createDraftOrder(input) {
             email
             createdAt
             updatedAt
+            totalTaxSet { shopMoney { amount currencyCode } }
+            taxLines { title rate priceSet { shopMoney { amount currencyCode } } }
             totalPriceSet {
               shopMoney {
                 amount
@@ -5962,15 +5990,24 @@ async function createDraftOrder(input) {
   return permanentOrderReferencesEnabled ? { ...draft, ...await ensureTrinityOrderReference(shopifyGraphQL, draft.id) } : draft
 }
 
-async function createPendingOrder(order, options = {}) {
+async function trySendCompletedOrderInvoice(order, payload, shouldSend) {
+  if (!shouldSend || !order?.id) return { sent: false, error: '' }
+  try {
+    await sendOrderInvoice(order.id, buildOrderInvoiceEmailInput(payload, order))
+    return { sent: true, error: '' }
+  } catch (error) {
+    // The order already exists. Preserve it and report delivery failure rather
+    // than returning a submission failure that could prompt a duplicate order.
+    return { sent: false, error: error instanceof Error ? error.message : 'Invoice delivery failed. Review the existing order in Shopify.' }
+  }
+}
+
+async function createTaxCalculatedPendingOrder(input) {
+  const sourceDraft = await createDraftOrder(input)
   const result = await shopifyGraphQL(
-    `
-      mutation CreatePendingSalesOrder(
-        $order: OrderCreateOrderInput!
-        $options: OrderCreateOptionsInput
-      ) {
-        orderCreate(order: $order, options: $options) {
-          order {
+    `mutation CompleteTaxCalculatedOrder($id: ID!) {
+      draftOrderComplete(id: $id, paymentPending: true) {
+        draftOrder { order {
             id
             name
             poNumber
@@ -6045,30 +6082,23 @@ async function createPendingOrder(order, options = {}) {
               }
             }
           }
-          userErrors {
-            field
-            message
-          }
+
         }
+        userErrors { field message }
       }
-    `,
-    {
-      order,
-      options: {
-        inventoryBehaviour: 'DECREMENT_OBEYING_POLICY',
-        sendReceipt: Boolean(options.sendReceipt),
-        sendFulfillmentReceipt: false,
-      },
-    },
+    }`,
+    { id: sourceDraft.id },
   )
-
-  const errors = result?.data?.orderCreate?.userErrors ?? []
-  if (errors.length > 0) {
-    throw new Error(`Shopify order error: ${errors.map((item) => item.message).join(', ')}`)
+  const completed = result?.data?.draftOrderComplete
+  const errors = completed?.userErrors ?? []
+  if (errors.length || !completed?.draftOrder?.order?.id) {
+    throw new Error(`Order completion failed. Review existing Shopify draft ${sourceDraft.name || sourceDraft.id} before retrying: ${errors.map((item) => item.message).join(', ')}`)
   }
-
-  const created = result?.data?.orderCreate?.order
-  return permanentOrderReferencesEnabled ? { ...created, ...await ensureTrinityOrderReference(shopifyGraphQL, created.id) } : created
+  const created = completed.draftOrder.order
+  const order = permanentOrderReferencesEnabled
+    ? { ...created, ...await ensureTrinityOrderReference(shopifyGraphQL, created.id) }
+    : created
+  return { order, sourceDraft }
 }
 
 async function sendDraftOrderInvoice(draftOrderId, emailInput) {
@@ -7973,7 +8003,6 @@ function validateSalesOrderPayload(payload) {
   const playerName = cleanString(payload?.playerName || payload?.customerName)
   const salesRepEmail = normalizeEmail(payload?.salesRepEmail)
   const payer = resolvePayer(payload ?? {})
-  const requiresShipping = requiresShippingForOrder(payload ?? {})
   const lines = Array.isArray(payload?.lines) ? payload.lines : []
 
   if (!playerName) return 'Player name is required.'
@@ -7986,14 +8015,14 @@ function validateSalesOrderPayload(payload) {
 
   if (!payer.phone) return 'Payer phone is required.'
 
-  if (requiresShipping) {
+  {
     const missingShippingAddress =
       !cleanString(payload?.shippingAddress1) ||
       !cleanString(payload?.shippingCity) ||
       !cleanString(payload?.shippingProvinceCode) ||
       !cleanString(payload?.shippingZip) ||
       !cleanString(payload?.shippingCountryCode)
-    if (missingShippingAddress) return 'Shipping address is required for shipped orders.'
+    if (missingShippingAddress) return 'Enter the complete delivery or pickup address so Shopify can calculate sales tax.'
   }
 
   if (lines.length === 0) return 'At least one order line is required.'
@@ -8489,7 +8518,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     ? buildProOrderNotificationLabel(payload, payer)
     : ''
   const directAddresses = buildDirectOrderAddresses(payload)
-  const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
+  const shippingAddress = directAddresses.shippingAddress
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
   const note = [
     cleanString(payload.notes),
@@ -8600,8 +8629,8 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
           ...(variantId ? { variantId } : {}),
           title,
           quantity: Number(line.quantity || 1),
-          requiresShipping,
-          taxable: false,
+          requiresShipping: true,
+          taxable: true,
           ...(unitPrice ? { priceSet: unitPrice } : {}),
           properties,
         }
@@ -8631,7 +8660,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const isZeroDollarOrder = isZeroDollarSalesOrder(payload)
   const payer = resolvePayer(payload)
   const directAddresses = buildDirectOrderAddresses(payload)
-  const shippingAddress = requiresShipping ? directAddresses.shippingAddress : null
+  const shippingAddress = directAddresses.shippingAddress
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
   const note = [
     cleanString(payload.notes),
@@ -8659,6 +8688,8 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     .join('\n')
 
   return {
+    taxExempt: false,
+    useCustomerDefaultAddress: false,
     email: payer.email || undefined,
     phone: payer.phone || undefined,
     ...(purchaseOrder ? { poNumber: purchaseOrder } : {}),
@@ -8672,6 +8703,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       hasProOrder ? ['Pro Order'] : [],
     ),
     customAttributes: compactAttributes({
+      trinity_tax_policy: 'shopify_address_based_v1',
       trinity_origin: 'internal_sales',
       trinity_entry_source: 'trinity_inventory_tool',
       trinity_reference_version: permanentOrderReferencesEnabled ? '1' : '',
@@ -8741,8 +8773,8 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
             variantId,
             quantity: Number(line.quantity || 1),
             ...(unitPrice ? { priceOverride: unitPrice } : {}),
-            requiresShipping,
-            taxable: false,
+            requiresShipping: true,
+            taxable: true,
             customAttributes,
           }
         }
@@ -8754,8 +8786,8 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
             currencyCode: shopCurrencyCode,
           },
           quantity: Number(line.quantity || 1),
-          requiresShipping,
-          taxable: false,
+          requiresShipping: true,
+          taxable: true,
           customAttributes,
         }
       })
@@ -8790,7 +8822,7 @@ function buildOrderCreateShippingLine(shippingOption) {
 }
 
 function resolveShippingOption(payload = {}, requiresShipping = true) {
-  if (!requiresShipping) return null
+  if (!requiresShipping) return { key: 'local_delivery', label: 'Local delivery / pickup', title: 'Local delivery / pickup', amount: '0.00' }
 
   const shippingSpeed = normalizeShippingSpeed(payload.shippingSpeed)
   const option =
@@ -8839,8 +8871,9 @@ function buildDraftRushProductionSurchargeLine(payload = {}) {
       currencyCode: shopCurrencyCode,
     },
     quantity,
-    requiresShipping: false,
-    taxable: false,
+    // Production surcharge follows the physical merchandise tax destination.
+    requiresShipping: true,
+    taxable: true,
     customAttributes: compactAttributes({
       trinity_surcharge_type: 'rush_production',
       trinity_production_timeline: 'rush',
@@ -8863,8 +8896,9 @@ function buildOrderRushProductionSurchargeLine(payload = {}) {
   return {
     title: rushProductionSurchargeTitle,
     quantity,
-    requiresShipping: false,
-    taxable: false,
+    // Production surcharge follows the physical merchandise tax destination.
+    requiresShipping: true,
+    taxable: true,
     priceSet,
     properties: compactLineItemProperties({
       trinity_surcharge_type: 'rush_production',

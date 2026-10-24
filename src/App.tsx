@@ -4009,6 +4009,7 @@ type SalesOrderApiResponse = {
   emailNotificationMethod?: 'order_invoice' | 'order_receipt' | 'none'
   draftInvoiceReadyForReview?: boolean
   payerNotificationRecipient?: string
+  payerNotificationError?: string
   internalOrderNotificationSent?: boolean
   internalOrderNotificationMethod?: string
   internalOrderNotificationError?: string
@@ -4026,6 +4027,8 @@ type SalesOrderApiResponse = {
     name?: string
     orderReference?: string
     invoiceUrl?: string
+    totalTaxSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
+    taxLines?: Array<{ title: string; rate: number; priceSet: { shopMoney: { amount: string; currencyCode: string } } }>
     totalPriceSet?: { shopMoney?: { amount?: string; currencyCode?: string } }
     shippingLine?: {
       title?: string
@@ -4184,7 +4187,9 @@ function getSalesOrderSuccessMessage(
     ? payload.emailNotificationMethod === 'order_receipt'
       ? ' and documentation email sent'
       : ` and invoice sent${payload.payerNotificationRecipient ? ` to ${payload.payerNotificationRecipient}` : ''}`
-    : ''
+    : payload.payerNotificationError
+      ? `, but the payer invoice was not sent: ${payload.payerNotificationError}. Review this existing order in Shopify; do not resubmit`
+      : ''
   const draftReviewMessage =
     draft.createDraftOrder && payload.draftInvoiceReadyForReview
       ? ' and the draft invoice is ready for review'
@@ -4222,7 +4227,6 @@ function hasInvalidSalesOrderDraft(draft: SalesOrderDraft) {
   const hasInvalidPayerEmail =
     Boolean(payerEmail.trim()) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail.trim())
   const hasMissingShippingAddress =
-    draft.requiresShipping &&
     (!draft.shippingAddress1.trim() ||
       !draft.shippingCity.trim() ||
       !draft.shippingProvinceCode.trim() ||
@@ -4314,6 +4318,7 @@ function SalesOrderShippingAddressFields({
 }) {
   return (
     <div className="billing-panel">
+      <p className="helper-text">Enter where the customer receives the goods. For pickup, enter the pickup location. This address determines sales tax, even when someone else pays.</p>
       <div className="form-row">
         <label>
           {draft.billingDifferent ? 'Shipping recipient phone' : 'Payer phone'}
@@ -4324,9 +4329,8 @@ function SalesOrderShippingAddressFields({
             onChange={(event) => updateField('playerPhone', event.target.value)}
           />
         </label>
-        {draft.requiresShipping ? (
-          <label>
-            Shipping country code
+        <label>
+            Delivery / pickup country code
             <input
               value={draft.shippingCountryCode}
               placeholder="US"
@@ -4334,15 +4338,13 @@ function SalesOrderShippingAddressFields({
                 updateField('shippingCountryCode', event.target.value.toUpperCase())
               }
             />
-          </label>
-        ) : null}
+        </label>
       </div>
 
-      {draft.requiresShipping ? (
-        <>
+      <>
           <div className="form-row">
             <label>
-              Shipping address
+              Delivery / pickup address
               <input
                 value={draft.shippingAddress1}
                 placeholder="Street address"
@@ -4361,7 +4363,7 @@ function SalesOrderShippingAddressFields({
 
           <div className="form-row">
             <label>
-              Shipping city
+              Delivery / pickup city
               <input
                 value={draft.shippingCity}
                 placeholder="City"
@@ -4369,7 +4371,7 @@ function SalesOrderShippingAddressFields({
               />
             </label>
             <label>
-              Shipping state
+              Delivery / pickup state
               <input
                 value={draft.shippingProvinceCode}
                 placeholder="Example: CO"
@@ -4382,7 +4384,7 @@ function SalesOrderShippingAddressFields({
 
           <div className="form-row">
             <label>
-              Shipping ZIP
+              Delivery / pickup ZIP
               <input
                 value={draft.shippingZip}
                 placeholder="ZIP code"
@@ -4391,10 +4393,16 @@ function SalesOrderShippingAddressFields({
             </label>
           </div>
 
-        </>
-      ) : null}
+      </>
     </div>
   )
+}
+
+type SalesTaxPreview = {
+  totalTaxSet: { shopMoney: { amount: string; currencyCode: string } }
+  totalPriceSet: { shopMoney: { amount: string; currencyCode: string } }
+  taxLines: Array<{ title: string; rate: number; priceSet: { shopMoney: { amount: string; currencyCode: string } } }>
+  calculatedAt: string
 }
 
 type SalesOrderFormFieldsProps = {
@@ -4440,6 +4448,27 @@ function SalesOrderFormFields({
   hideSalesRepFields = false,
   draftOnly = false,
 }: SalesOrderFormFieldsProps) {
+  const [taxPreview, setTaxPreview] = useState<{ key: string; quote?: SalesTaxPreview; error?: string } | null>(null)
+  const [isCalculatingTax, setIsCalculatingTax] = useState(false)
+  const taxDraftKey = JSON.stringify(draft)
+  const currentTaxPreview = taxPreview?.key === taxDraftKey ? taxPreview : null
+  async function previewSalesTax() {
+    const key = taxDraftKey
+    setIsCalculatingTax(true)
+    setTaxPreview(null)
+    try {
+      const response = await fetchApi('/api/sales-orders/tax-preview', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: key,
+      })
+      const result = await response.json() as { ok?: boolean; message?: string; tax?: SalesTaxPreview }
+      if (!response.ok || !result.ok || !result.tax) throw new Error(result.message || 'Tax calculation failed.')
+      setTaxPreview({ key, quote: result.tax })
+    } catch (error) {
+      setTaxPreview({ key, error: error instanceof Error ? error.message : 'Tax calculation failed.' })
+    } finally {
+      setIsCalculatingTax(false)
+    }
+  }
   const batCatalog = shopifyCatalog.filter((product) => product.orderItemType !== 'shirt')
   const shirtCatalog = shopifyCatalog.filter((product) => product.orderItemType === 'shirt')
   const shippingBatQuantity = getSalesOrderBatQuantity(draft.lines)
@@ -4509,12 +4538,6 @@ function SalesOrderFormFields({
               ...current,
               requiresShipping,
               shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
-              shippingAddress1: requiresShipping ? current.shippingAddress1 : '',
-              shippingAddress2: requiresShipping ? current.shippingAddress2 : '',
-              shippingCity: requiresShipping ? current.shippingCity : '',
-              shippingProvinceCode: requiresShipping ? current.shippingProvinceCode : '',
-              shippingZip: requiresShipping ? current.shippingZip : '',
-              shippingCountryCode: requiresShipping ? current.shippingCountryCode : 'US',
             }))
           }}
         />
@@ -5068,6 +5091,24 @@ function SalesOrderFormFields({
         </label>
       ) : null}
 
+      <div className="form-instructions">
+        <strong>Sales tax calculated by Shopify</strong>
+        <p>Tax is calculated using the delivery or pickup address and Trinity’s Shopify tax settings, then checked again when you submit. Changes to the order require a new preview.</p>
+        <button type="button" onClick={previewSalesTax} disabled={isCalculatingTax || isSubmitting || hasInvalidSalesOrderDraft(draft)}>
+          {isCalculatingTax ? 'Calculating tax…' : 'Preview tax and total'}
+        </button>
+        {currentTaxPreview?.error ? <p role="alert">{currentTaxPreview.error}</p> : null}
+        {currentTaxPreview?.quote ? (
+          <div role="status" aria-live="polite">
+            <p><strong>Sales tax: {formatSalesOrderMoney(Number(currentTaxPreview.quote.totalTaxSet.shopMoney.amount))}</strong></p>
+            {currentTaxPreview.quote.taxLines.map((line, index) => (
+              <p key={`${line.title}-${index}`}>{line.title}: {formatSalesOrderMoney(Number(line.priceSet.shopMoney.amount))}</p>
+            ))}
+            <p><strong>Total including tax and delivery: {formatSalesOrderMoney(Number(currentTaxPreview.quote.totalPriceSet.shopMoney.amount))}</strong></p>
+            {Number(currentTaxPreview.quote.totalTaxSet.shopMoney.amount) === 0 ? <p>Shopify calculated no sales tax. This does not establish whether Trinity needs an additional tax registration.</p> : null}
+          </div>
+        ) : null}
+      </div>
       {submissionMessage ? (
         <p className="order-submit-message" role="status" aria-live="polite">
           {submissionMessage}
@@ -5320,7 +5361,7 @@ function PublicSalesOrderForm() {
 
     if (hasInvalidSalesOrderDraft(salesOrderDraft)) {
       setMessage(
-        'Add the player, payer phone, shipping address, product, unit price, and complete each line before submitting. Shirts also need a style and size. If entered, the payer email must be valid.',
+        'Add the player, payer phone, delivery or pickup address, product, unit price, and complete each line before submitting. Shirts also need a style and size. If entered, the payer email must be valid.',
       )
       return
     }
@@ -5456,6 +5497,11 @@ function PublicSalesOrderForm() {
                 {draftReviewShipping ? ' + shipping' : ''}
                 {draftReviewRushSurcharge ? ' + rush production' : ''}
               </p>
+            </div>
+            <div>
+              <span>Sales tax</span>
+              <strong>{formatSalesOrderMoney(Number(pendingDraftReview.draftOrder.totalTaxSet?.shopMoney?.amount ?? 0))}</strong>
+              <p>{pendingDraftReview.draftOrder.taxLines?.map((line) => line.title).join(' · ') || 'Shopify calculated no sales tax for this order.'}</p>
             </div>
             {draftReviewShipping ? (
               <div>
@@ -7050,9 +7096,7 @@ function InternalApp({
     const payerPhone = salesOrderDraft.billingDifferent
       ? salesOrderDraft.billingPhone
       : salesOrderDraft.playerPhone
-    const requiresShipping = salesOrderDraft.requiresShipping
     const hasMissingShippingAddress =
-      requiresShipping &&
       (!salesOrderDraft.shippingAddress1.trim() ||
         !salesOrderDraft.shippingCity.trim() ||
         !salesOrderDraft.shippingProvinceCode.trim() ||
@@ -7078,7 +7122,7 @@ function InternalApp({
       hasInvalidLine
     ) {
       setOrderActionMessage(
-        'Add the player, payer phone, shipping address, product, unit price, and complete each line before creating the order. Shirts also need a style and size. If entered, the payer email must be valid.',
+        'Add the player, payer phone, delivery or pickup address, product, unit price, and complete each line before creating the order. Shirts also need a style and size. If entered, the payer email must be valid.',
       )
       return
     }
