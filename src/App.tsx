@@ -5712,7 +5712,8 @@ type OrderHistoryRow = {
   summary: string; quantity: number; status: string; currency: string; productTotal: number
 }
 
-function MyOrderHistory({ onReorder }: {
+function MyOrderHistory({ onReorder, onSessionExpired }: {
+  onSessionExpired?: () => void | Promise<void>
   onReorder: (draft: SalesOrderDraft, reference: string, warnings: string[]) => void
 }) {
   const [orders, setOrders] = useState<OrderHistoryRow[]>([])
@@ -5738,6 +5739,7 @@ function MyOrderHistory({ onReorder }: {
       try {
         const response = await fetchApi(`/api/my-orders?search=${encodeURIComponent(search)}&fresh=${refresh > 0}`, { cache: 'no-store', signal: controller.signal })
         const data = await response.json()
+        if (response.status === 401) void onSessionExpired?.()
         if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load your orders.')
         if (version !== requestVersion.current) return
         setOrders(data.orders); setTotal(data.total); setNextCursor(data.nextCursor)
@@ -5757,6 +5759,7 @@ function MyOrderHistory({ onReorder }: {
       const params = new URLSearchParams({ search, after: nextCursor })
       const response = await fetchApi(`/api/my-orders?${params}`, { cache: 'no-store' })
       const data = await response.json()
+      if (response.status === 401) void onSessionExpired?.()
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load older orders.')
       if (version !== requestVersion.current) return
       setOrders(current => [...current, ...data.orders.filter((row: OrderHistoryRow) => !current.some(old => old.id === row.id))])
@@ -5773,6 +5776,7 @@ function MyOrderHistory({ onReorder }: {
     try {
       const response = await fetchApi(`/api/my-orders/${encodeURIComponent(row.id)}/reorder`, { cache: 'no-store' })
       const data = await response.json()
+      if (response.status === 401) void onSessionExpired?.()
       if (!response.ok || !data.ok) throw new Error(data.message || 'Could not prepare this reorder.')
       const copied = data.draft as SalesOrderDraft
       const draft = { ...emptySalesOrderDraft(), ...copied,
@@ -5794,7 +5798,7 @@ function MyOrderHistory({ onReorder }: {
         <button type="submit" disabled={Boolean(reordering)}>Search orders</button>
       </form>
       {error ? <p role="alert">{error}</p> : null}
-      {loading ? <p role="status">Loading your order history…</p> : <p role="status">Showing {orders.length} of {total} orders{search ? ' matching your search' : ' · all time'}</p>}
+      {loading ? <p role="status">Loading your order history…</p> : !error ? <p role="status">Showing {orders.length} of {total} orders{search ? ' matching your search' : ' · all time'}</p> : null}
       {!loading && !error && orders.length === 0 ? <p>No orders found{search ? ' for this search' : ' for your login'}.</p> : null}
       <div className="sales-dashboard-list">
         {orders.map(row => (
@@ -9194,7 +9198,7 @@ function InternalApp({
       ) : activeSection === 'orders' ? (
         <section className="orders-page submit-order-page">
           {orderEntryView === 'history' ? (
-            <MyOrderHistory onReorder={(draft, reference, warnings) => {
+            <MyOrderHistory onSessionExpired={onSignOut} onReorder={(draft, reference, warnings) => {
               if (salesOrderDraft.playerName || salesOrderDraft.lines.some(line => line.title)) {
                 if (!window.confirm('Replace the current unsent order form with this reorder?')) return
               }
@@ -14117,9 +14121,30 @@ function InternalToolApp() {
     )
   }
 
+  // Shopify verifies access to the store, but does not identify a Trinity sales rep.
+  // Both embedded and standalone entry points require the same remembered team session.
+  if (!session) {
+    return (
+      <main className="sales-portal-shell">
+        <section className="panel sales-portal-login">
+          <div className="sales-portal-login-brand">
+            <img src="/trinity-logo-cropped.png" alt="Trinity Bat Company" className="sales-portal-logo" />
+            <div className="section-heading">
+              <p className="eyebrow">Trinity team access</p>
+              <h1>Billet Inventory</h1>
+            </div>
+          </div>
+          <h2>Enter your four-digit PIN</h2>
+          <p>Use your Trinity PIN to open your tool and orders assigned to you. Your team access is remembered for 30 days in this browser.</p>
+          <TeamPinLoginForm onAuthenticated={setSession} />
+        </section>
+      </main>
+    )
+  }
+
   return (
     <InternalApp
-      key={session?.email ?? 'shopify-session'}
+      key={session.email}
       accessSession={session}
       onSignOut={session ? signOutTeamSession : undefined}
       onTeamAccessAuthenticated={setSession}
