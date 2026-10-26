@@ -351,6 +351,7 @@ type InternalAttachmentNotification = {
 }
 
 type OrderJob = {
+  submissionSnapshot?: { version: number; draft: SalesOrderDraft }
   orderReference?: string
   test?: boolean
   cancelledAt?: string
@@ -1726,6 +1727,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
 
   return {
     id: record.id,
+    submissionSnapshot: record.submissionSnapshot,
     itemType:
       record.itemType === 'shirt' ? 'shirt' : record.itemType === 'misc' ? 'misc' : 'bat',
     origin: record.origin === 'internal_sales' ? 'internal_sales' : 'website',
@@ -3346,6 +3348,7 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
         existing?.orderSubmittedAt || existing?.createdAt || '',
       ),
       internalNotes: job.internalNotes || existing?.internalNotes || '',
+      submissionSnapshot: job.submissionSnapshot || existing?.submissionSnapshot,
       salesRep: job.salesRep || existing?.salesRep || '',
       salesRepEmail: job.salesRepEmail || existing?.salesRepEmail || '',
       salesRepSubmissionNotificationSentAt:
@@ -4549,12 +4552,14 @@ function SalesOrderFormFields({
           Shipping speed
           <select
             aria-label="Shipping speed"
+            required
             value={draft.shippingSpeed}
             disabled={!draft.requiresShipping}
             onChange={(event) =>
               updateField('shippingSpeed', event.target.value as ShippingSpeedOption)
             }
           >
+            {!draft.shippingSpeed ? <option value="">Select shipping speed</option> : null}
             {shippingSpeedOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -4570,11 +4575,13 @@ function SalesOrderFormFields({
         <label>
           Production timeline
           <select
+            required
             value={draft.productionTimeline}
             onChange={(event) =>
               updateField('productionTimeline', event.target.value as ProductionTimelineOption)
             }
           >
+            {!draft.productionTimeline ? <option value="">Select production timeline</option> : null}
             {productionTimelineOptions.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -4871,6 +4878,7 @@ function SalesOrderFormFields({
                           })
                         }
                       >
+                        {!line.wood ? <option value="">Wood not recorded — select species</option> : null}
                         {speciesOptions.map((species) => (
                           <option key={species}>{species}</option>
                         ))}
@@ -4990,6 +4998,7 @@ function SalesOrderFormFields({
                           })
                         }
                       >
+                        {!line.cupped ? <option value="">Cup not recorded — select option</option> : null}
                         {manualCupOptions.map((cup) => (
                           <option key={cup} value={cup}>
                             {cup === 'Yes' ? 'Cup' : 'No cup'}
@@ -5044,6 +5053,11 @@ function SalesOrderFormFields({
             >
               Remove
             </button>
+          </div>
+        ) : null}
+        {!attachmentFile && draft.attachment ? (
+          <div className="attachment-chip"><span>Copied attachment: {draft.attachment.filename}</span>
+            <button type="button" className="secondary-button compact-button" onClick={() => updateField('attachment', null)}>Remove copied attachment</button>
           </div>
         ) : null}
       </div>
@@ -5379,7 +5393,7 @@ function PublicSalesOrderForm() {
       )
       const attachment = salesOrderAttachmentFile
         ? await uploadSalesOrderAttachment(salesOrderAttachmentFile)
-        : null
+        : salesOrderDraft.attachment
       const submittedDraft = {
         ...cloneSalesOrderDraft(salesOrderDraft),
         createDraftOrder: true,
@@ -5693,6 +5707,108 @@ function TeamPinLoginForm({ onAuthenticated }: TeamPinLoginFormProps) {
   )
 }
 
+type OrderHistoryRow = {
+  id: string; reference: string; submittedAt: string; playerName: string; payerName: string
+  summary: string; quantity: number; status: string; currency: string; productTotal: number
+}
+
+function MyOrderHistory({ onReorder }: {
+  onReorder: (draft: SalesOrderDraft, reference: string, warnings: string[]) => void
+}) {
+  const [orders, setOrders] = useState<OrderHistoryRow[]>([])
+  const [query, setQuery] = useState('')
+  const [search, setSearch] = useState('')
+  const [refresh, setRefresh] = useState(0)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [reordering, setReordering] = useState('')
+  const [error, setError] = useState('')
+  const requestVersion = useRef(0)
+
+  useEffect(() => {
+    const version = ++requestVersion.current
+    const controller = new AbortController()
+    setLoading(true)
+    setError('')
+    setOrders([])
+    setNextCursor(null)
+    async function load() {
+      try {
+        const response = await fetchApi(`/api/my-orders?search=${encodeURIComponent(search)}&fresh=${refresh > 0}`, { cache: 'no-store', signal: controller.signal })
+        const data = await response.json()
+        if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load your orders.')
+        if (version !== requestVersion.current) return
+        setOrders(data.orders); setTotal(data.total); setNextCursor(data.nextCursor)
+      } catch (err) {
+        if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load your orders.')
+      } finally { if (!controller.signal.aborted) setLoading(false) }
+    }
+    void load()
+    return () => { controller.abort(); requestVersion.current++ }
+  }, [search, refresh])
+
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return
+    const version = requestVersion.current
+    setLoadingMore(true); setError('')
+    try {
+      const params = new URLSearchParams({ search, after: nextCursor })
+      const response = await fetchApi(`/api/my-orders?${params}`, { cache: 'no-store' })
+      const data = await response.json()
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not load older orders.')
+      if (version !== requestVersion.current) return
+      setOrders(current => [...current, ...data.orders.filter((row: OrderHistoryRow) => !current.some(old => old.id === row.id))])
+      setTotal(data.total); setNextCursor(data.nextCursor)
+    } catch (err) {
+      if (version === requestVersion.current) setError(err instanceof Error ? err.message : 'Could not load older orders.')
+    } finally { setLoadingMore(false) }
+  }
+
+  async function reorder(row: OrderHistoryRow) {
+    if (reordering) return
+    setReordering(row.id); setError('')
+    const version = requestVersion.current
+    try {
+      const response = await fetchApi(`/api/my-orders/${encodeURIComponent(row.id)}/reorder`, { cache: 'no-store' })
+      const data = await response.json()
+      if (!response.ok || !data.ok) throw new Error(data.message || 'Could not prepare this reorder.')
+      const copied = data.draft as SalesOrderDraft
+      const draft = { ...emptySalesOrderDraft(), ...copied,
+        lines: copied.lines.map(line => ({ ...emptySalesLine(line.itemType), ...line, id: createId('sales-line') })) }
+      if (version === requestVersion.current) onReorder(draft, row.reference, data.warnings ?? [])
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not prepare this reorder.') }
+    finally { setReordering('') }
+  }
+
+  return (
+    <section className="panel my-order-history">
+      <div className="split-heading">
+        <div className="section-heading"><p className="eyebrow">Your submissions</p><h2>My orders</h2></div>
+        <button type="button" className="secondary-button" disabled={loading || Boolean(reordering)} onClick={() => setRefresh(value => value + 1)}>Refresh orders</button>
+      </div>
+      <p>Browse all orders attributed to your login. Reorder copies an order into a new editable form; nothing is submitted until you review and submit it.</p>
+      <form className="order-history-search" onSubmit={event => { event.preventDefault(); setSearch(query.trim()) }}>
+        <label>Find a previous order<input type="search" placeholder="Order number, player, customer, or product" value={query} onChange={event => setQuery(event.target.value)} /></label>
+        <button type="submit" disabled={Boolean(reordering)}>Search orders</button>
+      </form>
+      {error ? <p role="alert">{error}</p> : null}
+      {loading ? <p role="status">Loading your order history…</p> : <p role="status">Showing {orders.length} of {total} orders{search ? ' matching your search' : ' · all time'}</p>}
+      {!loading && !error && orders.length === 0 ? <p>No orders found{search ? ' for this search' : ' for your login'}.</p> : null}
+      <div className="sales-dashboard-list">
+        {orders.map(row => (
+          <article className="sales-dashboard-card" key={row.id}>
+            <div><span className="profile-type-pill">{row.status}</span><h3>{row.reference} · {row.playerName || row.payerName || 'Unnamed order'}</h3><p>{row.summary}</p>{row.payerName && row.payerName !== row.playerName ? <p>Payer: {row.payerName}</p> : null}</div>
+            <div className="sales-card-values"><span>{Number.isNaN(Date.parse(row.submittedAt)) ? 'Date not recorded' : new Date(row.submittedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span><span>{row.quantity} items</span><button type="button" disabled={Boolean(reordering)} onClick={() => void reorder(row)}>{reordering === row.id ? 'Loading order…' : 'Reorder'}</button></div>
+          </article>
+        ))}
+      </div>
+      {nextCursor ? <button type="button" className="secondary-button order-history-more" disabled={loadingMore || Boolean(reordering)} onClick={() => void loadMore()}>{loadingMore ? 'Loading older orders…' : 'Load older orders'}</button> : null}
+    </section>
+  )
+}
+
 function InternalApp({
   accessSession = null,
   onSignOut,
@@ -5752,6 +5868,8 @@ function InternalApp({
     salesRepEmail: accessOwner?.email ?? '',
   }))
   const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
+  const [orderEntryView, setOrderEntryView] = useState<'new' | 'history'>('new')
+  const [reorderContext, setReorderContext] = useState<{ reference: string; warnings: string[] } | null>(null)
   const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
   const [salesDashboardCustomStart, setSalesDashboardCustomStart] = useState(
     getDefaultSalesDashboardCustomStart,
@@ -7140,7 +7258,7 @@ function InternalApp({
       )
       const attachment = salesOrderAttachmentFile
         ? await uploadSalesOrderAttachment(salesOrderAttachmentFile)
-        : null
+        : salesOrderDraft.attachment
       const draftToSubmit = {
         ...cloneSalesOrderDraft(salesOrderDraft),
         attachment,
@@ -7163,6 +7281,7 @@ function InternalApp({
         salesRep: accessOwner?.name ?? '',
         salesRepEmail: accessOwner?.email ?? '',
       })
+      setReorderContext(null)
       setSalesOrderAttachmentFile(null)
       setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
     } catch (error) {
@@ -8136,11 +8255,15 @@ function InternalApp({
             {canAccessToolSection('orders') ? (
               <button
                 type="button"
-                className={activeSection === 'orders' ? 'active' : ''}
-                onClick={() => setActiveSection('orders')}
+                className={activeSection === 'orders' && orderEntryView === 'new' ? 'active' : ''}
+                onClick={() => { setOrderEntryView('new'); setActiveSection('orders') }}
               >
                 Submit New Order
               </button>
+            ) : null}
+            {canAccessToolSection('orders') ? (
+              <button type="button" className={activeSection === 'orders' && orderEntryView === 'history' ? 'active' : ''}
+                onClick={() => { setOrderEntryView('history'); setActiveSection('orders') }}>My orders</button>
             ) : null}
             {canAccessToolSection('production') ? (
               <button
@@ -9070,11 +9193,33 @@ function InternalApp({
         </>
       ) : activeSection === 'orders' ? (
         <section className="orders-page submit-order-page">
+          {orderEntryView === 'history' ? (
+            <MyOrderHistory onReorder={(draft, reference, warnings) => {
+              if (salesOrderDraft.playerName || salesOrderDraft.lines.some(line => line.title)) {
+                if (!window.confirm('Replace the current unsent order form with this reorder?')) return
+              }
+              setSalesOrderDraft(draft)
+              setSalesOrderAttachmentFile(null)
+              setReorderContext({ reference, warnings })
+              setOrderActionMessage('')
+              setOrderEntryView('new')
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }} />
+          ) : (
           <section className="panel order-intake-panel">
             <div className="section-heading">
               <p className="eyebrow">Sales intake</p>
-              <h2>Create a Shopify invoice order</h2>
+              <h2>{reorderContext ? `New order from ${reorderContext.reference}` : 'Create a Shopify invoice order'}</h2>
             </div>
+            {reorderContext ? <div className="reorder-review" role="status">
+              <strong>Review your reorder — all fields can be edited before submission.</strong>
+              <ul>{reorderContext.warnings.map(warning => <li key={warning}>{warning}</li>)}</ul>
+              <button type="button" className="secondary-button" onClick={() => {
+                if (!window.confirm('Discard this unsent reorder and start a blank order?')) return
+                setSalesOrderDraft({ ...emptySalesOrderDraft(), salesRep: accessOwner?.name ?? '', salesRepEmail: accessOwner?.email ?? '' })
+                setSalesOrderAttachmentFile(null); setReorderContext(null)
+              }}>Start a blank order</button>
+            </div> : null}
 
             <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
               <div className="form-instructions">
@@ -9129,6 +9274,7 @@ function InternalApp({
               />
             </form>
           </section>
+          )}
         </section>
       ) : activeSection === 'production' ? (
         <section className="orders-page production-queue-page">

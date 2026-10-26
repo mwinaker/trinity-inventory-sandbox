@@ -3071,3 +3071,20 @@ td select {
     min-height: 300px;
   }
 }
+
+.my-order-history { width: 100%; }
+.order-history-search { display: flex; align-items: end; gap: 12px; margin: 20px 0; }
+.order-history-search label { display: grid; gap: 8px; flex: 1; }
+.order-history-search input { width: 100%; min-height: 44px; padding: 10px; }
+.order-history-more { margin-top: 20px; width: 100%; }
+.reorder-review { padding: 18px; margin: 16px 0; border: 1px solid #d9b56d; border-radius: 12px; background: #fff7e8; color: #302719; }
+.reorder-review li { margin: 8px 0; }
+@media (max-width: 640px) { .order-history-search { flex-direction: column; align-items: stretch; } }
+.my-order-history .split-heading > button,
+.order-history-search > button { width: auto; flex: 0 0 auto; }
+.my-order-history .section-heading { flex: 1; min-width: 0; }
+.order-history-search label { min-width: 0; }
+@media (max-width: 640px) {
+  .my-order-history .split-heading { flex-wrap: wrap; }
+  .order-history-search > button { width: 100%; }
+}

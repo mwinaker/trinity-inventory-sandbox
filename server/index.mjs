@@ -1,3 +1,4 @@
+import { createSubmissionSnapshot, groupSubmittedOrders, pageSubmittedOrders, buildReorderDraft, reorderSourceQuery, keepOriginalSubmissionSnapshot } from './order-history.mjs'
 import { calculateSalesOrderTax } from './sales-order-tax.mjs'
 import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderReference, needsTrinityOrderReference, readReferenceResource } from './order-reference.mjs'
 import { isFullyPaidFinancialStatus } from '../shared/order-payment-status.mjs'
@@ -1303,6 +1304,70 @@ app.get('/api/sales-portal/state', requireSalesPortalAccess, async (request, res
       ok: false,
       message: error instanceof Error ? error.message : 'Unknown sales portal state error.',
     })
+  }
+})
+
+let orderHistoryCache = null
+
+// Ownership is checked server-side for both history and reorder data, including admins.
+async function getOwnSubmittedOrderGroups(session) {
+  const owner = getSalesPortalOwnerForEmail(session?.email)
+  if (!owner) return { owner: null, groups: [] }
+  if (!orderHistoryCache || orderHistoryCache.expiresAt <= Date.now()) {
+    orderHistoryCache = { expiresAt: Date.now() + 60_000, promise: listRecords(resourceConfigs.orderJobs) }
+  }
+  let jobs
+  try { jobs = await orderHistoryCache.promise }
+  catch (error) { orderHistoryCache = null; throw error }
+  const owned = jobs.filter(job => job.origin === 'internal_sales' &&
+    isSalesPortalOrderJobOwnedBy(job, owner))
+  return { owner, groups: groupSubmittedOrders(owned) }
+}
+
+app.get('/api/my-orders', requireSalesPortalAccess, async (request, response) => {
+  response.set('Cache-Control', 'no-store')
+  try {
+    if (request.query.fresh === 'true') orderHistoryCache = null
+    const { groups } = await getOwnSubmittedOrderGroups(request.salesPortalSession)
+    response.json({ ok: true, ...pageSubmittedOrders(groups, {
+      after: cleanString(request.query.after), search: cleanString(request.query.search),
+    }) })
+  } catch (error) {
+    response.status(500).json({ ok: false, message: error.message || 'Could not load order history.' })
+  }
+})
+
+app.get('/api/my-orders/:id/reorder', requireSalesPortalAccess, async (request, response) => {
+  response.set('Cache-Control', 'no-store')
+  try {
+    if (request.salesPortalSession.role === 'production') {
+      response.status(403).json({ ok: false, message: 'Production accounts cannot submit sales orders.' })
+      return
+    }
+    const { owner, groups } = await getOwnSubmittedOrderGroups(request.salesPortalSession)
+    const group = groups.find(item => item.primary.id === request.params.id || item.jobs.some(job => job.id === request.params.id))
+    if (!owner || !group) {
+      response.status(404).json({ ok: false, message: 'Order not found in your submitted orders.' })
+      return
+    }
+    let source = null
+    if (!group.primary.submissionSnapshot) {
+      const id = group.primary.shopifyOrderId || group.primary.shopifyDraftOrderId
+      if (id) {
+        try { source = (await shopifyGraphQL(reorderSourceQuery, { id }))?.data?.node ?? null }
+        catch { source = null } // Stored fields remain usable; the response flags missing source details.
+      }
+    }
+    const result = buildReorderDraft(group, source, owner)
+    if (result.attachment) {
+      result.draft.attachment = {
+        ...result.attachment,
+        uploadToken: createOrderAttachmentUploadToken(result.attachment),
+      }
+    }
+    response.json({ ok: true, draft: result.draft, warnings: result.warnings })
+  } catch (error) {
+    response.status(500).json({ ok: false, message: error.message || 'Could not prepare reorder.' })
   }
 })
 
@@ -4357,6 +4422,7 @@ async function ensureDefinitions() {
 }
 
 function invalidateStateCache() {
+  orderHistoryCache = null
   stateCacheValue = null
   stateCacheExpiresAt = 0
   stateCachePromise = null
@@ -4639,6 +4705,10 @@ async function applyStatePatch(payload, options = {}) {
   }
 
   const patch = normalizeStatePatch(payload)
+  // An older client or a production edit cannot erase or replace the original form snapshot.
+  patch.orderJobs = await Promise.all(patch.orderJobs.map(async job =>
+    keepOriginalSubmissionSnapshot(await getRecordByHandle(resourceConfigs.orderJobs, job.id), job),
+  ))
   if (patch.crmContacts.length > 0 || patch.deletes.crmContacts.length > 0) {
     const staleCrmContactIds = getDerivedCrmContactDeleteIds(
       await listRecords(resourceConfigs.crmContacts),
@@ -9017,6 +9087,7 @@ function mapDraftOrderToJobs(
       internalAttachmentNotifications: [],
       notes: cleanString(line.notes),
       internalNotes: cleanString(payload.notes),
+      submissionSnapshot: index === 0 ? createSubmissionSnapshot(payload) : undefined,
       createdAt: draftOrder.createdAt ?? now,
       updatedAt: now,
     }
@@ -9055,6 +9126,7 @@ function mapCompletedDraftOrderToJobs(
         job.internalAttachmentNotifications,
       ),
       internalNotes: cleanString(payload.notes),
+      submissionSnapshot: index === 0 ? createSubmissionSnapshot(payload) : undefined,
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
     }
@@ -9088,6 +9160,7 @@ function mapCreatedOrderToJobs(
         job.internalAttachmentNotifications,
       ),
       internalNotes: cleanString(payload.notes),
+      submissionSnapshot: index === 0 ? createSubmissionSnapshot(payload) : undefined,
       notes: job.notes || cleanString(line.notes),
       totalPrice: cleanString(line.unitPrice) || job.totalPrice,
     }
@@ -9338,6 +9411,7 @@ function mergeOrderJob(existing, incoming) {
         ? 'cancelled'
         : existing.productionStatus || incoming.productionStatus,
     orderReference: incoming.orderReference || existing.orderReference || '',
+    intakeId: existing.intakeId || incoming.intakeId,
     shopifyDraftOrderId: existing.shopifyDraftOrderId || incoming.shopifyDraftOrderId,
     shopifyDraftOrderName: existing.shopifyDraftOrderName || incoming.shopifyDraftOrderName,
     shopifyDraftInvoiceUrl: existing.shopifyDraftInvoiceUrl || incoming.shopifyDraftInvoiceUrl,
@@ -9373,6 +9447,7 @@ function mergeOrderJob(existing, incoming) {
       ...(incoming.internalAttachmentNotifications ?? []),
     ]),
     internalNotes: existing.internalNotes || incoming.internalNotes,
+    submissionSnapshot: existing.submissionSnapshot || incoming.submissionSnapshot,
     createdAt: existing.createdAt || incoming.createdAt,
     updatedAt: incoming.updatedAt || new Date().toISOString(),
   }
