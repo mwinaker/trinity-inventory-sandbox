@@ -5052,7 +5052,7 @@ function SalesOrderFormFields({
         Internal order notes
         <textarea
           value={draft.notes}
-          placeholder="Payment terms, delivery promise, team contact, or packaging notes"
+          placeholder="Private staff notes — never included on customer invoices or quotes"
           onChange={(event) => updateField('notes', event.target.value)}
         />
       </label>

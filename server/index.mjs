@@ -8395,7 +8395,6 @@ function buildOrderInvoiceEmailInput(payload, order) {
     purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
     shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
-    cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -8429,7 +8428,6 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
     billingCompany ? `Team/agency: ${billingCompany}` : '',
     lineSummary ? `Order lines: ${lineSummary}` : '',
     shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
-    cleanString(payload.notes) ? `Notes: ${cleanString(payload.notes)}` : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -8449,7 +8447,6 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
   const playerName = cleanString(primaryJob.playerName)
   const purchaseOrder = cleanString(primaryJob.purchaseOrder)
   const billingCompany = cleanString(primaryJob.billingCompany)
-  const notes = cleanString(primaryJob.internalNotes || primaryJob.notes)
   const customMessage = [
     'A Trinity Sports Group invoice has been created from an internal sales order.',
     invoiceUrl
@@ -8458,7 +8455,6 @@ function buildDraftOrderInvoiceEmailInput(jobs) {
     playerName ? `Player: ${playerName}` : '',
     purchaseOrder ? `Purchase order: ${purchaseOrder}` : '',
     billingCompany ? `Team/agency: ${billingCompany}` : '',
-    notes ? `Notes: ${notes}` : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -8520,8 +8516,9 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = directAddresses.shippingAddress
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
+  // Internal order notes belong only in production jobs and staff notifications.
+  // Shopify notes can be rendered on customer invoices and quotes.
   const note = [
-    cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
     requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
     shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
@@ -8662,8 +8659,9 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
   const directAddresses = buildDirectOrderAddresses(payload)
   const shippingAddress = directAddresses.shippingAddress
   const formattedShippingAddress = formatMailingAddress(shippingAddress)
+  // Internal order notes belong only in production jobs and staff notifications.
+  // Shopify notes can be rendered on customer invoices and quotes.
   const note = [
-    cleanString(payload.notes),
     hasProOrder ? 'Order type: Pro Order' : '',
     requiresShipping ? '' : 'Fulfillment: Local delivery / no shipping required',
     shippingOption ? `Shipping: ${formatSalesOrderShippingCharge(shippingOption)}` : '',
