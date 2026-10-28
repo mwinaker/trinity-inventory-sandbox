@@ -1,3 +1,4 @@
+import { productionLineDetails } from './production-line-details.mjs'
 import { productionOrderJobs } from '../shared/production-documents.ts'
 import { mergeCurrentPrintJobs } from './production-print-records.mjs'
 import { installProductionPrintRoutes } from './production-print.mjs'
@@ -6876,10 +6877,12 @@ async function getProductionPrintJobs(id) {
     after = order.lineItems.pageInfo.hasNextPage ? order.lineItems.pageInfo.endCursor : null
   } while (after)
   order.lineItems.nodes = lines.filter(line => line.currentQuantity > 0).map(line => ({ ...line, quantity: line.currentQuantity }))
-  const current = mapGraphQLOrderToJobs(order).map(job => ({
-    ...job,
-    notes: attributesToRecord(lines.find(line => line.id === job.lineItemId)?.customAttributes).trinity_notes || '',
-  }))
+  const current = mapGraphQLOrderToJobs(order).map(job => {
+    const attributes = lines.find(line => line.id === job.lineItemId)?.customAttributes || []
+    const details = productionLineDetails(attributes, job.specs, job.productTitle)
+    return { ...job, specs: details.specs, additionalInternalAttachments: details.attachments,
+      notes: details.specs.notes || '' }
+  })
   const result = mergeCurrentPrintJobs(current, saved)
   if (result[0]) result[0].sourceOrderNotes = order.note || ''
   return result

@@ -14,7 +14,7 @@ export function mergeCurrentPrintJobs(current, saved) {
       assignedBilletId: exact?.assignedBilletId || '',
       linkedProducedBatId: exact?.linkedProducedBatId || '',
       internalNotes: notes,
-      additionalInternalAttachments: index === 0 ? attachments : [],
+      additionalInternalAttachments: [...(job.additionalInternalAttachments || []), ...(index === 0 ? attachments : [])],
       internalAttachment: job.internalAttachment || attachments[index % Math.max(attachments.length, 1)] || null,
       // Retain the saved order-level selections, but don't match old lines by position.
       submissionSnapshot: index === 0 ? saved.find(old => old.submissionSnapshot)?.submissionSnapshot : undefined,
