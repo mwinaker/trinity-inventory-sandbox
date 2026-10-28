@@ -478,7 +478,8 @@ const resourceConfigs = {
   },
   orderDocuments: {
     type: '$app:trinity_order_documents',
-    managedByConfig: true, name: 'Trinity Order Documents', deleteMissing: false,
+    // The backend uses the legacy custom app token, separate from the CLI extension app.
+    name: 'Trinity Order Documents', deleteMissing: false,
     labelFor: item => item.reference || item.resourceId || item.id,
     fieldsFor: () => [], fieldDefinitions: [],
   },
@@ -1327,7 +1328,7 @@ app.get('/api/sales-portal/state', requireSalesPortalAccess, async (request, res
 
 const orderDocumentService = createOrderDocumentService({
   query: shopifyGraphQL,
-  read: id => getRecordByHandle(resourceConfigs.orderDocuments, id),
+  read: async id => { await ensureDefinitions(); return getRecordByHandle(resourceConfigs.orderDocuments, id) },
   write: record => upsertRecord(resourceConfigs.orderDocuments, record),
   productionJobs: getProductionPrintJobs,
 })
@@ -5408,7 +5409,6 @@ function singleLine(value) {
 
 async function ensureDefinitionsInternal() {
   for (const config of Object.values(resourceConfigs)) {
-    if (config.managedByConfig) continue
     await runWithShopifyRetry(async () => {
       const result = await shopifyGraphQL(
         `
