@@ -1,3 +1,4 @@
+import { openProductionDocument } from './production-documents.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 import {
   type Dispatch,
@@ -9395,6 +9396,18 @@ function InternalApp({
                           </span>
                           <span className="profile-count">Qty {job.quantity}</span>
                         </div>
+                      </div>
+
+                      <div className="order-actions" aria-label="Internal production documents">
+                        <button type="button" className="secondary-button" onClick={() => {
+                          try { openProductionDocument(orderJobs, job, 'detail') }
+                          catch (error) { setOrderActionMessage(error instanceof Error ? error.message : 'Could not open production document.') }
+                        }}>Production only - detailed copy</button>
+                        <button type="button" className="secondary-button" onClick={() => {
+                          try { openProductionDocument(orderJobs, job, 'landscape') }
+                          catch (error) { setOrderActionMessage(error instanceof Error ? error.message : 'Could not open production document.') }
+                        }}>Production only - landscape sheet</button>
+                        <span className="helper-text">Whole order · internal notes and attachments · never included in customer emails</span>
                       </div>
 
                       <div className="order-job-grid">
