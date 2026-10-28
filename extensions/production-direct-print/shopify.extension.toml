@@ -1,0 +1,19 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "Production copy (internal only)"
+handle = "production-direct-print"
+type = "ui_extension"
+uid = "5ff6909f-9876-fdb0-f90b-055262e77c853403e580"
+
+# Only 1 target can be specified for each admin print action extension
+[[extensions.targeting]]
+module = "./src/PrintActionExtension.jsx"
+target = "admin.order-details.print-action.render"
+
+# Valid extension targets:
+
+# - admin.order-details.print-action.render
+# - admin.order-index.selection-print-action.render
+# - admin.product-details.print-action.render
+# - admin.product-index.selection-print-action.render

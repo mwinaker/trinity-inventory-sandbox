@@ -1,3 +1,4 @@
+import { installProductionPrintRoutes } from './production-print.mjs'
 import { createSubmissionSnapshot, groupSubmittedOrders, pageSubmittedOrders, buildReorderDraft, reorderSourceQuery, keepOriginalSubmissionSnapshot } from './order-history.mjs'
 import { calculateSalesOrderTax } from './sales-order-tax.mjs'
 import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderReference, needsTrinityOrderReference, readReferenceResource } from './order-reference.mjs'
@@ -1630,6 +1631,8 @@ function setAdminExtensionCorsHeaders(response) {
   response.set('Access-Control-Allow-Methods', 'GET, OPTIONS')
   response.set('Vary', 'Origin')
 }
+
+installProductionPrintRoutes(app, { authorize: requireInternalAccess, getJobs: async () => (await getSharedState()).orderJobs, secret: internalSessionSecret })
 
 app.options('/api/order-attachment-link', (_request, response) => {
   setAdminExtensionCorsHeaders(response)
