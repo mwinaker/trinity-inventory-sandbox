@@ -4,9 +4,11 @@ import { buildProductionDocument, productionOrderJobs } from '../shared/producti
 export function installProductionPrintRoutes(app, { authorize, getJobs, secret, now = Date.now }) {
   const sign = value => crypto.createHmac('sha256', secret).update(value).digest('base64url')
   const privateHeaders = response => response.set({ 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow', 'X-Content-Type-Options': 'nosniff' })
-  const cors = (_request, response, next) => {
+  const cors = (request, response, next) => {
     privateHeaders(response)
-    response.set({ 'Access-Control-Allow-Origin': 'https://extensions.shopifycdn.com', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin' })
+    const origin = request.get('Origin')
+    if (['https://extensions.shopifycdn.com', 'https://admin.shopify.com'].includes(origin)) response.set('Access-Control-Allow-Origin', origin)
+    response.set({ 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, OPTIONS', Vary: 'Origin' })
     next()
   }
   const findJobs = async id => {
@@ -30,7 +32,8 @@ export function installProductionPrintRoutes(app, { authorize, getJobs, secret, 
       response.json({ urls })
     } catch { response.status(503).json({ message: 'Production documents are temporarily unavailable. Please reopen this action.' }) }
   })
-  app.get('/api/production-print', async (request, response) => {
+  app.options('/api/production-print', cors, (_request, response) => response.sendStatus(204))
+  app.get('/api/production-print', cors, async (request, response) => {
     privateHeaders(response)
     try {
       const ticket = request.query.ticket
