@@ -1,4 +1,5 @@
 import { openProductionDocument } from './production-documents.ts'
+import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 import {
   type Dispatch,
@@ -4143,6 +4144,7 @@ function isCrmSandboxPreviewRoute() {
 
 function getInitialActiveSection(): ActiveSection {
   const params = new URLSearchParams(window.location.search)
+  if (productionShortcut(window.location.search)) return 'production'
   return isCrmSandboxPreviewRoute() && params.get('section') === 'crm' ? 'crm' : 'inventory'
 }
 
@@ -5910,6 +5912,7 @@ function InternalApp({
   const [crmAssistantResult, setCrmAssistantResult] = useState('')
   const [crmMessage, setCrmMessage] = useState('')
   const [orderQuery, setOrderQuery] = useState('')
+  const [productionShortcutTarget, setProductionShortcutTarget] = useState(() => productionShortcut(window.location.search))
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
   const [isCreatingDraftOrder, setIsCreatingDraftOrder] = useState(false)
@@ -6633,6 +6636,7 @@ function InternalApp({
   const filteredOrderJobs = useMemo(
     () =>
       productionOrderJobs.filter((job) => {
+        if (!matchesProductionShortcut(job, productionShortcutTarget)) return false
         const matchesStatus =
           orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
         if (!matchesStatus) return false
@@ -6684,7 +6688,7 @@ function InternalApp({
 
         return searchable.includes(normalizedOrderQuery)
       }),
-    [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs],
+    [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs, productionShortcutTarget],
   )
   const renderedOrderJobs = getProgressiveListSlice(filteredOrderJobs, productionRenderLimit)
   const activeSalesPaymentReconciliation = useMemo(() => {
@@ -9357,6 +9361,17 @@ function InternalApp({
               </div>
             ) : null}
 
+            {productionShortcutTarget ? <div className="order-actions" aria-label="Selected Shopify order">
+              <p>{productionShortcutTarget.invalid
+                ? 'The Shopify shortcut did not include a valid single order. Return to the order and open Production documents again.'
+                : `Production documents for the selected Shopify ${productionShortcutTarget.resource === 'DraftOrder' ? 'draft order' : 'order'}. Choose detailed copy or landscape sheet below.`}</p>
+              <button type="button" className="secondary-button" onClick={() => {
+                setProductionShortcutTarget(null)
+                const url = new URL(window.location.href)
+                for (const key of ['productionResource', 'id', 'ids', 'ids[]']) url.searchParams.delete(key)
+                window.history.replaceState(null, '', url)
+              }}>Show all production jobs</button>
+            </div> : null}
             {orderActionMessage ? <p className="helper-text">{orderActionMessage}</p> : null}
 
             <div className="order-job-list">
