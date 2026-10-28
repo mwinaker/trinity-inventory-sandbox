@@ -48,3 +48,14 @@ test('records survive service restarts, reconcile conversion, paginate source an
  assert.equal([...records.values()][0].source.lineItems.nodes.length,2)
  assert.equal([...records.values()][0].ownerEmail,'rep@example.com')
 })
+
+
+test('a removed Shopify record does not hide saved production sources or attachments',async()=>{
+ const records=new Map()
+ const service=createOrderDocumentService({query:async()=>({data:{nodes:[null]}}),read:async id=>records.get(id),write:async r=>records.set(r.id,r)})
+ const result=await service.reconcile(group,{includeSource:true})
+ assert.equal(result.sourceUnavailable,true)
+ assert.equal(result.paymentStatus,'UNAVAILABLE')
+ assert.equal(result.resourceId,draft.id)
+ assert.equal([...records.values()][0].savedJobs[0].id,job.id)
+})

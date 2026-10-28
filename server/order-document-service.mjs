@@ -31,7 +31,14 @@ export function createOrderDocumentService({query,read,write,productionJobs}) {
    const previous=stored.reduce((all,r)=>({...all,invoiceSentAt:[all.invoiceSentAt,r.invoiceSentAt].filter(Boolean).sort().at(-1)||'',paidAt:all.paidAt||r.paidAt||''}),{})
    const result=await query(documentStatusQuery,{ids})
    const sources=(result?.data?.nodes||[]).filter(Boolean)
-   if(!sources.length)throw new Error('Shopify could not verify this order.')
+   if(!sources.length) {
+    const target=ids[0]
+    const attachments=collectOrderAttachments(group,null)
+    const source=stored.find(r=>r.source)?.source || {id:target,name:group.primary.shopifyOrderName||group.primary.shopifyDraftOrderName||group.primary.orderReference||'Order'}
+    const value={...previous,paymentStatus:'UNAVAILABLE',unavailable:true,sourceUnavailable:true,verifiedAt:new Date().toISOString(),events:stored.flatMap(r=>r.events||[]),resourceId:target,source,attachments,reference:group.primary.orderReference||source.name}
+    await update(target,{...value,savedJobs:group.sourceJobs||group.jobs,ownerEmail:group.primary.salesRepEmail||'',documents:['receipt','quote','production','landscape']})
+    cache.set(key,{expires:Date.now()+60_000,value});return value
+   }
    const status=statusFromSources(sources,previous)
    const target=status.orderId||ids.find(id=>id.includes('/DraftOrder/'))||ids[0]
    const events=stored.flatMap(r=>r.events||[])

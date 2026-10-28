@@ -5711,7 +5711,7 @@ function TeamPinLoginForm({ onAuthenticated }: TeamPinLoginFormProps) {
 }
 
 type OrderDocumentTracking = {
-  invoiceSentAt?: string; paidAt?: string; paymentStatus?: string; verifiedAt?: string; unavailable?: boolean
+  invoiceSentAt?: string; paidAt?: string; paymentStatus?: string; verifiedAt?: string; unavailable?: boolean; sourceUnavailable?: boolean
   attachments?: {filename: string; downloadUrl: string}[]
   events?: {id: string; type: string; at: string}[]
 }
@@ -5766,6 +5766,7 @@ function OrderDocuments({row, onSessionExpired}: {row: OrderHistoryRow; onSessio
       {error?<p role="alert">{error}</p>:null}
       {bundle ? <>
         <h4>Customer documents</h4>
+        {bundle.sourceUnavailable?<p role="status">The original Shopify record is unavailable. Saved production details and attachments are still accessible. Customer PDFs can open only if Order Printer Pro retains a copy; payment status cannot be verified.</p>:null}
         <div className="order-document-buttons">{[['receipt','Receipt/Invoice PDF'],['quote','Quote PDF']].map(([kind,label])=><button key={kind} type="button" disabled={Boolean(opening)} onClick={()=>void openDocument(kind)}>{opening===kind?'Preparing…':label}</button>)}</div>
         <h4>Production only · internal use</h4>
         <p>Contains internal specifications, notes, and attachments. Opening a document does not send it to anyone.</p>
