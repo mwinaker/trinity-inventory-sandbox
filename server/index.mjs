@@ -2597,8 +2597,7 @@ function serveInternalAppShell(request, response) {
   const isInternalShell = isInternalAppShellPath(request.path)
 
   serveAppShell(response, {
-    includeShopifyAppBridge: request.query.embedded === '1' &&
-      ['Order', 'DraftOrder'].includes(request.query.productionResource),
+    includeShopifyAppBridge: false,
     includeTeamPinFallback: isInternalShell,
   })
 }
