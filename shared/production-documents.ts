@@ -8,6 +8,7 @@ export type ProductionJob = {
   totalPrice?: string; currency?: string; itemType?: string; specs?: object;
   orderSubmittedAt?: string; createdAt?: string; updatedAt?: string; cancelledAt?: string;
   submissionSnapshot?: { draft: object };
+  additionalInternalAttachments?: { filename: string; downloadUrl: string; contentType?: string }[];
   internalAttachment?: { filename: string; downloadUrl: string; contentType?: string } | null;
 }
 export type ProductionLayout = 'detail' | 'landscape'
@@ -54,7 +55,7 @@ export function buildProductionDocument(jobs: ProductionJob[], layout: Productio
   const originalLines = Array.isArray(snapshot.lines) ? snapshot.lines as Record<string, unknown>[] : []
   const reference = primary.orderReference || primary.shopifyOrderName || primary.shopifyDraftOrderName || primary.id
   const orderFields = Object.fromEntries(Object.entries(snapshot).filter(([k])=>!['lines','notes','sendInvoice','createDraftOrder','attachment'].includes(k)))
-  const attachments = [...new Map(jobs.flatMap(j=>j.internalAttachment ? [j.internalAttachment] : []).map(a=>[a.downloadUrl,a])).values()]
+  const attachments = [...new Map(jobs.flatMap(j=>[...(j.internalAttachment ? [j.internalAttachment] : []), ...(j.additionalInternalAttachments || [])]).map(a=>[a.downloadUrl,a])).values()]
   const notes = [...new Set(jobs.map(j=>j.internalNotes?.trim()).filter(Boolean))]
   const cards = jobs.map((job,index)=>{
     // Snapshot line order is only used when the stored draft job index proves its identity.

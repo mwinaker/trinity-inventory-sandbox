@@ -12,7 +12,7 @@ export function installProductionPrintRoutes(app, { authorize, getJobs, secret, 
     next()
   }
   const findJobs = async id => {
-    const all = await getJobs()
+    const all = await getJobs(id)
     const key = id.includes('/DraftOrder/') ? 'shopifyDraftOrderId' : 'shopifyOrderId'
     const selected = all.find(job => job[key] === id)
     return selected ? productionOrderJobs(all, selected) : []

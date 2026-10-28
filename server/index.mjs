@@ -1,3 +1,5 @@
+import { productionOrderJobs } from '../shared/production-documents.ts'
+import { mergeCurrentPrintJobs } from './production-print-records.mjs'
 import { installProductionPrintRoutes } from './production-print.mjs'
 import { createSubmissionSnapshot, groupSubmittedOrders, pageSubmittedOrders, buildReorderDraft, reorderSourceQuery, keepOriginalSubmissionSnapshot } from './order-history.mjs'
 import { calculateSalesOrderTax } from './sales-order-tax.mjs'
@@ -1632,7 +1634,7 @@ function setAdminExtensionCorsHeaders(response) {
   response.set('Vary', 'Origin')
 }
 
-installProductionPrintRoutes(app, { authorize: requireInternalAccess, getJobs: async () => (await getSharedState()).orderJobs, secret: internalSessionSecret })
+installProductionPrintRoutes(app, { authorize: requireInternalAccess, getJobs: getProductionPrintJobs, secret: internalSessionSecret })
 
 app.options('/api/order-attachment-link', (_request, response) => {
   setAdminExtensionCorsHeaders(response)
@@ -6836,6 +6838,45 @@ async function getSalesPaymentReconciliation(
 function invalidateSalesPaymentReconciliationCache() {
   salesPaymentReconciliationCache.clear()
   salesPaymentReconciliationPromises.clear()
+}
+
+async function getProductionPrintJobs(id) {
+  const all = (await getSharedState()).orderJobs
+  const key = id.includes('/DraftOrder/') ? 'shopifyDraftOrderId' : 'shopifyOrderId'
+  const selected = all.find(job => job[key] === id)
+  if (!selected) return []
+  const saved = productionOrderJobs(all, selected)
+  if (key === 'shopifyDraftOrderId') return saved
+  let order, after = null
+  const lines = []
+  do {
+    const result = await shopifyGraphQL(`query ProductionPrintOrder($id: ID!, $after: String) {
+      order(id: $id) {
+        id name email createdAt updatedAt cancelledAt displayFinancialStatus displayFulfillmentStatus tags note
+        customAttributes { key value }
+        internalAttachment: metafield(namespace: "trinity", key: "internal_attachment") { jsonValue }
+        currentTotalPriceSet { shopMoney { amount currencyCode } }
+        customer { displayName email }
+        shippingAddress { name }
+        lineItems(first: 100, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id title quantity currentQuantity
+            originalUnitPriceSet { shopMoney { amount currencyCode } }
+            discountedUnitPriceSet { shopMoney { amount currencyCode } }
+            variant { id title product { id title productType } }
+            customAttributes { key value }
+          }
+        }
+      }
+    }`, { id, after })
+    order = result?.data?.order
+    if (!order) throw new Error('Current Shopify order is unavailable')
+    lines.push(...order.lineItems.nodes)
+    after = order.lineItems.pageInfo.hasNextPage ? order.lineItems.pageInfo.endCursor : null
+  } while (after)
+  order.lineItems.nodes = lines.filter(line => line.currentQuantity > 0).map(line => ({ ...line, quantity: line.currentQuantity }))
+  return mergeCurrentPrintJobs(mapGraphQLOrderToJobs(order), saved)
 }
 
 async function listRecentOrders(first) {
