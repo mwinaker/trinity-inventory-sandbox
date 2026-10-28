@@ -6876,7 +6876,13 @@ async function getProductionPrintJobs(id) {
     after = order.lineItems.pageInfo.hasNextPage ? order.lineItems.pageInfo.endCursor : null
   } while (after)
   order.lineItems.nodes = lines.filter(line => line.currentQuantity > 0).map(line => ({ ...line, quantity: line.currentQuantity }))
-  return mergeCurrentPrintJobs(mapGraphQLOrderToJobs(order), saved)
+  const current = mapGraphQLOrderToJobs(order).map(job => ({
+    ...job,
+    notes: attributesToRecord(lines.find(line => line.id === job.lineItemId)?.customAttributes).trinity_notes || '',
+  }))
+  const result = mergeCurrentPrintJobs(current, saved)
+  if (result[0]) result[0].sourceOrderNotes = order.note || ''
+  return result
 }
 
 async function listRecentOrders(first) {
