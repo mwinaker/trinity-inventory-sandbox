@@ -39,7 +39,7 @@ for (const statement of ast.statements) {
 }
 async function request(route, session, id = '') {
   context.getValidatedSalesPortalSession = async () => session
-  const req = { params: { id }, query: {} }
+  const req = { params: { id, kind: 'production' }, query: {} }
   const result = { status: 200, body: null }
   const res = { set: () => res, status: code => { result.status = code; return res }, json: body => { result.body = body; return res } }
   const [middleware, handler] = routes.get(route)
@@ -90,3 +90,13 @@ test('snapshot and intake identity survive order webhook merges', () => {
   assert.equal(result.submissionSnapshot, existing.submissionSnapshot)
   assert.equal(result.intakeId, 's')
 })
+
+for (const route of ['/api/my-orders/:id/documents','/api/my-orders/:id/documents/:kind']) {
+  test(`${route} denies unauthenticated and other rep access before accessing documents`, async () => {
+    const denied = await request(route, null, 'shane-job')
+    assert.equal(denied.status,401)
+    const other = await request(route, shane, 'keith-job')
+    assert.equal(other.status,404)
+    assert.equal(JSON.stringify(other.body).includes('PRIVATE_KEITH'),false)
+  })
+}

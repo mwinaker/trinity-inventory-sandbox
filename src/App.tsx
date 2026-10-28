@@ -5710,9 +5710,82 @@ function TeamPinLoginForm({ onAuthenticated }: TeamPinLoginFormProps) {
   )
 }
 
+type OrderDocumentTracking = {
+  invoiceSentAt?: string; paidAt?: string; paymentStatus?: string; verifiedAt?: string; unavailable?: boolean
+  attachments?: {filename: string; downloadUrl: string}[]
+  events?: {id: string; type: string; at: string}[]
+}
+const documentDate = (value?: string) => value && !Number.isNaN(Date.parse(value))
+  ? new Date(value).toLocaleString('en-US', {dateStyle:'medium', timeStyle:'short'}) : 'Date not recorded'
+
+function OrderDocuments({row, onSessionExpired}: {row: OrderHistoryRow; onSessionExpired?: () => void | Promise<void>}) {
+  const [expanded,setExpanded] = useState(false)
+  const [bundle,setBundle] = useState<OrderDocumentTracking | null>(null)
+  const [loading,setLoading] = useState(false)
+  const [opening,setOpening] = useState('')
+  const [error,setError] = useState('')
+  const tracking = bundle || row.tracking
+  async function load() {
+    setExpanded(true); setLoading(true); setError('')
+    try {
+      const response = await fetchApi(`/api/my-orders/${encodeURIComponent(row.id)}/documents`, {cache:'no-store'})
+      const data = await response.json()
+      if(response.status===401) void onSessionExpired?.()
+      if(!response.ok || !data.ok) throw new Error(data.message || 'Could not load documents.')
+      setBundle(data)
+    } catch(err) {setError(err instanceof Error ? err.message : 'Could not load documents.')}
+    finally {setLoading(false)}
+  }
+  async function openDocument(kind: string) {
+    const popup = window.open('about:blank','_blank')
+    if(!popup) {setError('Allow pop-ups for this tool, then select the document again.');return}
+    popup.opener = null
+    popup.document.title = 'Preparing document'
+    popup.document.body.textContent = 'Preparing your document…'
+    setOpening(kind); setError('')
+    try {
+      const response = await fetchApi(`/api/my-orders/${encodeURIComponent(row.id)}/documents/${kind}`,{cache:'no-store'})
+      if(response.status===401) void onSessionExpired?.()
+      if(!response.ok) {const data=await response.json();throw new Error(data.message||'Could not open document.')}
+      const url = URL.createObjectURL(await response.blob())
+      popup.location.replace(url)
+      // The viewer retains the loaded document; release the temporary browser URL afterward.
+      window.setTimeout(()=>URL.revokeObjectURL(url), 300_000)
+    }catch(err){popup.close();setError(err instanceof Error?err.message:'Could not open document.')}
+    finally{setOpening('')}
+  }
+  return <div className="order-documents">
+    <div className="order-document-tracking">
+      {tracking?.unavailable ? <span>Live status unavailable — open documents to retry.</span> : <>
+        <span><strong>Invoice sent:</strong> {documentDate(tracking?.invoiceSentAt)}</span>
+        <span><strong>Paid:</strong> {tracking?.paidAt ? documentDate(tracking.paidAt) : ['PAID','REFUNDED','PARTIALLY_REFUNDED'].includes(tracking?.paymentStatus||'') ? 'Date not recorded' : 'No full payment recorded'}</span>
+      </>}
+    </div>
+    <button type="button" className="secondary-button" disabled={loading} onClick={()=>expanded?setExpanded(false):void load()}>{loading?'Loading documents…':expanded?'Hide documents':'Documents & tracking'}</button>
+    {expanded ? <section className="order-document-panel" aria-label={`Documents for ${row.reference}`}>
+      {error?<p role="alert">{error}</p>:null}
+      {bundle ? <>
+        <h4>Customer documents</h4>
+        <div className="order-document-buttons">{[['receipt','Receipt/Invoice PDF'],['quote','Quote PDF']].map(([kind,label])=><button key={kind} type="button" disabled={Boolean(opening)} onClick={()=>void openDocument(kind)}>{opening===kind?'Preparing…':label}</button>)}</div>
+        <h4>Production only · internal use</h4>
+        <p>Contains internal specifications, notes, and attachments. Opening a document does not send it to anyone.</p>
+        <div className="order-document-buttons">{[['production','Production Invoice'],['landscape','Landscape production']].map(([kind,label])=><button key={kind} type="button" className="secondary-button" disabled={Boolean(opening)} onClick={()=>void openDocument(kind)}>{opening===kind?'Preparing…':label}</button>)}</div>
+        <h4>Order attachments</h4>
+        {bundle.attachments?.length?<ul>{bundle.attachments.map(a=><li key={a.downloadUrl}><a href={a.downloadUrl} target="_blank" rel="noreferrer">{a.filename || 'Open attachment'}</a></li>)}</ul>:<p>No attachments stored for this order.</p>}
+        <h4>Invoice & payment history</h4>
+        <p>Current payment status: <strong>{bundle.paymentStatus?.replaceAll('_',' ')}</strong></p>
+        {bundle.events?.length?<ul>{bundle.events.map(e=><li key={e.id}>{e.type==='paid'?'Full payment received':'Invoice sent'} · {documentDate(e.at)}</li>)}</ul>:<p>No verified send or full-payment dates recorded.</p>}
+        <p className="muted">Checked {documentDate(bundle.verifiedAt)}. Older sends without a Shopify record cannot be dated. Documents use current order details.</p>
+      </>:null}
+      <button type="button" className="secondary-button" disabled={loading||Boolean(opening)} onClick={()=>void load()}>Refresh documents & status</button>
+    </section>:null}
+  </div>
+}
+
 type OrderHistoryRow = {
   id: string; reference: string; submittedAt: string; playerName: string; payerName: string
   summary: string; quantity: number; status: string; currency: string; productTotal: number
+  tracking?: OrderDocumentTracking
 }
 
 function MyOrderHistory({ onReorder, onSessionExpired }: {
@@ -5806,7 +5879,7 @@ function MyOrderHistory({ onReorder, onSessionExpired }: {
       <div className="sales-dashboard-list">
         {orders.map(row => (
           <article className="sales-dashboard-card" key={row.id}>
-            <div><span className="profile-type-pill">{row.status}</span><h3>{row.reference} · {row.playerName || row.payerName || 'Unnamed order'}</h3><p>{row.summary}</p>{row.payerName && row.payerName !== row.playerName ? <p>Payer: {row.payerName}</p> : null}</div>
+            <div><span className="profile-type-pill">{row.status}</span><h3>{row.reference} · {row.playerName || row.payerName || 'Unnamed order'}</h3><p>{row.summary}</p>{row.payerName && row.payerName !== row.playerName ? <p>Payer: {row.payerName}</p> : null}<OrderDocuments row={row} onSessionExpired={onSessionExpired} /></div>
             <div className="sales-card-values"><span>{Number.isNaN(Date.parse(row.submittedAt)) ? 'Date not recorded' : new Date(row.submittedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span><span>{row.quantity} items</span><button type="button" disabled={Boolean(reordering)} onClick={() => void reorder(row)}>{reordering === row.id ? 'Loading order…' : 'Reorder'}</button></div>
           </article>
         ))}

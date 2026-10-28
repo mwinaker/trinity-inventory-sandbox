@@ -1,3 +1,6 @@
+import { createOrderDocumentService } from './order-document-service.mjs'
+import { customerDocumentUrl } from './order-documents.mjs'
+import { buildProductionDocument } from '../shared/production-documents.ts'
 import { productionLineDetails } from './production-line-details.mjs'
 import { productionOrderJobs } from '../shared/production-documents.ts'
 import { mergeCurrentPrintJobs } from './production-print-records.mjs'
@@ -473,6 +476,12 @@ const resourceConfigs = {
       definitionField('created_at', 'Created At', 'single_line_text_field'),
     ],
   },
+  orderDocuments: {
+    type: '$app:trinity_order_documents',
+    managedByConfig: true, name: 'Trinity Order Documents', deleteMissing: false,
+    labelFor: item => item.reference || item.resourceId || item.id,
+    fieldsFor: () => [], fieldDefinitions: [],
+  },
   orderJobs: {
     type: '$app:trinity_order_job',
     name: 'Trinity Order Job',
@@ -886,6 +895,11 @@ app.post('/api/webhooks/orders', express.raw({ type: 'application/json' }), asyn
         rememberOrderJobContacts(mergedJobs),
       ])
       await syncOrderJobMetafields(mergedJobs)
+      orderHistoryCache = null
+      for (const group of groupSubmittedOrders(mergedJobs)) {
+        try { await orderDocumentService.reconcile(group,{refresh:true,includeSource:true}) }
+        catch (error) { console.error('Order document tracking will reconcile on next access:',error.message) }
+      }
       invalidateSalesPaymentReconciliationCache()
     }
 
@@ -1311,6 +1325,13 @@ app.get('/api/sales-portal/state', requireSalesPortalAccess, async (request, res
   }
 })
 
+const orderDocumentService = createOrderDocumentService({
+  query: shopifyGraphQL,
+  read: id => getRecordByHandle(resourceConfigs.orderDocuments, id),
+  write: record => upsertRecord(resourceConfigs.orderDocuments, record),
+  productionJobs: getProductionPrintJobs,
+})
+
 let orderHistoryCache = null
 
 // Ownership is checked server-side for both history and reorder data, including admins.
@@ -1333,12 +1354,64 @@ app.get('/api/my-orders', requireSalesPortalAccess, async (request, response) =>
   try {
     if (request.query.fresh === 'true') orderHistoryCache = null
     const { groups } = await getOwnSubmittedOrderGroups(request.salesPortalSession)
-    response.json({ ok: true, ...pageSubmittedOrders(groups, {
+    const page = pageSubmittedOrders(groups, {
       after: cleanString(request.query.after), search: cleanString(request.query.search),
-    }) })
+    })
+    // Bound concurrent Shopify reads while reconciling every visible order.
+    for (let index=0; index<page.orders.length; index+=3) {
+      await Promise.all(page.orders.slice(index,index+3).map(async row => {
+        const group = groups.find(g => g.primary.id === row.id)
+        try {
+          const tracking = await orderDocumentService.reconcile(group, {refresh:request.query.fresh==='true'})
+          row.tracking = tracking
+          row.status = tracking.paymentStatus
+        } catch { row.tracking = { unavailable:true, message:'Live status unavailable. Open documents to retry.' } }
+      }))
+    }
+    response.json({ ok: true, ...page })
   } catch (error) {
     response.status(500).json({ ok: false, message: error.message || 'Could not load order history.' })
   }
+})
+
+async function findOwnedHistoryOrder(request) {
+  const {groups} = await getOwnSubmittedOrderGroups(request.salesPortalSession)
+  return groups.find(item => item.primary.id === request.params.id || item.jobs.some(job => job.id === request.params.id))
+}
+
+app.get('/api/my-orders/:id/documents', requireSalesPortalAccess, async (request,response) => {
+  response.set('Cache-Control','private, no-store')
+  try {
+    const group=await findOwnedHistoryOrder(request)
+    if(!group)return response.status(404).json({ok:false,message:'Order not found in your submitted orders.'})
+    const bundle=await orderDocumentService.reconcile(group,{refresh:true,includeSource:true})
+    const {source,...details}=bundle
+    response.json({ok:true,...details})
+  }catch(error){response.status(503).json({ok:false,message:error.message||'Could not load order documents.'})}
+})
+
+app.get('/api/my-orders/:id/documents/:kind', requireSalesPortalAccess, async (request,response) => {
+  response.set({'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow','X-Content-Type-Options':'nosniff'})
+  try {
+    const kind=request.params.kind
+    if(!['receipt','quote','production','landscape'].includes(kind))return response.status(400).json({ok:false,message:'Unknown document type.'})
+    const group=await findOwnedHistoryOrder(request)
+    if(!group)return response.status(404).json({ok:false,message:'Order not found in your submitted orders.'})
+    const bundle=await orderDocumentService.reconcile(group,{includeSource:true})
+    let html
+    if(kind==='receipt'||kind==='quote') {
+      const pdf=await downloadOrderPrinterProPdfAttachment({url:customerDocumentUrl(bundle.source,kind),filename:`${kind}.pdf`,timeoutMs:30_000})
+      response.set('Content-Disposition',`inline; filename="${kind}.pdf"`)
+      return response.type('application/pdf').send(Buffer.from(pdf.content,'base64'))
+    }
+    else {
+      const jobs=await getProductionPrintJobs(bundle.resourceId, group.jobs)
+      if (!jobs.length) throw new Error('No production lines are available for this order.')
+      html=buildProductionDocument(jobs,kind==='landscape'?'landscape':'detail').replace(/<div class="toolbar">[\s\S]*?<\/div>/,'')
+    }
+    response.set('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; img-src https://cdn.shopify.com; base-uri 'none'; form-action 'none'")
+    response.type('html').send(html)
+  }catch(error){response.status(503).json({ok:false,message:error.message||'Could not open this document.'})}
 })
 
 app.get('/api/my-orders/:id/reorder', requireSalesPortalAccess, async (request, response) => {
@@ -2053,6 +2126,7 @@ app.post('/api/sales-orders', async (request, response) => {
             ? {
                 ...job,
                 invoiceStatus: 'sent',
+                invoiceSentAt: payerInvoiceNotification.sentAt,
               }
             : job,
       )
@@ -4079,7 +4153,7 @@ async function sendInternalOrderCopyEmail({
 
   if (draftOrder?.id) {
     await sendShopifyInternalOrderCopies({
-      sendInvoice: (emailInput) => sendDraftOrderInvoice(draftOrder.id, emailInput),
+      sendInvoice: (emailInput) => sendDraftOrderInvoice(draftOrder.id, emailInput, false),
       recipients,
       subject,
       text,
@@ -4094,7 +4168,7 @@ async function sendInternalOrderCopyEmail({
 
   if (order?.id) {
     await sendShopifyInternalOrderCopies({
-      sendInvoice: (emailInput) => sendOrderInvoice(order.id, emailInput),
+      sendInvoice: (emailInput) => sendOrderInvoice(order.id, emailInput, false),
       recipients,
       subject,
       text,
@@ -5334,6 +5408,7 @@ function singleLine(value) {
 
 async function ensureDefinitionsInternal() {
   for (const config of Object.values(resourceConfigs)) {
+    if (config.managedByConfig) continue
     await runWithShopifyRetry(async () => {
       const result = await shopifyGraphQL(
         `
@@ -6177,7 +6252,7 @@ async function createTaxCalculatedPendingOrder(input) {
   return { order, sourceDraft }
 }
 
-async function sendDraftOrderInvoice(draftOrderId, emailInput) {
+async function sendDraftOrderInvoice(draftOrderId, emailInput, trackCustomerSend = true) {
   const resource = await readReferenceResource(shopifyGraphQL, draftOrderId)
   if (needsTrinityOrderReference(resource)) {
     const verified = await ensureTrinityOrderReference(shopifyGraphQL, draftOrderId)
@@ -6205,9 +6280,10 @@ async function sendDraftOrderInvoice(draftOrderId, emailInput) {
   if (errors.length > 0) {
     throw new Error(`Invoice send error: ${errors.map((item) => item.message).join(', ')}`)
   }
+  try { if (trackCustomerSend) await orderDocumentService.recordSent(draftOrderId) } catch (error) { console.error('Invoice sent; tracking write will need reconciliation:', error.message) }
 }
 
-async function sendOrderInvoice(orderId, emailInput) {
+async function sendOrderInvoice(orderId, emailInput, trackCustomerSend = true) {
   const result = await shopifyGraphQL(
     `
       mutation SendOrderInvoice($orderId: ID!, $email: EmailInput) {
@@ -6230,6 +6306,7 @@ async function sendOrderInvoice(orderId, emailInput) {
   if (errors.length > 0) {
     throw new Error(`Order invoice send error: ${errors.map((item) => item.message).join(', ')}`)
   }
+  try { if (trackCustomerSend) await orderDocumentService.recordSent(orderId) } catch (error) { console.error('Invoice sent; tracking write will need reconciliation:', error.message) }
 }
 
 async function listOrdersUpdatedSince(sinceDate) {
@@ -6841,12 +6918,12 @@ function invalidateSalesPaymentReconciliationCache() {
   salesPaymentReconciliationPromises.clear()
 }
 
-async function getProductionPrintJobs(id) {
-  const all = (await getSharedState()).orderJobs
+async function getProductionPrintJobs(id, ownedJobs = null) {
+  const all = ownedJobs || (await getSharedState()).orderJobs
   const key = id.includes('/DraftOrder/') ? 'shopifyDraftOrderId' : 'shopifyOrderId'
   const selected = all.find(job => job[key] === id)
-  if (!selected) return []
-  const saved = productionOrderJobs(all, selected)
+  if (!selected && !ownedJobs) return []
+  const saved = selected ? productionOrderJobs(all, selected) : ownedJobs
   if (key === 'shopifyDraftOrderId') return saved
   let order, after = null
   const lines = []

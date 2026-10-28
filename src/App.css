@@ -3088,3 +3088,13 @@ td select {
   .my-order-history .split-heading { flex-wrap: wrap; }
   .order-history-search > button { width: 100%; }
 }
+
+.order-documents { margin-top: 16px; }
+.order-document-tracking { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 13px; margin-bottom: 12px; }
+.order-document-panel { margin-top: 14px; padding: 20px; background: #f5f8f5; border: 1px solid #d5dfd6; border-radius: 12px; }
+.order-document-panel h4 { margin: 20px 0 8px; }
+.order-document-panel h4:first-child { margin-top: 0; }
+.order-document-panel p { max-width: 720px; }
+.order-document-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.order-document-panel li { margin: 8px 0; overflow-wrap: anywhere; }
+.order-document-panel .muted { font-size: 12px; color: #526058; }

@@ -22,3 +22,16 @@ api_version = "2026-04"
 
 [app_preferences]
 url = "https://trinity-billet-inventory.onrender.com"
+
+[metaobjects.app.trinity_order_documents]
+name = "Trinity Order Documents"
+display_name_field = "label"
+access.admin = "merchant_read_write"
+
+[metaobjects.app.trinity_order_documents.fields.label]
+name = "Label"
+type = "single_line_text_field"
+
+[metaobjects.app.trinity_order_documents.fields.payload]
+name = "Payload"
+type = "json"
