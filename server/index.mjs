@@ -1405,7 +1405,7 @@ app.get('/api/my-orders/:id/documents/:kind', requireSalesPortalAccess, async (r
       return response.type('application/pdf').send(Buffer.from(pdf.content,'base64'))
     }
     else {
-      const jobs=await getProductionPrintJobs(bundle.resourceId, group.jobs)
+      const jobs=await getProductionPrintJobs(bundle.resourceId, group.sourceJobs || group.jobs)
       if (!jobs.length) throw new Error('No production lines are available for this order.')
       html=buildProductionDocument(jobs,kind==='landscape'?'landscape':'detail').replace(/<div class="toolbar">[\s\S]*?<\/div>/,'')
     }

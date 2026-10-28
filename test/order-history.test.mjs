@@ -113,3 +113,14 @@ test('older clients and production edits cannot erase or replace the original sn
   }
   assert.equal(keepOriginalSubmissionSnapshot(job, { ...job, submissionSnapshot: { version: 1 } }).submissionSnapshot, undefined)
 })
+
+
+test('completed order lines replace draft copies without losing source attachments', () => {
+  const draft={id:'d',origin:'internal_sales',intakeId:'one',shopifyDraftOrderId:'draft',lineItemId:'gid://shopify/DraftOrderLineItem/1',quantity:12,internalAttachment:{filename:'drawing.pdf'}}
+  const order={...draft,id:'o',shopifyOrderId:'order',lineItemId:'gid://shopify/LineItem/2',internalAttachment:null}
+  const [group]=groupSubmittedOrders([draft,order])
+  assert.equal(group.jobs.length,1)
+  assert.equal(group.jobs[0].quantity,12)
+  assert.equal(group.sourceJobs.length,2)
+  assert.equal(group.sourceJobs[0].internalAttachment.filename,'drawing.pdf')
+})

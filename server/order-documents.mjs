@@ -10,7 +10,7 @@ export const documentStatusQuery = `query OrderDocumentStatus($ids: [ID!]!) { no
 } }`
 export const amount = bag => Number(bag?.shopMoney?.amount || 0)
 export function resourceIds(group) {
- return [...new Set([group.primary,...group.jobs].flatMap(j=>[j.shopifyOrderId,j.shopifyDraftOrderId]).filter(Boolean))]
+ return [...new Set([group.primary,...(group.sourceJobs||group.jobs)].flatMap(j=>[j.shopifyOrderId,j.shopifyDraftOrderId]).filter(Boolean))]
 }
 export function statusFromSources(sources, stored = {}) {
  const order = sources.find(s=>s?.id?.includes('/Order/')) || sources.find(s=>s?.order)?.order
@@ -21,7 +21,7 @@ export function statusFromSources(sources, stored = {}) {
  return { invoiceSentAt, paidAt, paymentStatus:status, outstanding:order ? amount(order.totalOutstandingSet) : null, orderId:order?.id || '', verifiedAt:new Date().toISOString() }
 }
 export function collectOrderAttachments(group, source) {
- const attachments = [...group.jobs,group.primary].flatMap(j=>[...(j.internalAttachment?[j.internalAttachment]:[]),...(j.additionalInternalAttachments||[])])
+ const attachments = [...(group.sourceJobs||group.jobs),group.primary].flatMap(j=>[...(j.internalAttachment?[j.internalAttachment]:[]),...(j.additionalInternalAttachments||[])])
  for(const line of source?.lineItems?.nodes||[]) attachments.push(...productionLineDetails(line.customAttributes,{},line.title).attachments)
  return [...new Map(attachments.filter(a=>{try {const u=new URL(a.downloadUrl);return u.protocol==='https:'&&u.hostname==='cdn.shopify.com'}catch{return false}}).map(a=>[a.downloadUrl,{filename:a.filename,downloadUrl:a.downloadUrl,contentType:a.contentType||''}])).values()]
 }

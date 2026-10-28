@@ -48,14 +48,15 @@ export function groupSubmittedOrders(jobs) {
   return [...groups].map(([key, rows]) => {
     // A completed draft and its webhook/imported copy must not duplicate a line.
     const seen = new Set()
-    const unique = rows.filter(job => {
+    const completedLines = rows.filter(job => String(job.lineItemId || '').startsWith('gid://shopify/LineItem/'))
+    const unique = (completedLines.length ? completedLines : rows).filter(job => {
       const id = job.lineItemId || job.id
       if (seen.has(id)) return false
       seen.add(id)
       return true
     })
     const primary = rows.find(job => job.submissionSnapshot?.version === 1) || rows[0]
-    return { key, jobs: unique, primary, submittedAt: primary.orderSubmittedAt || primary.createdAt || '' }
+    return { key, jobs: unique, sourceJobs: rows, primary, submittedAt: primary.orderSubmittedAt || primary.createdAt || '' }
   }).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt) || a.key.localeCompare(b.key))
 }
 
