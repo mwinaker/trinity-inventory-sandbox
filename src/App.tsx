@@ -1,4 +1,5 @@
 import { openProductionDocument } from './production-documents.ts'
+import { productionModelLabel, supportsPuckKnob } from '../shared/production-model.ts'
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 import {
@@ -432,6 +433,7 @@ type SalesOrderLineDraft = {
   logoColor: string
   engraving: string
   cupped: 'Yes' | 'No'
+  puckKnob: 'Yes' | 'No'
   wood: Species | 'Other'
   notes: string
 }
@@ -1366,6 +1368,7 @@ const emptySalesLine = (itemType: SalesOrderItemType = 'bat'): SalesOrderLineDra
   logoColor: '',
   engraving: '',
   cupped: 'No',
+  puckKnob: 'No',
   wood: 'Maple',
   notes: '',
 })
@@ -5024,6 +5027,26 @@ function SalesOrderFormFields({
                       />
                     </label>
                   </div>
+                  {supportsPuckKnob(productInputValue, line.itemType) ? (
+                    <div className="form-row single-field-row">
+                      <label>
+                        Puck knob
+                        <select
+                          aria-label={`Puck knob for line ${index + 1}`}
+                          value={line.puckKnob === 'Yes' ? 'Yes' : 'No'}
+                          onChange={(event) => updateLine(line.id, {
+                            puckKnob: event.target.value as SalesOrderLineDraft['puckKnob'],
+                          })}
+                        >
+                          <option value="No">Standard knob</option>
+                          <option value="Yes">Puck knob</option>
+                        </select>
+                        {line.puckKnob === 'Yes' ? (
+                          <span className="helper-text">Production model: {productionModelLabel({ model: productInputValue, puckKnob: line.puckKnob })}</span>
+                        ) : null}
+                      </label>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
             </article>
@@ -5182,11 +5205,16 @@ function getTypedBatModelPatch(
   }
 }
 
+function updateSalesLineDraft(line: SalesOrderLineDraft, patch: Partial<SalesOrderLineDraft>): SalesOrderLineDraft {
+  const updated = { ...line, ...patch }
+  return { ...updated, puckKnob: supportsPuckKnob(updated.title, updated.itemType) && updated.puckKnob === 'Yes' ? 'Yes' : 'No' }
+}
+
 function cloneSalesOrderDraft(draft: SalesOrderDraft): SalesOrderDraft {
   return {
     ...draft,
     attachment: draft.attachment ? { ...draft.attachment } : null,
-    lines: draft.lines.map((line) => ({ ...line })),
+    lines: draft.lines.map((line) => updateSalesLineDraft(line, {})),
   }
 }
 
@@ -5361,7 +5389,7 @@ function PublicSalesOrderForm() {
   function updateSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
     setSalesOrderDraft((current) => ({
       ...current,
-      lines: current.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+      lines: current.lines.map((line) => (line.id === id ? updateSalesLineDraft(line, patch) : line)),
     }))
   }
 
@@ -5553,6 +5581,7 @@ function PublicSalesOrderForm() {
                 line.targetWeight ? `${line.targetWeight} oz` : '',
                 line.wood,
                 line.cupped === 'Yes' ? 'Cupped' : 'No cup',
+                supportsPuckKnob(line.title, line.itemType) ? (line.puckKnob === 'Yes' ? 'Puck knob' : 'Standard knob') : '',
               ].filter(Boolean)
 
               return (
@@ -7246,7 +7275,7 @@ function InternalApp({
   function updateSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
     setSalesOrderDraft((current) => ({
       ...current,
-      lines: current.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+      lines: current.lines.map((line) => (line.id === id ? updateSalesLineDraft(line, patch) : line)),
     }))
   }
 
@@ -13189,7 +13218,7 @@ function SalesPortalApp() {
   function updatePortalSalesLine(id: string, patch: Partial<SalesOrderLineDraft>) {
     setOrderDraft((current) => ({
       ...current,
-      lines: current.lines.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+      lines: current.lines.map((line) => (line.id === id ? updateSalesLineDraft(line, patch) : line)),
     }))
   }
 

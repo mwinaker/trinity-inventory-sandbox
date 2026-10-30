@@ -21,6 +21,7 @@ export function createSubmissionSnapshot(payload) {
   snapshot.createDraftOrder = payload.createDraftOrder !== false
   snapshot.lines = (payload.lines ?? []).map(line => ({
     ...Object.fromEntries(lineFields.map(key => [key, text(line[key])])),
+    ...(line.puckKnob === undefined ? {} : { puckKnob: text(line.puckKnob) }),
     quantity: Number(line.quantity || 1), isProOrder: line.isProOrder === true,
   }))
   return { version: 1, draft: snapshot }
@@ -118,6 +119,7 @@ export function buildReorderDraft(group, source, owner) {
         itemType: job.itemType || 'bat', productId: job.shopifyProductId || '',
         variantId: job.shopifyVariantId || '', variantTitle: job.variantTitle || '',
         title: job.productTitle || '', quantity: Number(job.quantity || 1),
+        puckKnob: /^yes$/i.test(text(job.specs?.puckKnob).trim()) ? 'Yes' : 'No',
         unitPrice: text(job.totalPrice), isProOrder: /^pro order\b/i.test(job.productTitle || ''),
         notes: job.notes || job.specs?.notes || '',
       })),

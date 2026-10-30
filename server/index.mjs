@@ -2,6 +2,7 @@ import { createOrderDocumentService } from './order-document-service.mjs'
 import { customerDocumentUrl } from './order-documents.mjs'
 import { buildProductionDocument } from '../shared/production-documents.ts'
 import { productionLineDetails } from './production-line-details.mjs'
+import { productionModelLabel, supportsPuckKnob } from '../shared/production-model.ts'
 import { productionOrderJobs } from '../shared/production-documents.ts'
 import { mergeCurrentPrintJobs } from './production-print-records.mjs'
 import { installProductionPrintRoutes } from './production-print.mjs'
@@ -8817,6 +8818,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
           trinity_logo_color: itemType === 'bat' ? line.logoColor : '',
           trinity_engraving: itemType === 'bat' ? line.engraving : '',
           trinity_cupped: itemType === 'bat' ? line.cupped : '',
+          trinity_puck_knob: salesLinePuckKnob(line),
           trinity_notes: itemType === 'bat' ? line.notes : '',
           trinity_product_title: line.title,
           trinity_requires_shipping: requiresShipping ? 'true' : 'false',
@@ -8961,6 +8963,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
           trinity_logo_color: itemType === 'bat' ? line.logoColor : '',
           trinity_engraving: itemType === 'bat' ? line.engraving : '',
           trinity_cupped: itemType === 'bat' ? line.cupped : '',
+          trinity_puck_knob: salesLinePuckKnob(line),
           trinity_notes: itemType === 'bat' ? line.notes : '',
           trinity_product_title: line.title,
           trinity_requires_shipping: requiresShipping ? 'true' : 'false',
@@ -9106,8 +9109,13 @@ function buildOrderRushProductionSurchargeLine(payload = {}) {
   }
 }
 
+function salesLinePuckKnob(line = {}) {
+  if (!supportsPuckKnob(cleanString(line.title || line.model), normalizeSalesOrderItemType(line.itemType))) return ''
+  return /^yes$/i.test(cleanString(line.puckKnob)) ? 'Yes' : 'No'
+}
+
 function specsFromSalesLine(line = {}) {
-  return {
+  const specs = {
     model: cleanString(line.title || line.model),
     length: cleanString(line.length),
     targetWeight: cleanString(line.targetWeight),
@@ -9120,6 +9128,11 @@ function specsFromSalesLine(line = {}) {
     cupped: cleanString(line.cupped),
     notes: cleanString(line.notes),
   }
+  // Older payloads have no knob field. They cannot erase an explicit selection
+  // returned by Shopify when a saved draft is completed or refreshed.
+  if (line.puckKnob === undefined) return specs
+  specs.puckKnob = salesLinePuckKnob(line)
+  return { ...specs, productionModel: productionModelLabel(specs) }
 }
 
 function mergeSpecs(primary = {}, fallback = {}) {
@@ -9651,6 +9664,8 @@ function extractSpecs(orderAttributes, lineAttributes) {
     logoColor: lineAttributes.trinity_logo_color ?? orderAttributes.trinity_logo_color ?? '',
     engraving: lineAttributes.trinity_engraving ?? orderAttributes.trinity_engraving ?? '',
     cupped: lineAttributes.trinity_cupped ?? orderAttributes.trinity_cupped ?? '',
+    // A puck choice belongs to this exact bat, never to every line in an order.
+    puckKnob: lineAttributes.trinity_puck_knob ?? '',
     notes: lineAttributes.trinity_notes ?? orderAttributes.trinity_notes ?? '',
   }
 }
