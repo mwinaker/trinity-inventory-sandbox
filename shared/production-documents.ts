@@ -15,7 +15,7 @@ export type ProductionLayout = 'detail' | 'landscape'
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!))
 const values = (value: object | undefined): Record<string, unknown> => value ? { ...value } : {}
 const labels: Record<string, string> = {
-  model:'Model', length:'Length (in)', targetWeight:'Weight / drop', wood:'Wood', handleColor:'Handle color',
+  model:'Model', puckKnob:'Puck knob', length:'Length (in)', targetWeight:'Weight / drop', wood:'Wood', handleColor:'Handle color',
   barrelColor:'Barrel color', bandColor:'Band color', logoColor:'Logo color', engraving:'Engraving',
   cupped:'Cupped', notes:'Line notes', title:'Product / model', variantTitle:'Variant', itemType:'Item type',
   unitPrice:'Unit price', quantity:'Quantity', isProOrder:'Pro order', productId:'Product ID', variantId:'Variant ID',
@@ -70,9 +70,10 @@ export function buildProductionDocument(jobs: ProductionJob[], layout: Productio
     delete fields.title
     delete fields.quantity
     delete fields.model
+    delete fields.productionModel
     const required = ['length','targetWeight','wood','handleColor','barrelColor','bandColor','logoColor','engraving','cupped']
     for (const key of required) if (!(key in fields)) fields[key] = ''
-    return `<article class="product"><h2>${index+1}. ${escape(values(job.specs).model || job.productTitle)}</h2><div class="qty">Quantity: ${escape(job.quantity)} · ${escape(job.productionStatus || 'Not recorded')}</div><dl>${rows(fields,layout==='detail')}</dl>${notes.length > 1 && job.internalNotes ? `<div class="line-note"><b>Internal notes</b><p>${escape(job.internalNotes)}</p></div>` : ''}<small>Job: ${escape(job.id)}<br>Updated: ${escape(job.updatedAt || 'Not recorded')}</small></article>`
+    return `<article class="product"><h2>${index+1}. ${escape(values(job.specs).productionModel || values(job.specs).model || job.productTitle)}</h2><div class="qty">Quantity: ${escape(job.quantity)} · ${escape(job.productionStatus || 'Not recorded')}</div><dl>${rows(fields,layout==='detail')}</dl>${notes.length > 1 && job.internalNotes ? `<div class="line-note"><b>Internal notes</b><p>${escape(job.internalNotes)}</p></div>` : ''}<small>Job: ${escape(job.id)}<br>Updated: ${escape(job.updatedAt || 'Not recorded')}</small></article>`
   }).join('')
   const attachmentHtml = attachments.map(a=>{
     const url = safeUrl(a.downloadUrl)

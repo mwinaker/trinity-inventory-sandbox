@@ -1,3 +1,5 @@
+import { productionModelLabel } from '../shared/production-model.ts'
+
 // Print the selections saved on this exact Shopify line. Website personalizer
 // properties use human-readable labels; manual orders use trinity_* keys.
 const aliases = {
@@ -5,13 +7,14 @@ const aliases = {
   'length (in)': 'length', length: 'length', 'weight (oz)': 'targetWeight',
   weight: 'targetWeight', 'handle colors': 'handleColor', 'handle color': 'handleColor',
   'barrel color': 'barrelColor', 'band color': 'bandColor', logo: 'logoColor',
-  'logo color': 'logoColor', cupped: 'cupped',
+  'logo color': 'logoColor', cupped: 'cupped', 'puck knob': 'puckKnob',
   'engraved text (26 characters max)': 'engraving', 'engraved text': 'engraving',
   engraving: 'engraving', notes: 'notes',
 }
 const manual = {trinity_model:'model',trinity_length:'length',trinity_weight:'targetWeight',trinity_wood:'wood',trinity_handle_color:'handleColor',trinity_barrel_color:'barrelColor',trinity_band_color:'bandColor',trinity_logo_color:'logoColor',trinity_engraving:'engraving',trinity_cupped:'cupped',trinity_notes:'notes'}
 export function productionLineDetails(attributes = [], baseSpecs = {}, productTitle = '') {
-  const specs = { ...baseSpecs }
+  // This is the current exact line: an absent/unchecked option clears old metadata.
+  const specs = { ...baseSpecs, puckKnob: '' }
   const attachments = []
   const selections = {}
   for (const {key, value} of attributes) {
@@ -40,5 +43,7 @@ export function productionLineDetails(attributes = [], baseSpecs = {}, productTi
     // Keep unrecognized options too, including future personalization fields.
     selections[label] = value
   }
-  return { specs: { ...specs, ...selections }, attachments }
+  const result = { ...specs, ...selections }
+  result.productionModel = productionModelLabel(result, productTitle)
+  return { specs: result, attachments }
 }

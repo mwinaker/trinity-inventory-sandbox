@@ -309,6 +309,8 @@ type ProducedBatRecord = {
 
 type OrderSpecs = {
   model: string
+  puckKnob?: string
+  productionModel?: string
   length: string
   targetWeight: string
   wood: string
@@ -1775,6 +1777,8 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     currency: record.currency ?? '',
     specs: {
       model: specs.model ?? '',
+      puckKnob: specs.puckKnob,
+      productionModel: specs.productionModel,
       length: specs.length ?? '',
       targetWeight: specs.targetWeight ?? '',
       wood: specs.wood ?? '',
@@ -2774,6 +2778,8 @@ function hydratePlayerProfileBilletTargets(profile: PlayerProfile, billets: Bill
 function mergeOrderSpecs(primary?: OrderSpecs, fallback?: OrderSpecs): OrderSpecs {
   return {
     model: primary?.model || fallback?.model || '',
+    puckKnob: primary?.puckKnob ?? fallback?.puckKnob,
+    productionModel: primary?.productionModel ?? fallback?.productionModel,
     length: primary?.length || fallback?.length || '',
     targetWeight: primary?.targetWeight || fallback?.targetWeight || '',
     wood: primary?.wood || fallback?.wood || '',
@@ -6744,6 +6750,8 @@ function InternalApp({
           job.orderSubmittedAt,
           assignedBillet,
           job.specs.model,
+          job.specs.productionModel,
+          job.specs.puckKnob,
           job.specs.length,
           job.specs.targetWeight,
           job.specs.wood,
@@ -9558,7 +9566,8 @@ function InternalApp({
 
                         <div className="compatible-list">
                           <span>Build specs</span>
-                          <p>Model: {job.specs.model || 'Not specified'}</p>
+                          <p>Model: {job.specs.productionModel || job.specs.model || 'Not specified'}</p>
+                          {job.specs.puckKnob ? <p>Puck knob: {job.specs.puckKnob}</p> : null}
                           <p>Length: {job.specs.length || 'N/A'}</p>
                           <p>Weight: {job.specs.targetWeight || 'N/A'}</p>
                           <p>Wood species: {job.specs.wood || 'N/A'}</p>

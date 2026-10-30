@@ -9125,6 +9125,8 @@ function specsFromSalesLine(line = {}) {
 function mergeSpecs(primary = {}, fallback = {}) {
   return {
     model: cleanString(primary.model) || cleanString(fallback.model),
+    puckKnob: fallback.puckKnob ?? primary.puckKnob,
+    productionModel: fallback.productionModel ?? primary.productionModel,
     length: cleanString(primary.length) || cleanString(fallback.length),
     targetWeight: cleanString(primary.targetWeight) || cleanString(fallback.targetWeight),
     wood: cleanString(primary.wood) || cleanString(fallback.wood),
@@ -9311,7 +9313,11 @@ function mapGraphQLOrderToJobs(order) {
     const lineAttributes = attributesToRecord(line.customAttributes)
     const variant = line.variant ?? null
     const product = variant?.product ?? null
-    const specs = extractSpecs(orderAttributes, lineAttributes)
+    const specs = productionLineDetails(
+      Object.entries(lineAttributes).map(([key, value]) => ({ key, value })),
+      extractSpecs(orderAttributes, lineAttributes),
+      line.title || line.name || '',
+    ).specs
     const itemType = normalizeSalesOrderItemType(
       lineAttributes.trinity_item_type || (isShirtProductLike(product ?? { title: line.title }) ? 'shirt' : 'bat'),
     )
@@ -9435,7 +9441,11 @@ function mapOrderWebhookToJobs(order, topic) {
   return lines.map((line) => {
     const lineAttributes = attributesToRecord(line.properties)
     const lineItemId = line.admin_graphql_api_id ?? toShopifyGid('LineItem', line.id)
-    const specs = extractSpecs(orderAttributes, lineAttributes)
+    const specs = productionLineDetails(
+      Object.entries(lineAttributes).map(([key, value]) => ({ key, value })),
+      extractSpecs(orderAttributes, lineAttributes),
+      line.title || line.name || '',
+    ).specs
     const itemType = normalizeSalesOrderItemType(
       lineAttributes.trinity_item_type ||
         (isShirtProductLike({
