@@ -870,13 +870,90 @@ button:hover {
   min-width: 0;
 }
 
-.bat-price-panel {
+.bat-category-panel {
   display: grid;
-  gap: 16px;
+  gap: 18px;
+  min-width: 0;
 }
 
-.bat-price-channel-control {
-  min-width: 235px;
+.bat-category-panel .section-heading {
+  margin-bottom: 0;
+}
+
+.bat-category-panel > .split-heading {
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.bat-category-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(165px, 1fr));
+  gap: 12px;
+  flex: 1 1 375px;
+  max-width: 440px;
+}
+
+.bat-category-table,
+.bat-category-team-table,
+.bat-category-orders table,
+.bat-category-review table {
+  min-width: 650px;
+}
+
+.bat-category-table td:not(:first-child),
+.bat-category-team-table td {
+  white-space: nowrap;
+}
+
+.bat-category-team {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bat-category-team-table {
+  min-width: 780px;
+}
+
+.bat-category-team-table .team-total {
+  background: rgba(47, 76, 50, 0.08);
+}
+
+.bat-category-team-table small {
+  display: block;
+  color: #746353;
+  font-weight: 700;
+}
+
+.bat-category-orders td small {
+  display: block;
+  color: #746353;
+  white-space: nowrap;
+}
+
+.bat-category-orders,
+.bat-category-review {
+  min-width: 0;
+}
+
+.bat-category-orders summary,
+.bat-category-review summary {
+  cursor: pointer;
+  color: #253f2a;
+  font-weight: 850;
+}
+
+.bat-category-review summary {
+  color: #8b2f2f;
+}
+
+.bat-category-orders[open] summary,
+.bat-category-review[open] summary {
+  margin-bottom: 10px;
+}
+
+.bat-category-definition {
+  margin: 0;
 }
 
 .bat-price-metrics {
@@ -3369,6 +3446,7 @@ td select {
 }
 
 @media (max-width: 700px) {
+  .bat-category-controls { grid-template-columns: minmax(0, 1fr); max-width: none; }
   .app-shell .order-job-grid,
   .app-shell .job-controls,
   .app-shell .production-photo-upload { grid-template-columns: minmax(0, 1fr); }

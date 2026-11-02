@@ -16,6 +16,7 @@ import { readProductionPhoto, resolveProductionPhoto } from './production-photo-
 import { applyProductionPhotoAssignments } from './production-photo-assignment.mjs'
 import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
 import { buildBatPriceStats } from '../shared/bat-price-stats.mjs'
+import { buildSalesBatCategoryReport } from '../shared/sales-bat-categories.mjs'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1592,6 +1593,10 @@ app.get(
         ),
         batPriceStats: buildBatPriceStats(
           report.batPriceOrders.filter((order) => allowedOrderIds.has(order.orderId)),
+        ),
+        batCategoryReport: buildSalesBatCategoryReport(
+          report.batPriceOrders.filter((order) => allowedOrderIds.has(order.orderId)),
+          (order) => getSalesPortalOwnerKey(order.salesRep, order.salesRepEmail),
         ),
         batPriceOrders: undefined,
         teamLeaderboardRows: !request.salesPortalSession || request.salesPortalSession.isAdmin
@@ -6553,10 +6558,11 @@ async function listOrdersUpdatedSince(sinceDate) {
                   title
                   quantity
                   currentQuantity
+                  customAttributes { key value }
                   priceAfterAllDiscountsBeforeTaxesSet {
                     shopMoney { amount currencyCode }
                   }
-                  variant { product { productType } }
+                  variant { product { title productType } }
                 }
                 pageInfo { hasNextPage endCursor }
               }
@@ -6584,8 +6590,9 @@ async function listOrdersUpdatedSince(sinceDate) {
               lineItems(first: 100, after: $after) {
                 nodes {
                   id title quantity currentQuantity
+                  customAttributes { key value }
                   priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount currencyCode } }
-                  variant { product { productType } }
+                  variant { product { title productType } }
                 }
                 pageInfo { hasNextPage endCursor }
               }
