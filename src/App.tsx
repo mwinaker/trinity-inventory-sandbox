@@ -2,6 +2,8 @@ import { openProductionDocument } from './production-documents.ts'
 import { productionModelLabel, supportsPuckKnob } from '../shared/production-model.ts'
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
+import { summarizeSalesBatCategoryLines } from '../shared/sales-bat-categories.mjs'
+import type { SalesBatCategory, SalesBatCategoryLine } from '../shared/sales-bat-categories.mjs'
 import { getAssignedBilletIds, getBilletAssignmentCandidate } from '../shared/billet-assignment.mjs'
 import { isActionableProductionJob, isConfirmedProductionJob, isProductionBatJob } from '../shared/production-queue.mjs'
 import { getOperationalDataQualityIssues, isCalendarDate } from '../shared/data-quality.mjs'
@@ -708,6 +710,7 @@ type SalesPaymentReconciliationReport = {
   websiteOrders: SalesWebsiteOrder[]
   teamLeaderboardRows: TeamLeaderboardRow[]
   batPriceStats: BatPriceStats
+  batCategoryReport: { lines: SalesBatCategoryLine[] }
 }
 
 const salesReportingCategoryOptions: Array<{
@@ -927,6 +930,19 @@ const salesDashboardRangeOptions: Array<{ value: SalesDashboardRange; label: str
   { value: 'all', label: 'All time' },
   { value: 'custom', label: 'Custom dates' },
 ]
+const salesBatCategoryOptions: Array<{ value: SalesBatCategory; label: string }> = [
+  { value: 'game', label: 'Game bats' },
+  { value: 'training', label: 'Training bats' },
+  { value: 'trophy', label: 'Trophy bats' },
+  { value: 'fungo', label: 'Fungos' },
+]
+const salesBatCategoryLabels: Record<SalesBatCategory, string> = {
+  game: 'Game bats',
+  training: 'Training bats',
+  trophy: 'Trophy bats',
+  fungo: 'Fungos',
+  review: 'Needs review',
+}
 const crmStageOptions: Array<{ value: CrmStage; label: string }> = [
   { value: 'lead', label: 'Lead' },
   { value: 'qualified', label: 'Qualified' },
@@ -6116,6 +6132,7 @@ function InternalApp({
   const [batPriceChannel, setBatPriceChannel] = useState<
     'combined' | 'manual_sales_order_entry' | 'online_store'
   >('combined')
+  const [salesBatCategoryFilter, setSalesBatCategoryFilter] = useState<'all' | SalesBatCategory>('all')
   const [salesPaymentReconciliation, setSalesPaymentReconciliation] =
     useState<SalesPaymentReconciliationReport | null>(null)
   const [salesPaymentReconciliationError, setSalesPaymentReconciliationError] = useState('')
@@ -6568,6 +6585,7 @@ function InternalApp({
           !Array.isArray(payload.reconciliation.checks) ||
           !Array.isArray(payload.websiteOrders) ||
           !Array.isArray(payload.teamLeaderboardRows) ||
+          !Array.isArray(payload.batCategoryReport?.lines) ||
           payload.windowKey !== requestWindow.cacheKey
         ) {
           throw new Error(payload.message || 'Payment reconciliation is unavailable.')
@@ -7076,7 +7094,41 @@ function InternalApp({
     (total, order) => total + order.total,
     0,
   )
-  const salesDashboardCompletedOrders = activeSalesPaymentReconciliation?.completedOrders ?? []
+  const salesDashboardCompletedOrders = useMemo(() =>
+    activeSalesPaymentReconciliation?.completedOrders ?? [], [activeSalesPaymentReconciliation])
+  const salesBatLines = useMemo(() =>
+    (activeSalesPaymentReconciliation?.batCategoryReport.lines ?? []).filter((line) =>
+      (batPriceChannel === 'combined' || line.channel === batPriceChannel) &&
+      (salesDashboardRepFilter === 'all' || line.repKey === salesDashboardRepFilter),
+    ), [activeSalesPaymentReconciliation, batPriceChannel, salesDashboardRepFilter])
+  const salesBatCategoryLines = useMemo(() => salesBatLines.filter((line) =>
+    salesBatCategoryFilter === 'all' || line.category === salesBatCategoryFilter,
+  ), [salesBatLines, salesBatCategoryFilter])
+  const salesBatCategorySummary = useMemo(() =>
+    summarizeSalesBatCategoryLines(salesBatCategoryLines), [salesBatCategoryLines])
+  const salesBatManualSummary = useMemo(() =>
+    summarizeSalesBatCategoryLines(salesBatCategoryLines.filter((line) =>
+      line.channel === 'manual_sales_order_entry')),
+    [salesBatCategoryLines])
+  const salesBatShownCategories = salesBatCategoryFilter === 'all'
+    ? salesBatCategoryOptions
+    : salesBatCategoryOptions.filter((option) => option.value === salesBatCategoryFilter)
+  const salesBatSellerRows = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; lines: SalesBatCategoryLine[] }>()
+    for (const line of salesBatCategoryLines) {
+      const existing = groups.get(line.repKey)
+      if (existing) existing.lines.push(line)
+      else groups.set(line.repKey, { key: line.repKey, label: line.repLabel, lines: [line] })
+    }
+    return [...groups.values()].map((group) => ({ ...group,
+      summary: summarizeSalesBatCategoryLines(group.lines),
+    })).filter((group) => group.summary.all.orderCount > 0)
+      .sort((first, second) => second.summary.all.netSales - first.summary.all.netSales)
+  }, [salesBatCategoryLines])
+  const salesBatOrderRows = useMemo(() => {
+    const ids = new Set(salesBatCategoryLines.map((line) => line.orderId))
+    return salesDashboardCompletedOrders.filter((order) => ids.has(order.orderId))
+  }, [salesBatCategoryLines, salesDashboardCompletedOrders])
   const salesDashboardCanonicalSummary = activeSalesPaymentReconciliation?.summary ?? null
   const salesDashboardCanonicalReconciliation =
     activeSalesPaymentReconciliation?.reconciliation ?? null
@@ -10306,6 +10358,125 @@ function InternalApp({
             </div>
           </section>
 
+          {activeSalesPaymentReconciliation?.batCategoryReport ? (
+            <section className="panel bat-category-panel" aria-label="Bat sales by category">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">Bat sales</p>
+                  <h2>By category · {salesDashboardWindowLabel}</h2>
+                  <p className="helper-text">Paid bat value after discounts and refunds. Shipping, tax, and non-bat items are excluded.</p>
+                </div>
+                <div className="bat-category-controls">
+                  <label>
+                    Bat type
+                    <select value={salesBatCategoryFilter} onChange={(event) =>
+                      setSalesBatCategoryFilter(event.target.value as typeof salesBatCategoryFilter)}>
+                      <option value="all">All bat types</option>
+                      {salesBatCategoryOptions.map((option) =>
+                        <option key={option.value} value={option.value}>{option.label}</option>)}
+                      <option value="review">Needs review</option>
+                    </select>
+                  </label>
+                  {hasAdminAccess ? <label>
+                    Sales channel
+                    <select value={batPriceChannel} onChange={(event) =>
+                      setBatPriceChannel(event.target.value as typeof batPriceChannel)}>
+                      <option value="combined">All approved sales</option>
+                      <option value="manual_sales_order_entry">Manual sales order entry</option>
+                      <option value="online_store">Online Store</option>
+                    </select>
+                  </label> : null}
+                </div>
+              </div>
+              {salesBatCategoryFilter === 'review' ? <p className="canonical-reconciliation-warning" role="status">
+                {salesBatCategorySummary.review.reviewLines} line(s) require category or quantity review. Their values are excluded from category averages.
+              </p> : <div className="bat-price-metrics">
+                <article><span>Paid bats</span><strong>{salesBatCategorySummary.all.paidUnits}</strong></article>
+                <article><span>Bat sales</span><strong>{formatSalesOrderMoney(salesBatCategorySummary.all.netSales)}</strong></article>
+                <article><span>Average per bat</span><strong>{salesBatCategorySummary.all.average === null
+                  ? '—' : formatSalesOrderMoney(salesBatCategorySummary.all.average)}</strong></article>
+                <article><span>Median per bat</span><strong>{salesBatCategorySummary.all.median === null
+                  ? '—' : formatSalesOrderMoney(salesBatCategorySummary.all.median)}</strong></article>
+              </div>}
+              {salesBatShownCategories.length > 0 ? <div className="table-wrap">
+                <table className="bat-category-table">
+                  <thead><tr><th>Bat category</th><th>Paid bats</th><th>Bat sales</th><th>Avg / bat</th><th>Median / bat</th><th>Comped</th><th>Pending</th><th>Orders</th></tr></thead>
+                  <tbody>{salesBatShownCategories.map((option) => {
+                    const bucket = salesBatCategorySummary[option.value]
+                    return <tr key={option.value}>
+                      <th scope="row">{option.label}</th>
+                      <td>{bucket.paidUnits}</td>
+                      <td>{formatSalesOrderMoney(bucket.netSales)}</td>
+                      <td>{bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</td>
+                      <td>{bucket.median === null ? '—' : formatSalesOrderMoney(bucket.median)}</td>
+                      <td>{bucket.compedUnits}</td>
+                      <td>{bucket.pendingUnits}</td>
+                      <td>{bucket.orderCount}</td>
+                    </tr>
+                  })}</tbody>
+                </table>
+              </div> : null}
+              {salesBatShownCategories.length > 0 ? <div className="bat-category-team">
+                <div className="section-heading"><p className="eyebrow">Who sold what</p><h3>Team and salesperson breakdown</h3></div>
+                <div className="table-wrap"><table className="bat-category-team-table">
+                  <thead><tr><th>Seller</th>{salesBatShownCategories.map((option) =>
+                    <th key={option.value}>{option.label}</th>)}<th>All selected bats</th></tr></thead>
+                  <tbody>
+                    <tr className="team-total"><th scope="row">{salesDashboardRepFilter !== 'all'
+                      ? 'Selected salesperson' : batPriceChannel === 'combined'
+                        ? 'All sales' : batPriceChannel === 'online_store' ? 'Online Store total' : 'Sales team total'}</th>
+                      {salesBatShownCategories.map((option) => {
+                        const bucket = salesBatCategorySummary[option.value]
+                        return <td key={option.value}>{bucket.paidUnits} bats · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
+                      })}
+                      <td>{salesBatCategorySummary.all.paidUnits} bats · {formatSalesOrderMoney(salesBatCategorySummary.all.netSales)}</td>
+                    </tr>
+                    {salesDashboardRepFilter === 'all' && batPriceChannel === 'combined' ?
+                      <tr className="team-total"><th scope="row">Sales team total</th>
+                        {salesBatShownCategories.map((option) => {
+                          const bucket = salesBatManualSummary[option.value]
+                          return <td key={option.value}>{bucket.paidUnits} bats · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
+                        })}
+                        <td>{salesBatManualSummary.all.paidUnits} bats · {formatSalesOrderMoney(salesBatManualSummary.all.netSales)}</td>
+                      </tr> : null}
+                    {salesBatSellerRows.map((seller) => <tr key={seller.key}><th scope="row">{seller.label}</th>
+                      {salesBatShownCategories.map((option) => {
+                        const bucket = seller.summary[option.value]
+                        return <td key={option.value}>{bucket.paidUnits} bats · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
+                      })}
+                      <td>{seller.summary.all.paidUnits} bats · {formatSalesOrderMoney(seller.summary.all.netSales)}</td>
+                    </tr>)}
+                  </tbody>
+                </table></div>
+              </div> : null}
+              <p className="helper-text bat-category-definition">A mixed order contributes each line to its own category. Averages use paid, documented Shopify line units; comped and pending bats are shown separately. The salesperson filter above applies to this view. Online orders have their own row because no salesperson is assigned to them.</p>
+              {salesBatLines.filter((line) => line.category === 'review').length > 0 ?
+                <details className="bat-category-review" open={salesBatCategoryFilter === 'review'}><summary>{salesBatLines.filter((line) => line.category === 'review').length} line(s) need category or quantity review</summary>
+                  <div className="table-wrap"><table><thead><tr><th>Order</th><th>Line</th><th>Reason</th><th>Line value</th></tr></thead><tbody>
+                    {salesBatLines.filter((line) => line.category === 'review').map((line) =>
+                      <tr key={`${line.orderId}:${line.lineId}`}><td>{line.orderName}</td><td>{line.title}</td><td>{line.basis}</td><td>{line.value === null ? '—' : formatSalesOrderMoney(line.value)}</td></tr>)}
+                  </tbody></table></div>
+                </details> : null}
+              <details className="bat-category-orders"><summary>View matching orders ({salesBatOrderRows.length})</summary>
+                <div className="table-wrap"><table><thead><tr><th>Created</th><th>Order</th><th>Channel</th><th>Salesperson</th><th>Bat type</th><th>Documented bats</th><th>Status</th><th>Selected bat value</th></tr></thead><tbody>
+                  {salesBatOrderRows.map((order) => {
+                    const matchingLines = salesBatCategoryLines.filter((line) => line.orderId === order.orderId)
+                    return <tr key={order.orderId}><td>{formatSalesDashboardDate(order.orderCreatedAt)}</td>
+                      <td>{order.orderName}</td><td>{formatSalesReportingCategory(order.reportingCategory)}</td>
+                      <td>{order.reportingCategory === 'online_store' ? 'Online Store' : order.salesRep || order.salesRepEmail || 'Unassigned'}</td>
+                      <td>{[...new Set(matchingLines.map((line) => salesBatCategoryLabels[line.category]))].join(', ')}</td>
+                      <td>{matchingLines.reduce((sum, line) => sum + line.quantity, 0)}
+                        {matchingLines.some((line) => line.quantity !== line.shopifyQuantity) ?
+                          <small>Shopify lines: {matchingLines.reduce((sum, line) => sum + line.shopifyQuantity, 0)} units</small> : null}</td>
+                      <td>{formatSalesOrderStatusBucket(order.statusBucket)}</td>
+                      <td>{formatSalesOrderMoney(matchingLines.reduce((sum, line) => sum + (line.saleStatus === 'paid' ? line.value ?? 0 : 0), 0))}</td>
+                    </tr>
+                  })}
+                </tbody></table></div>
+              </details>
+            </section>
+          ) : null}
+
           <section className="panel sales-leaderboard-panel">
             <div className="split-heading">
               <div className="section-heading">
@@ -10522,54 +10693,6 @@ function InternalApp({
                   </table>
                 </div>
               </details>
-            </section>
-          ) : null}
-
-          {hasAdminAccess && activeSalesPaymentReconciliation?.batPriceStats ? (
-            <section className="panel bat-price-panel" aria-label="Price per bat">
-              <div className="split-heading">
-                <div className="section-heading">
-                  <p className="eyebrow">Bat pricing</p>
-                  <h2>Price per bat · {salesDashboardWindowLabel}</h2>
-                  <p className="helper-text">Whole-team results from paid Shopify bat lines.</p>
-                </div>
-                <label className="bat-price-channel-control">
-                  Sales channel
-                  <select value={batPriceChannel} onChange={(event) =>
-                    setBatPriceChannel(event.target.value as typeof batPriceChannel)}>
-                    <option value="combined">All approved sales</option>
-                    <option value="manual_sales_order_entry">Manual sales order entry</option>
-                    <option value="online_store">Online Store</option>
-                  </select>
-                </label>
-              </div>
-              <div className="bat-price-metrics">
-                <article><span>Average per bat</span><strong>{
-                  activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].average === null
-                    ? '—'
-                    : formatSalesOrderMoney(activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].average)
-                }</strong></article>
-                <article><span>Median per bat</span><strong>{
-                  activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].median === null
-                    ? '—'
-                    : formatSalesOrderMoney(activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].median)
-                }</strong></article>
-                <article><span>Paid bats counted</span><strong>{
-                  activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].batCount
-                }</strong></article>
-                <article><span>Bat sales counted</span><strong>{
-                  formatSalesOrderMoney(activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].netBatSales)
-                }</strong></article>
-              </div>
-              <p className="helper-text">{activeSalesPaymentReconciliation.batPriceStats.definition}</p>
-              {activeSalesPaymentReconciliation.batPriceStats.review.filter((line) =>
-                batPriceChannel === 'combined' || line.channel === batPriceChannel).length > 0 ? (
-                <p className="canonical-reconciliation-warning" role="alert">
-                  {activeSalesPaymentReconciliation.batPriceStats.review.filter((line) =>
-                    batPriceChannel === 'combined' || line.channel === batPriceChannel).length}{' '}
-                  paid line(s) need bat or bundle review and are excluded from this price calculation.
-                </p>
-              ) : null}
             </section>
           ) : null}
 
