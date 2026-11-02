@@ -45,3 +45,24 @@ test('bundles and lines needing production notes are excluded for review', () =>
   assert.equal(result.manual_sales_order_entry.average, null)
   assert.deepEqual(result.review.map((entry) => entry.orderName), ['#old', '#new'])
 })
+
+test('named bat models count while apparel, grips, wax, fees, and shipping do not', () => {
+  const result = buildBatPriceStats([
+    { orderName: '#models', reportingCategory: 'online_store', financialStatus: 'PAID', lineItems: [
+      line(999010, 'Trinity Model SB08 (Softball Series)', 1, 1, 150),
+      line(999011, 'RA13', 1, 1, 120),
+      line(999012, 'BOOM Stick Custom', 1, 1, 180),
+      line(999013, 'Split Grip Trainer', 1, 1, 100),
+      line(999014, 'Three Bats Tee', 1, 1, 25),
+      line(999015, 'Lizard Skin DSP Ultra 0.5mm Bat Grip', 1, 1, 15),
+      line(999016, 'Trinity Stick - Trinity Bat Wax', 1, 1, 12),
+      line(999017, 'Trinity Batting Gloves 2.0 White/Gold', 1, 1, 30),
+      line(999018, 'Rush Production Surcharge', 1, 1, 40),
+      line(999019, 'Shipping — 47 bats', 1, 1, 35),
+    ] },
+  ])
+  assert.deepEqual(result.online_store, {
+    average: 137.5, median: 135, batCount: 4, lineCount: 4, netBatSales: 550,
+  })
+  assert.deepEqual(result.review, [])
+})
