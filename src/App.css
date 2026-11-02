@@ -982,43 +982,17 @@ button:hover {
   margin-bottom: 0;
 }
 
-.canonical-reconciliation-checks {
+.canonical-reconciliation-issues {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 9px;
-}
-
-.canonical-reconciliation-checks > div {
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-  border-radius: 12px;
-  padding: 9px 11px;
-  background: rgba(47, 76, 50, 0.07);
-}
-
-.canonical-reconciliation-checks > div.failed {
+  gap: 5px;
+  border-left: 4px solid #8b2f2f;
+  padding: 10px 12px;
   background: rgba(139, 47, 47, 0.09);
   color: #8b2f2f;
+  font-weight: 700;
 }
 
-.canonical-reconciliation-checks span {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: #2f4c32;
-  color: white;
-  font-weight: 900;
-}
-
-.canonical-reconciliation-checks .failed span {
-  background: #8b2f2f;
-}
-
-.canonical-reconciliation-checks p,
+.canonical-reconciliation-issues p,
 .canonical-reconciliation-warning {
   margin: 0;
 }

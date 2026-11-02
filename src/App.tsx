@@ -10424,14 +10424,13 @@ function InternalApp({
                 </div>
               </div>
 
-              <div className="canonical-reconciliation-checks">
-                {salesDashboardCanonicalReconciliation.checks.map((check) => (
-                  <div className={check.ok ? 'passed' : 'failed'} key={check.key}>
-                    <span aria-hidden="true">{check.ok ? '✓' : '!'}</span>
-                    <p>{check.message}</p>
-                  </div>
-                ))}
-              </div>
+              {salesDashboardCanonicalReconciliation.checks.some((check) => !check.ok) ? (
+                <div className="canonical-reconciliation-issues" role="alert">
+                  {salesDashboardCanonicalReconciliation.checks
+                    .filter((check) => !check.ok)
+                    .map((check) => <p key={check.key}>{check.message}</p>)}
+                </div>
+              ) : null}
 
               {salesDashboardCanonicalReconciliation.unresolvedManualRepOrderNames.length > 0 ? (
                 <p className="canonical-reconciliation-warning" role="alert">
