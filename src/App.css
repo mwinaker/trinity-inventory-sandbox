@@ -3246,6 +3246,7 @@ td select {
 .app-shell .workflow-disclosure .fit-grid { margin: 0 12px 12px; }
 .app-shell .order-job-list { gap: 9px; }
 .app-shell .queue-admin-tools { margin: 7px 0 13px; }
+.app-shell .queue-search-help { margin: -5px 0 10px; color: #687a6d; font-size: .75rem; }
 .app-shell .queue-admin-tools > summary { width: fit-content; color: #526b56; cursor: pointer; font-size: .77rem; font-weight: 700; }
 .app-shell .queue-admin-tools .order-actions { margin-top: 9px; }
 .app-shell .queue-admin-tools .order-actions button { width: auto; min-height: 36px; padding: 6px 12px; background: #f3f7f2; color: #275035; font-size: .78rem; }
