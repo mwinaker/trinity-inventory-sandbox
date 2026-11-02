@@ -39,6 +39,14 @@ test('mixed orders allocate each paid line to its physical category and seller',
   assert.equal(summary.fungo.average, 109.5)
 })
 
+test('a first-name-only Jeremy is flagged instead of assigned to either team member', () => {
+  const report = buildSalesBatCategoryReport([
+    order(1540, 'manual_sales_order_entry', 'Jeremy', 'PAID', [line(60, 'Pro Model RA13', 1, 99)]),
+  ], (row) => row.salesRep.toLowerCase())
+  assert.equal(report.lines[0].repKey, 'jeremy')
+  assert.equal(report.lines[0].repLabel, 'Jeremy (unresolved)')
+})
+
 test('comped and pending bats stay visible without changing paid average', () => {
   const report = buildSalesBatCategoryReport([
     order(1, 'manual_sales_order_entry', 'Keith Frye', 'PAID', [line(31, 'Trophy Bats', 2, 0)], { isComped: true }),
