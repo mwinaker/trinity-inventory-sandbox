@@ -12,6 +12,7 @@ import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderRefer
 import { isFullyPaidFinancialStatus } from '../shared/order-payment-status.mjs'
 import { performBilletAssignment } from './billet-assignment-service.mjs'
 import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
+import { buildBatPriceStats } from '../shared/bat-price-stats.mjs'
 import express from 'express'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -153,6 +154,8 @@ const app = express()
 app.set('trust proxy', 1)
 const port = Number(process.env.PORT ?? 4177)
 const apiVersion = process.env.SHOPIFY_API_VERSION ?? '2026-01'
+// The 2026-10 line item field excludes refunded units and applies all discounts.
+const salesReportingApiVersion = '2026-10'
 const shopDomain = process.env.SHOPIFY_SHOP
 const adminToken = process.env.SHOPIFY_ADMIN_ACCESS_TOKEN
 const shopifyApiKey = process.env.SHOPIFY_API_KEY ?? ''
@@ -1566,16 +1569,30 @@ app.get(
         request.salesPortalSession,
       )
       const summary = buildCanonicalSalesSummary(completedOrders)
+      const allowedOrderIds = new Set(completedOrders.map((order) => order.orderId))
+      const submissions = filterSalesPaymentsForSession(
+        report.submissions,
+        request.salesPortalSession,
+      )
+      const owner = getSalesPortalOwnerForEmail(request.salesPortalSession?.email)
       response.json({
         ...report,
+        submissions,
         orders: filterSalesPaymentsForSession(report.orders, request.salesPortalSession),
         completedOrders,
         summary,
-        reconciliation: buildSalesReconciliationChecks(completedOrders, summary),
+        reconciliation: buildSalesReconciliationChecks(completedOrders, summary, submissions),
         websiteOrders: filterWebsiteOrdersForSession(
           report.websiteOrders,
           request.salesPortalSession,
         ),
+        batPriceStats: buildBatPriceStats(
+          report.batPriceOrders.filter((order) => allowedOrderIds.has(order.orderId)),
+        ),
+        batPriceOrders: undefined,
+        teamLeaderboardRows: !request.salesPortalSession || request.salesPortalSession.isAdmin
+          ? report.teamLeaderboardRows
+          : report.teamLeaderboardRows.filter((row) => row.key === owner?.key),
       })
     } catch (error) {
       response.status(error instanceof RangeError ? 400 : 500).json({
@@ -5908,8 +5925,8 @@ async function ensureDefinitionFields(definitionId, config) {
   }
 }
 
-async function shopifyGraphQL(query, variables = {}, attempt = 0) {
-  const response = await fetch(`https://${shopDomain}/admin/api/${apiVersion}/graphql.json`, {
+async function shopifyGraphQL(query, variables = {}, attempt = 0, version = apiVersion) {
+  const response = await fetch(`https://${shopDomain}/admin/api/${version}/graphql.json`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -5927,7 +5944,7 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
       const retryAfterSeconds = Number(response.headers.get('retry-after'))
       const retryAfterMs = Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0
       await sleep(Math.max(retryAfterMs, getRetryDelayMs(attempt)))
-      return shopifyGraphQL(query, variables, attempt + 1)
+      return shopifyGraphQL(query, variables, attempt + 1, version)
     }
     throw new Error(`Shopify GraphQL request failed: ${response.status} ${body}`)
   }
@@ -5937,7 +5954,7 @@ async function shopifyGraphQL(query, variables = {}, attempt = 0) {
     const shouldRetry = payload.errors.some((item) => isRetryableShopifyError(item))
     if (shouldRetry && attempt < shopifyGraphqlMaxAttempts - 1) {
       await sleep(getShopifyGraphQLRetryDelayMs(payload, attempt))
-      return shopifyGraphQL(query, variables, attempt + 1)
+      return shopifyGraphQL(query, variables, attempt + 1, version)
     }
     throw new Error(payload.errors.map((item) => item.message).join(', '))
   }
@@ -6362,7 +6379,7 @@ async function listOrdersUpdatedSince(sinceDate) {
       `
         query SalesPaymentReconciliation($after: String, $query: String) {
           orders(
-            first: 100
+            first: 25
             after: $after
             query: $query
             sortKey: UPDATED_AT
@@ -6374,6 +6391,8 @@ async function listOrdersUpdatedSince(sinceDate) {
               email
               createdAt
               updatedAt
+              cancelledAt
+              test
               sourceName
               app {
                 name
@@ -6422,7 +6441,6 @@ async function listOrdersUpdatedSince(sinceDate) {
               }
               customer {
                 displayName
-                email
               }
               billingAddress {
                 name
@@ -6440,6 +6458,19 @@ async function listOrdersUpdatedSince(sinceDate) {
                   }
                 }
               }
+              lineItems(first: 20) {
+                nodes {
+                  id
+                  title
+                  quantity
+                  currentQuantity
+                  priceAfterAllDiscountsBeforeTaxesSet {
+                    shopMoney { amount currencyCode }
+                  }
+                  variant { product { productType } }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
             }
             pageInfo {
               hasNextPage
@@ -6449,12 +6480,44 @@ async function listOrdersUpdatedSince(sinceDate) {
         }
       `,
       { after: cursor, query },
+      0,
+      salesReportingApiVersion,
     )
 
     const connection = result?.data?.orders
-    rows.push(...(connection?.nodes ?? []))
+    for (const order of connection?.nodes ?? []) {
+      while (order?.lineItems?.pageInfo?.hasNextPage) {
+        const after = order.lineItems.pageInfo.endCursor
+        if (!after) throw new Error(`Incomplete Shopify line-item history for ${order.name || order.id}`)
+        const extra = await shopifyGraphQL(
+          `query SalesOrderExtraLines($id: ID!, $after: String!) {
+            order(id: $id) {
+              lineItems(first: 100, after: $after) {
+                nodes {
+                  id title quantity currentQuantity
+                  priceAfterAllDiscountsBeforeTaxesSet { shopMoney { amount currencyCode } }
+                  variant { product { productType } }
+                }
+                pageInfo { hasNextPage endCursor }
+              }
+            }
+          }`,
+          { id: order.id, after },
+          0,
+          salesReportingApiVersion,
+        )
+        const next = extra?.data?.order?.lineItems
+        if (!next?.nodes || !next?.pageInfo) {
+          throw new Error(`Incomplete Shopify line-item history for ${order.name || order.id}`)
+        }
+        order.lineItems.nodes.push(...next.nodes)
+        order.lineItems.pageInfo = next.pageInfo
+      }
+      rows.push(order)
+    }
     hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
     cursor = connection?.pageInfo?.endCursor ?? null
+    if (hasNextPage && !cursor) throw new Error('Incomplete Shopify order pagination.')
   }
 
   return rows
@@ -6468,7 +6531,6 @@ async function listCompletedDraftOrdersUpdatedSince(sinceDate) {
     ? `status:completed updated_at:>=${sinceDate.toISOString().slice(0, 10)}`
     : 'status:completed'
 
-  try {
     while (hasNextPage) {
       const result = await shopifyGraphQL(
         `
@@ -6504,14 +6566,8 @@ async function listCompletedDraftOrdersUpdatedSince(sinceDate) {
       rows.push(...(connection?.nodes ?? []))
       hasNextPage = Boolean(connection?.pageInfo?.hasNextPage)
       cursor = connection?.pageInfo?.endCursor ?? null
+      if (hasNextPage && !cursor) throw new Error('Incomplete completed-draft pagination.')
     }
-  } catch (error) {
-    console.warn(
-      `Completed draft history could not be added to sales reconciliation: ${
-        error instanceof Error ? error.message : 'Unknown Shopify error'
-      }`,
-    )
-  }
 
   return rows
 }
@@ -6701,6 +6757,7 @@ function mapOrderToCanonicalCompletedOrder(
   const reportingCategory = classifySalesReportingCategory({
     sourceName: order?.sourceName,
     appName: order?.app?.name,
+    orderCreatedAt: order?.createdAt,
     hasInventoryMarker,
   })
   const submission = getMatchingCanonicalSubmission(
@@ -6838,6 +6895,7 @@ function mapCanonicalCompletedOrderToWebsiteOrder(order) {
     orderId: order.orderId,
     orderName: order.orderName,
     sourceName: order.sourceName,
+    appName: order.appName,
     customerName: order.customerName || order.payerName,
     orderedAt: order.orderCreatedAt,
     paidAt: order.paidAt,
@@ -6911,7 +6969,7 @@ async function getSalesPaymentReconciliation(
       .filter(Boolean)
       .sort((first, second) => Date.parse(second.orderedAt) - Date.parse(first.orderedAt))
     const summary = buildCanonicalSalesSummary(completedOrders)
-    const reconciliation = buildSalesReconciliationChecks(completedOrders, summary)
+    const reconciliation = buildSalesReconciliationChecks(completedOrders, summary, submissions)
     const teamLeaderboardRows = buildSalesLeaderboardFromSubmissions(
       submissions,
       salesPortalTeamMembers,
@@ -6933,6 +6991,11 @@ async function getSalesPaymentReconciliation(
       submissions,
       orders: payments,
       completedOrders,
+      batPriceOrders: completedOrders.map((order) => {
+        const source = orders.find((candidate) => cleanString(candidate?.id) === order.orderId)
+        return { ...order, test: source?.test, cancelledAt: source?.cancelledAt,
+          lineItems: source?.lineItems?.nodes ?? [] }
+      }),
       summary,
       reconciliation,
       websiteOrders,

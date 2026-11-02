@@ -582,6 +582,7 @@ type SalesWebsiteOrder = {
   orderId: string
   orderName: string
   sourceName: string
+  appName: string
   customerName: string
   orderedAt: string
   paidAt: string
@@ -662,6 +663,24 @@ type SalesCanonicalReconciliation = {
   duplicateOrderIds: string[]
   unresolvedOrderNames: string[]
   unresolvedManualRepOrderNames: string[]
+  unmatchedManualOrderNames: string[]
+  duplicateSubmissionKeys: string[]
+}
+
+type BatPriceBucket = {
+  average: number | null
+  median: number | null
+  batCount: number
+  lineCount: number
+  netBatSales: number
+}
+
+type BatPriceStats = {
+  definition: string
+  manual_sales_order_entry: BatPriceBucket
+  online_store: BatPriceBucket
+  combined: BatPriceBucket
+  review: Array<{ orderName: string; lineId: string; title: string; channel: string }>
 }
 
 type SalesPaymentReconciliationReport = {
@@ -680,6 +699,7 @@ type SalesPaymentReconciliationReport = {
   reconciliation: SalesCanonicalReconciliation
   websiteOrders: SalesWebsiteOrder[]
   teamLeaderboardRows: TeamLeaderboardRow[]
+  batPriceStats: BatPriceStats
 }
 
 const salesReportingCategoryOptions: Array<{
@@ -688,8 +708,8 @@ const salesReportingCategoryOptions: Array<{
 }> = [
   { value: 'manual_sales_order_entry', label: 'Manual sales order entries' },
   { value: 'online_store', label: 'Online Store orders' },
-  { value: 'shop', label: 'Shop orders' },
-  { value: 'point_of_sale', label: 'Point of Sale orders' },
+  { value: 'shop', label: 'Shop · channel review' },
+  { value: 'point_of_sale', label: 'Point of Sale · audit only' },
   { value: 'other_unresolved', label: 'Needs channel review' },
 ]
 
@@ -6062,7 +6082,9 @@ function InternalApp({
     new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'new',
   )
   const [reorderContext, setReorderContext] = useState<{ reference: string; warnings: string[] } | null>(null)
-  const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
+  const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>(
+    hasAdminAccess ? 'all' : '30',
+  )
   const [salesDashboardCustomStart, setSalesDashboardCustomStart] = useState(
     getDefaultSalesDashboardCustomStart,
   )
@@ -6070,8 +6092,11 @@ function InternalApp({
     formatSalesDashboardDateInput,
   )
   const [salesDashboardRepFilter, setSalesDashboardRepFilter] = useState(
-    accessOwner?.key ?? 'all',
+    hasAdminAccess ? 'all' : accessOwner?.key ?? 'all',
   )
+  const [batPriceChannel, setBatPriceChannel] = useState<
+    'combined' | 'manual_sales_order_entry' | 'online_store'
+  >('combined')
   const [salesPaymentReconciliation, setSalesPaymentReconciliation] =
     useState<SalesPaymentReconciliationReport | null>(null)
   const [salesPaymentReconciliationError, setSalesPaymentReconciliationError] = useState('')
@@ -10223,9 +10248,10 @@ function InternalApp({
                   <p className="eyebrow">Completed Shopify orders</p>
                   <h2>{salesDashboardWindowLabel} order reconciliation</h2>
                   <p className="helper-text">
-                    Orders are counted once by Shopify order creation date. Only orders explicitly
-                    created by the Online Store app are Online Store orders. Inventory-tool orders
-                    and Shopify Draft Orders are combined as manual sales order entries.
+                    Orders are counted once by Shopify order creation date. Online Store includes
+                    website orders and the two owner-approved original Shop orders. Inventory-tool
+                    orders and Shopify Draft Orders are combined as manual sales order entries.
+                    Other native sources remain visible for review.
                   </p>
                 </div>
                 <div
@@ -10316,6 +10342,29 @@ function InternalApp({
                 </p>
               ) : null}
 
+              {salesDashboardCanonicalReconciliation.unresolvedOrderNames.length > 0 ? (
+                <p className="canonical-reconciliation-warning" role="alert">
+                  Native sources needing channel review:{' '}
+                  {salesDashboardCanonicalReconciliation.unresolvedOrderNames.join(', ')}.
+                  These orders remain in the ledger and are excluded from the two approved
+                  channel totals until classified.
+                </p>
+              ) : null}
+
+              {salesDashboardCanonicalReconciliation.unmatchedManualOrderNames.length > 0 ? (
+                <p className="canonical-reconciliation-warning" role="alert">
+                  Completed manual orders needing a submission link:{' '}
+                  {salesDashboardCanonicalReconciliation.unmatchedManualOrderNames.join(', ')}.
+                </p>
+              ) : null}
+
+              {salesDashboardCanonicalReconciliation.duplicateSubmissionKeys.length > 0 ? (
+                <p className="canonical-reconciliation-warning" role="alert">
+                  Duplicate manual submission links need review:{' '}
+                  {salesDashboardCanonicalReconciliation.duplicateSubmissionKeys.join(', ')}.
+                </p>
+              ) : null}
+
               <details className="canonical-order-ledger">
                 <summary>
                   View the canonical completed-order ledger ({salesDashboardCompletedOrders.length})
@@ -10328,6 +10377,7 @@ function InternalApp({
                         <th>Order</th>
                         <th>Reporting category</th>
                         <th>Shopify source</th>
+                        <th>Submission link</th>
                         <th>Status</th>
                         <th>Sales rep</th>
                         <th>Customer</th>
@@ -10346,6 +10396,9 @@ function InternalApp({
                           </td>
                           <td>{formatSalesReportingCategory(order.reportingCategory)}</td>
                           <td>{order.sourceDetail}</td>
+                          <td>{order.reportingCategory === 'manual_sales_order_entry'
+                            ? order.submissionMatched ? 'Linked' : 'Needs review'
+                            : '—'}</td>
                           <td>
                             <span
                               className={`pill ${
@@ -10371,6 +10424,54 @@ function InternalApp({
                   </table>
                 </div>
               </details>
+            </section>
+          ) : null}
+
+          {hasAdminAccess && activeSalesPaymentReconciliation?.batPriceStats ? (
+            <section className="panel bat-price-panel" aria-label="Price per bat">
+              <div className="split-heading">
+                <div className="section-heading">
+                  <p className="eyebrow">Bat pricing</p>
+                  <h2>Price per bat · {salesDashboardWindowLabel}</h2>
+                  <p className="helper-text">Whole-team results from paid Shopify bat lines.</p>
+                </div>
+                <label className="bat-price-channel-control">
+                  Sales channel
+                  <select value={batPriceChannel} onChange={(event) =>
+                    setBatPriceChannel(event.target.value as typeof batPriceChannel)}>
+                    <option value="combined">All approved sales</option>
+                    <option value="manual_sales_order_entry">Manual sales order entry</option>
+                    <option value="online_store">Online Store</option>
+                  </select>
+                </label>
+              </div>
+              <div className="bat-price-metrics">
+                <article><span>Average per bat</span><strong>{
+                  activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].average === null
+                    ? '—'
+                    : formatSalesOrderMoney(activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].average)
+                }</strong></article>
+                <article><span>Median per bat</span><strong>{
+                  activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].median === null
+                    ? '—'
+                    : formatSalesOrderMoney(activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].median)
+                }</strong></article>
+                <article><span>Paid bats counted</span><strong>{
+                  activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].batCount
+                }</strong></article>
+                <article><span>Bat sales counted</span><strong>{
+                  formatSalesOrderMoney(activeSalesPaymentReconciliation.batPriceStats[batPriceChannel].netBatSales)
+                }</strong></article>
+              </div>
+              <p className="helper-text">{activeSalesPaymentReconciliation.batPriceStats.definition}</p>
+              {activeSalesPaymentReconciliation.batPriceStats.review.filter((line) =>
+                batPriceChannel === 'combined' || line.channel === batPriceChannel).length > 0 ? (
+                <p className="canonical-reconciliation-warning" role="alert">
+                  {activeSalesPaymentReconciliation.batPriceStats.review.filter((line) =>
+                    batPriceChannel === 'combined' || line.channel === batPriceChannel).length}{' '}
+                  paid line(s) need bat or bundle review and are excluded from this price calculation.
+                </p>
+              ) : null}
             </section>
           ) : null}
 
@@ -10561,8 +10662,9 @@ function InternalApp({
                   </div>
                 </div>
                 <p className="helper-text">
-                  Direct website orders from {salesDashboardWindowLabel.toLowerCase()}. Manual
-                  orders, draft invoices, and point-of-sale orders are excluded.
+                  Website orders and the two owner-approved original Shop orders from{' '}
+                  {salesDashboardWindowLabel.toLowerCase()}. Manual orders, other Shop orders,
+                  draft invoices, and point-of-sale orders are excluded.
                 </p>
 
                 {salesDashboardReconciliationMessage ? (
@@ -10600,7 +10702,7 @@ function InternalApp({
                             <td>{formatSalesDashboardDate(order.orderedAt)}</td>
                             <td className="reconciliation-reference">
                               <strong>{order.orderName || 'Unnumbered order'}</strong>
-                              <span>Online Store</span>
+                              <span>{order.appName === 'Shop' ? 'Shop · approved' : 'Online Store'}</span>
                             </td>
                             <td>{order.customerName || 'No customer saved'}</td>
                             <td>

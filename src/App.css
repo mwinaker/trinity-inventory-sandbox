@@ -860,6 +860,42 @@ button:hover {
   min-width: 0;
 }
 
+.bat-price-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.bat-price-channel-control {
+  min-width: 235px;
+}
+
+.bat-price-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bat-price-metrics article {
+  display: grid;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid rgba(72, 50, 31, 0.12);
+  border-radius: 16px;
+  background: #fffdf9;
+}
+
+.bat-price-metrics span {
+  color: #746353;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.bat-price-metrics strong {
+  color: #253f2a;
+  font-size: clamp(1.5rem, 2.4vw, 2.15rem);
+  line-height: 1.1;
+}
+
 .canonical-reconciliation-status {
   display: grid;
   gap: 5px;
@@ -2818,6 +2854,10 @@ td select {
   .sales-portal-contact-editor,
   .metrics-grid {
     grid-template-columns: 1fr;
+  }
+
+  .bat-price-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sales-card-values {
