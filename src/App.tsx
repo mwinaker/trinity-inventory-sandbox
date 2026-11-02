@@ -2,8 +2,11 @@ import { openProductionDocument } from './production-documents.ts'
 import { productionModelLabel, supportsPuckKnob } from '../shared/production-model.ts'
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
+import { getBilletAssignmentCandidate } from '../shared/billet-assignment.mjs'
+import { getOperationalDataQualityIssues, isCalendarDate } from '../shared/data-quality.mjs'
 import {
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
   useEffect,
   useEffectEvent,
@@ -51,7 +54,6 @@ import {
   isValidWorkableWeightRange,
   normalizeBilletWorkflowStatus,
   normalizeBilletSuitability,
-  reconcileBilletStatusForOrderAssignment,
   updateBilletSuitability,
 } from './inventory-policy.ts'
 import type { BilletSuitability, BilletWorkflowStatus } from './inventory-policy.ts'
@@ -147,6 +149,16 @@ type ActiveSection =
   | 'players'
   | 'models'
   | 'costs'
+const sectionTitles: Record<ActiveSection, string> = {
+  inventory: 'Inventory',
+  orders: 'Orders',
+  production: 'Production queue',
+  sales: 'Sales dashboard',
+  crm: 'Customers',
+  players: 'Player profiles',
+  models: 'Bat models',
+  costs: 'Billet cost guide',
+}
 type BilletStatus = BilletWorkflowStatus
 type OrderOrigin = 'website' | 'internal_sales'
 type ProductionStatus = 'new' | 'waiting_payment' | 'ready' | 'in_production' | 'complete' | 'cancelled'
@@ -393,6 +405,7 @@ type OrderJob = {
   invoiceStatus: InvoiceStatus
   productionStatus: ProductionStatus
   assignedBilletId: string
+  billetAssignmentHistory?: Array<{ at: string; fromBilletId: string; toBilletId: string; by: string }>
   linkedProducedBatId: string
   salesRep: string
   salesRepEmail: string
@@ -1457,8 +1470,9 @@ function getFitScore(billet: Billet, build: CustomBuild) {
   if (standardBilletLength < build.length + 2.5) return 0
 
   const targetBilletWeight = build.targetWeight + 18
-  const billetWeight = typeof billet.weight === 'number' ? billet.weight : targetBilletWeight
-  const weightScore = Math.max(0, 40 - Math.abs(billetWeight - targetBilletWeight) * 4)
+  const weightScore = typeof billet.weight === 'number'
+    ? Math.max(0, 40 - Math.abs(billet.weight - targetBilletWeight) * 4)
+    : 0
   const lengthScore = Math.min(30, (standardBilletLength - build.length) * 5)
   const gradeScore = billet.grade === build.grade ? 15 : 8
   const moistureScore = billet.moisture >= 6.5 && billet.moisture <= 9 ? 15 : 5
@@ -1771,6 +1785,9 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     invoiceStatus: isOrderJobPaid(record) ? 'paid' : normalizeInvoiceStatus(record.invoiceStatus === 'paid' ? 'sent' : record.invoiceStatus),
     productionStatus: normalizeProductionStatus(record.productionStatus),
     assignedBilletId: record.assignedBilletId ?? '',
+    billetAssignmentHistory: Array.isArray(record.billetAssignmentHistory)
+      ? record.billetAssignmentHistory.slice(-50)
+      : [],
     linkedProducedBatId: record.linkedProducedBatId ?? '',
     salesRep: record.salesRep ?? '',
     salesRepEmail: record.salesRepEmail ?? '',
@@ -2520,6 +2537,42 @@ function buildCrmContactDirectory(savedContacts: CrmContact[]) {
   })
 }
 
+function buildUnlinkedOrderCustomers(orderJobs: OrderJob[], contacts: CrmContact[]) {
+  const knownEmails = new Set(contacts.map((contact) => contact.email.trim().toLowerCase()).filter(Boolean))
+  const knownPhones = new Set(contacts.map((contact) => normalizeCrmPhone(contact.phone)).filter(Boolean))
+  const linkedJobIds = new Set(contacts.flatMap((contact) =>
+    getCrmOrdersForContact(contact, orderJobs).map((job) => job.id)))
+  const groups = new Map<string, {
+    key: string; name: string; email: string; phone: string; company: string;
+    jobs: OrderJob[]; lastAt: string; ownerKey: string
+  }>()
+  for (const job of orderJobs) {
+    if (linkedJobIds.has(job.id)) continue
+    const email = (job.billingEmail || job.customerEmail).trim().toLowerCase()
+    const phone = normalizeCrmPhone(job.billingPhone)
+    if ((email && knownEmails.has(email)) || (phone && knownPhones.has(phone))) continue
+    const key = email ? `email:${email}` : phone ? `phone:${phone}` : `job:${job.id}`
+    const existing = groups.get(key)
+    const lastAt = job.orderSubmittedAt || job.createdAt
+    if (existing) {
+      existing.jobs.push(job)
+      if (getDateTimestamp(lastAt) > getDateTimestamp(existing.lastAt)) existing.lastAt = lastAt
+    } else {
+      groups.set(key, {
+        key,
+        name: job.billingName || job.customerName || job.playerName || 'Name not recorded',
+        email,
+        phone: job.billingPhone,
+        company: job.billingCompany,
+        jobs: [job],
+        lastAt,
+        ownerKey: getCrmOwnerKey(job.salesRep, job.salesRepEmail),
+      })
+    }
+  }
+  return Array.from(groups.values()).sort((a, b) => getDateTimestamp(b.lastAt) - getDateTimestamp(a.lastAt))
+}
+
 function buildCrmContactSummaries(
   directory: CrmContact[],
   orderJobs: OrderJob[],
@@ -2532,7 +2585,9 @@ function buildCrmContactSummaries(
       .filter((job) => isSalesDashboardPaid(job))
       .reduce((total, job) => total + getSalesDashboardLineValue(job), 0)
     const openValue = submittedValue - paidValue
-    const openInvoiceCount = orders.filter((job) => !isSalesDashboardPaid(job)).length
+    const openInvoiceCount = orderHistory.filter((order) =>
+      !order.isPaid && order.jobs.some((job) => job.invoiceStatus === 'sent'),
+    ).length
     const lastOrderAt = orderHistory[0]?.submittedAt || orderHistory[0]?.shopifyCreatedAt || ''
     const lastTouchpointAt = contact.touchpoints[0]?.contactedAt || ''
     const lastActivityAt = getLaterDate(getLaterDate(lastOrderAt, lastTouchpointAt), contact.lastContactedAt)
@@ -4154,7 +4209,10 @@ function isCrmSandboxPreviewRoute() {
 function getInitialActiveSection(): ActiveSection {
   const params = new URLSearchParams(window.location.search)
   if (productionShortcut(window.location.search)) return 'production'
-  return isCrmSandboxPreviewRoute() && params.get('section') === 'crm' ? 'crm' : 'inventory'
+  const requested = params.get('section')
+  return requested && ['inventory', 'orders', 'production', 'sales', 'crm', 'players', 'models', 'costs'].includes(requested)
+    ? requested as ActiveSection
+    : 'inventory'
 }
 
 function fetchApi(path: string, init?: RequestInit) {
@@ -4440,6 +4498,8 @@ type SalesOrderFormFieldsProps = {
   submissionMessage?: string
   hideSalesRepFields?: boolean
   draftOnly?: boolean
+  reviewSummary?: ReactNode
+  submitLabel?: string
 }
 
 function SalesOrderFormFields({
@@ -4462,6 +4522,8 @@ function SalesOrderFormFields({
   submissionMessage = '',
   hideSalesRepFields = false,
   draftOnly = false,
+  reviewSummary,
+  submitLabel,
 }: SalesOrderFormFieldsProps) {
   const [taxPreview, setTaxPreview] = useState<{ key: string; quote?: SalesTaxPreview; error?: string } | null>(null)
   const [isCalculatingTax, setIsCalculatingTax] = useState(false)
@@ -5122,7 +5184,7 @@ function SalesOrderFormFields({
               }))
             }}
           />
-          <span>Create and send Shopify draft invoice</span>
+          <span>Create a Shopify draft for review; customer invoice stays unsent</span>
         </label>
       )}
 
@@ -5133,7 +5195,7 @@ function SalesOrderFormFields({
             checked={draft.sendInvoice}
             onChange={(event) => updateField('sendInvoice', event.target.checked)}
           />
-          <span>Send Shopify invoice/documentation after order creation</span>
+          <span>Email the customer invoice after the order is created</span>
         </label>
       ) : null}
 
@@ -5160,15 +5222,16 @@ function SalesOrderFormFields({
           {submissionMessage}
         </p>
       ) : null}
+      {reviewSummary}
 
       <button type="submit" disabled={isSubmitting}>
-        {isSubmitting
+        {submitLabel || (isSubmitting
           ? draft.createDraftOrder
             ? 'Creating draft...'
             : 'Creating order...'
           : draft.createDraftOrder
-            ? 'Create and send Shopify draft invoice'
-            : 'Create Shopify order'}
+            ? 'Create draft for review'
+            : 'Create Shopify order')}
       </button>
     </>
   )
@@ -5422,8 +5485,8 @@ function PublicSalesOrderForm() {
       setMessage(
         salesOrderDraft.createDraftOrder
           ? salesOrderAttachmentFile
-            ? 'Uploading attachment and creating/sending Shopify draft invoice...'
-            : 'Creating and sending Shopify draft invoice...'
+            ? 'Uploading attachment and creating an unsent Shopify draft...'
+            : 'Creating an unsent Shopify draft...'
           : salesOrderAttachmentFile
             ? 'Uploading attachment and creating Shopify order...'
             : 'Creating Shopify order...',
@@ -5843,11 +5906,11 @@ function MyOrderHistory({ onReorder, onSessionExpired }: {
   useEffect(() => {
     const version = ++requestVersion.current
     const controller = new AbortController()
-    setLoading(true)
-    setError('')
-    setOrders([])
-    setNextCursor(null)
     async function load() {
+      setLoading(true)
+      setError('')
+      setOrders([])
+      setNextCursor(null)
       try {
         const response = await fetchApi(`/api/my-orders?search=${encodeURIComponent(search)}&fresh=${refresh > 0}`, { cache: 'no-store', signal: controller.signal })
         const data = await response.json()
@@ -5860,8 +5923,8 @@ function MyOrderHistory({ onReorder, onSessionExpired }: {
       } finally { if (!controller.signal.aborted) setLoading(false) }
     }
     void load()
-    return () => { controller.abort(); requestVersion.current++ }
-  }, [search, refresh])
+    return () => { controller.abort() }
+  }, [search, refresh, onSessionExpired])
 
   async function loadMore() {
     if (!nextCursor || loadingMore) return
@@ -5984,7 +6047,19 @@ function InternalApp({
     salesRepEmail: accessOwner?.email ?? '',
   }))
   const [salesOrderAttachmentFile, setSalesOrderAttachmentFile] = useState<File | null>(null)
-  const [orderEntryView, setOrderEntryView] = useState<'new' | 'history'>('new')
+  const [reviewedOrderFingerprint, setReviewedOrderFingerprint] = useState('')
+  const [pendingInternalDraftReview, setPendingInternalDraftReview] = useState<PublicDraftInvoiceReview | null>(null)
+  const [isSendingReviewedInternalInvoice, setIsSendingReviewedInternalInvoice] = useState(false)
+  const currentOrderFingerprint = JSON.stringify({
+    draft: salesOrderDraft,
+    attachment: salesOrderAttachmentFile
+      ? [salesOrderAttachmentFile.name, salesOrderAttachmentFile.size, salesOrderAttachmentFile.lastModified]
+      : null,
+  })
+  const isOrderReviewed = reviewedOrderFingerprint === currentOrderFingerprint
+  const [orderEntryView, setOrderEntryView] = useState<'new' | 'history'>(() =>
+    new URLSearchParams(window.location.search).get('view') === 'history' ? 'history' : 'new',
+  )
   const [reorderContext, setReorderContext] = useState<{ reference: string; warnings: string[] } | null>(null)
   const [salesDashboardRange, setSalesDashboardRange] = useState<SalesDashboardRange>('30')
   const [salesDashboardCustomStart, setSalesDashboardCustomStart] = useState(
@@ -6001,13 +6076,15 @@ function InternalApp({
   const [salesPaymentReconciliationError, setSalesPaymentReconciliationError] = useState('')
   const [isLoadingSalesPaymentReconciliation, setIsLoadingSalesPaymentReconciliation] =
     useState(true)
-  const [activeCrmView, setActiveCrmView] = useState<CrmWorkspaceView>('new_contact')
+  const [activeCrmView, setActiveCrmView] = useState<CrmWorkspaceView>('contact_list')
   const [crmQuery, setCrmQuery] = useState('')
   const [crmStageFilter, setCrmStageFilter] = useState<'all' | CrmStage>('all')
   const [crmOwnerFilter, setCrmOwnerFilter] = useState(() =>
     accessOwner?.key || readLocalStorageValue(crmActiveOwnerStorageKey) || 'all',
   )
-  const [selectedCrmContactId, setSelectedCrmContactId] = useState('')
+  const [selectedCrmContactId, setSelectedCrmContactId] = useState(() =>
+    new URLSearchParams(window.location.search).get('contact') || '',
+  )
   const [selectedCrmEngagementId, setSelectedCrmEngagementId] = useState('')
   const [newCrmContactDraft, setNewCrmContactDraft] = useState<CrmContact>(() => ({
     ...emptyCrmContact(),
@@ -6023,6 +6100,7 @@ function InternalApp({
   const [orderQuery, setOrderQuery] = useState('')
   const [productionShortcutTarget, setProductionShortcutTarget] = useState(() => productionShortcut(window.location.search))
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
+  const [orderAssignmentFilter, setOrderAssignmentFilter] = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
   const [isCreatingDraftOrder, setIsCreatingDraftOrder] = useState(false)
   const [isImportingOrders, setIsImportingOrders] = useState(false)
@@ -6030,6 +6108,10 @@ function InternalApp({
   const [retryingPaidAttachmentJobId, setRetryingPaidAttachmentJobId] = useState('')
   const [syncingShopifyAttachmentJobId, setSyncingShopifyAttachmentJobId] = useState('')
   const [billetPickerOrderJobId, setBilletPickerOrderJobId] = useState('')
+  const [billetPickerQuery, setBilletPickerQuery] = useState('')
+  const [assigningBilletJobId, setAssigningBilletJobId] = useState('')
+  const [inventoryActionMessage, setInventoryActionMessage] = useState('')
+  const [profileValidationMessage, setProfileValidationMessage] = useState('')
   const [newDeliveryDate, setNewDeliveryDate] = useState('')
   const [quickEntry, setQuickEntry] = useState('')
   const [isListening, setIsListening] = useState(false)
@@ -6080,7 +6162,7 @@ function InternalApp({
   const [isLoadingRemoteState, setIsLoadingRemoteState] = useState(!crmSandboxPreviewEnabled)
   const [syncMessage, setSyncMessage] = useState(
     crmSandboxPreviewEnabled
-      ? 'CRM sandbox preview is local-only and not connected to live Shopify sync.'
+      ? 'Local preview with example records. Changes are not synced to Shopify.'
       : 'Connecting to Shopify backend...',
   )
   const [lastLiveRefreshAt, setLastLiveRefreshAt] = useState('')
@@ -6148,7 +6230,7 @@ function InternalApp({
     }
   }
 
-  const syncRemoteState = useEffectEvent(async () => {
+  const syncRemoteStateNow = async () => {
     if (syncInFlight.current) {
       hasPendingLocalSync.current = true
       return false
@@ -6224,9 +6306,10 @@ function InternalApp({
     } finally {
       syncInFlight.current = false
     }
-  })
+  }
+  const syncRemoteState = useEffectEvent(syncRemoteStateNow)
 
-  const loadRemoteState = useEffectEvent(async (options?: { quiet?: boolean }) => {
+  const loadRemoteStateNow = async (options?: { quiet?: boolean }) => {
     try {
       const response = await fetchApi(stateEndpoint, {
         cache: 'no-store',
@@ -6312,7 +6395,8 @@ function InternalApp({
       setIsLoadingRemoteState(false)
       return false
     }
-  })
+  }
+  const loadRemoteState = useEffectEvent(loadRemoteStateNow)
 
   useEffect(() => {
     if (crmSandboxPreviewEnabled) {
@@ -6356,13 +6440,14 @@ function InternalApp({
 
   useEffect(() => {
     if (backendStatus !== 'connected') return
+    if (crmSandboxPreviewEnabled) return
 
     const refresh = window.setInterval(() => {
       if (!hasPendingLocalSync.current) void loadRemoteState({ quiet: true })
     }, 30000)
 
     return () => window.clearInterval(refresh)
-  }, [backendStatus])
+  }, [backendStatus, crmSandboxPreviewEnabled])
 
   const salesDashboardRequestedWindowResult = useMemo(() => {
     try {
@@ -6514,6 +6599,7 @@ function InternalApp({
 
   useEffect(() => {
     if (!hasLoadedRemoteState.current || backendStatus !== 'connected') return
+    if (crmSandboxPreviewEnabled) return
     if (skipNextRemoteSync.current) {
       skipNextRemoteSync.current = false
       return
@@ -6534,6 +6620,7 @@ function InternalApp({
     orderJobs,
     billingContacts,
     crmContacts,
+    crmSandboxPreviewEnabled,
   ])
 
   const deliveryDateOptions = Array.from(
@@ -6708,6 +6795,11 @@ function InternalApp({
     () => new Set(productionOrderJobs.map((job) => job.assignedBilletId).filter(Boolean)),
     [productionOrderJobs],
   )
+  const jobByAssignedBilletId = useMemo(
+    () => new Map(productionOrderJobs.filter((job) => job.assignedBilletId)
+      .map((job) => [job.assignedBilletId, job])),
+    [productionOrderJobs],
+  )
   const selectedProducedBatModel = useMemo(
     () => allBatModels.find((model) => model.id === producedBatDraft.modelId) ?? null,
     [allBatModels, producedBatDraft.modelId],
@@ -6749,6 +6841,8 @@ function InternalApp({
         const matchesStatus =
           orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
         if (!matchesStatus) return false
+        if (orderAssignmentFilter === 'unassigned' && job.assignedBilletId) return false
+        if (orderAssignmentFilter === 'assigned' && !job.assignedBilletId) return false
         if (!normalizedOrderQuery) return true
 
         const assignedBillet = job.assignedBilletId
@@ -6756,6 +6850,7 @@ function InternalApp({
           : ''
         const searchable = [
           job.orderReference,
+          job.id,
           job.shopifyOrderName,
           job.shopifyDraftOrderName,
           job.customerName,
@@ -6798,8 +6893,12 @@ function InternalApp({
           .toLowerCase()
 
         return searchable.includes(normalizedOrderQuery)
+      }).sort((a, b) => {
+        const rank: Record<ProductionStatus, number> = { ready: 0, in_production: 1, new: 2, waiting_payment: 3, complete: 4, cancelled: 5 }
+        return rank[a.productionStatus] - rank[b.productionStatus] ||
+          getDateTimestamp(a.orderSubmittedAt || a.createdAt) - getDateTimestamp(b.orderSubmittedAt || b.createdAt)
       }),
-    [billetById, normalizedOrderQuery, orderStatusFilter, productionOrderJobs, productionShortcutTarget],
+    [billetById, normalizedOrderQuery, orderStatusFilter, orderAssignmentFilter, productionOrderJobs, productionShortcutTarget],
   )
   const renderedOrderJobs = getProgressiveListSlice(filteredOrderJobs, productionRenderLimit)
   const activeSalesPaymentReconciliation = useMemo(() => {
@@ -7004,6 +7103,17 @@ function InternalApp({
           crmOwnerOptions.some((owner) => owner.key === crmOwnerFilter)
         ? crmOwnerFilter
         : 'all'
+  const unlinkedOrderCustomers = useMemo(() => {
+    const scopedJobs = orderJobs.filter((job) => resolvedCrmOwnerFilter === 'all' ||
+      getCrmOwnerKey(job.salesRep, job.salesRepEmail) === resolvedCrmOwnerFilter)
+    const rows = buildUnlinkedOrderCustomers(scopedJobs, crmDirectory)
+    const search = normalizeCrmSearchText(crmQuery)
+    return rows.filter((row) =>
+      (!search || [row.name, row.email, row.phone, row.company,
+        ...row.jobs.map((job) => job.orderReference || job.shopifyOrderName || job.shopifyDraftOrderName)]
+        .join(' ').toLowerCase().includes(search)),
+    )
+  }, [orderJobs, crmDirectory, crmQuery, resolvedCrmOwnerFilter])
   const activeCrmOwnerOption =
     crmOwnerOptions.find((owner) => owner.key === resolvedCrmOwnerFilter) ?? null
   const crmOwnerScopedSummaries = useMemo(
@@ -7167,15 +7277,35 @@ function InternalApp({
     weighedBillets.length === 0
       ? 0
       : weighedBillets.reduce((total, billet) => total + billet.weight, 0) / weighedBillets.length
+  const dataQualityIssues = useMemo(
+    () => getOperationalDataQualityIssues(billets, players),
+    [billets, players],
+  )
 
   function addBillet(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!draft.barcode.trim()) return
+    const barcode = draft.barcode.trim().toUpperCase()
+    if (!barcode) {
+      setInventoryActionMessage('Enter or scan a barcode before saving.')
+      return
+    }
+    if (billets.some((billet) => billet.barcode.trim().toUpperCase() === barcode)) {
+      setInventoryActionMessage(`Barcode ${barcode} is already in inventory. Find and edit the existing record.`)
+      return
+    }
+    if (draft.deliveryDate && !isCalendarDate(draft.deliveryDate)) {
+      setInventoryActionMessage('Enter a valid delivery date before saving.')
+      return
+    }
+    if (draft.deliveryDate && Number(draft.deliveryDate.slice(0, 4)) < 1900) {
+      setInventoryActionMessage('The delivery year looks incorrect. Review it before saving.')
+      return
+    }
 
     const savedBillet = {
       ...applyBilletGradeRules(draft),
       id: createId('billet'),
-      barcode: draft.barcode.trim().toUpperCase(),
+      barcode,
       length: standardBilletLength,
       moisture: defaultMoisture,
       status: 'storage' as BilletStatus,
@@ -7185,6 +7315,7 @@ function InternalApp({
     setBillets(nextBillets)
     setDraft(createNextBilletDraft(savedBillet, nextBillets))
     setQuickEntry('')
+    setInventoryActionMessage(`${barcode} added to storage.`)
   }
 
   function updateStatus(id: string, status: BilletStatus) {
@@ -7365,13 +7496,19 @@ function InternalApp({
       return
     }
 
+    if (!isOrderReviewed) {
+      setReviewedOrderFingerprint(currentOrderFingerprint)
+      setOrderActionMessage('Review the order summary below. Select the button again to create it in Shopify.')
+      return
+    }
+
     try {
       setIsCreatingDraftOrder(true)
       setOrderActionMessage(
         salesOrderDraft.createDraftOrder
           ? salesOrderAttachmentFile
-            ? 'Uploading attachment and creating/sending Shopify draft invoice...'
-            : 'Creating and sending Shopify draft invoice...'
+            ? 'Uploading attachment and creating an unsent Shopify draft...'
+            : 'Creating an unsent Shopify draft...'
           : salesOrderAttachmentFile
             ? 'Uploading attachment and creating Shopify order...'
             : 'Creating Shopify order...',
@@ -7396,6 +7533,16 @@ function InternalApp({
       mergeIncomingOrderJobs(payload.orderJobs ?? [])
       mergeIncomingPlayers(payload.players ?? [])
       mergeIncomingBillingContacts(payload.billingContacts ?? [])
+      if (payload.draftInvoiceReadyForReview && payload.draftOrder?.id && payload.invoiceSendToken) {
+        setPendingInternalDraftReview({
+          draft: draftToSubmit,
+          draftOrder: payload.draftOrder,
+          invoiceSendToken: payload.invoiceSendToken,
+          invoiceSent: false,
+        })
+      } else {
+        setPendingInternalDraftReview(null)
+      }
       setSalesOrderDraft({
         ...emptySalesOrderDraft(),
         salesRep: accessOwner?.name ?? '',
@@ -7403,11 +7550,38 @@ function InternalApp({
       })
       setReorderContext(null)
       setSalesOrderAttachmentFile(null)
+      setReviewedOrderFingerprint('')
       setOrderActionMessage(getSalesOrderSuccessMessage(salesOrderDraft, payload))
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Could not create Shopify order.')
     } finally {
       setIsCreatingDraftOrder(false)
+    }
+  }
+
+  async function sendReviewedInternalDraftInvoice() {
+    if (!pendingInternalDraftReview || pendingInternalDraftReview.invoiceSent || isSendingReviewedInternalInvoice) return
+    const recipient = getPublicDraftPayerEmail(pendingInternalDraftReview.draft).trim()
+    if (!recipient) {
+      setOrderActionMessage('Add a payer email to the draft in Shopify before sending an invoice.')
+      return
+    }
+    setIsSendingReviewedInternalInvoice(true)
+    try {
+      const response = await fetchApi('/api/sales-orders/send-draft-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceSendToken: pendingInternalDraftReview.invoiceSendToken }),
+      })
+      const payload = await response.json().catch(() => ({})) as SalesOrderApiResponse
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Invoice send failed.')
+      mergeIncomingOrderJobs(payload.orderJobs ?? [])
+      setPendingInternalDraftReview((current) => current ? { ...current, invoiceSent: true } : current)
+      setOrderActionMessage('The reviewed Shopify draft invoice was sent to the payer.')
+    } catch (error) {
+      setOrderActionMessage(error instanceof Error ? error.message : 'Could not send the invoice.')
+    } finally {
+      setIsSendingReviewedInternalInvoice(false)
     }
   }
 
@@ -7601,29 +7775,63 @@ function InternalApp({
     )
   }
 
-  function assignBilletToOrderJob(id: string, nextBilletId: string) {
-    const previousBilletId = orderJobs.find((job) => job.id === id)?.assignedBilletId ?? ''
-    if (previousBilletId === nextBilletId) return
+  function navigateToSection(section: ActiveSection, view?: 'new' | 'history') {
+    if (!canAccessToolSection(section)) return
+    const url = new URL(window.location.href)
+    url.searchParams.set('section', section)
+    if (section === 'orders' && view) {
+      url.searchParams.set('view', view)
+      setOrderEntryView(view)
+    } else if (section !== 'orders') {
+      url.searchParams.delete('view')
+    }
+    window.history.pushState(null, '', url)
+    setActiveSection(section)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
-    const updatedAt = new Date().toISOString()
-    const nextOrderJobs = orderJobs.map((job) =>
-      job.id === id ? { ...job, assignedBilletId: nextBilletId, updatedAt } : job,
-    )
-    const nextAssignedBilletIds = nextOrderJobs
-      .map((job) => job.assignedBilletId)
-      .filter(Boolean)
+  useEffect(() => {
+    const restoreLocation = () => {
+      const section = getInitialActiveSection()
+      setActiveSection(!accessSession || canTeamMemberAccessToolSection(accessMember, section) ? section : 'inventory')
+      const params = new URLSearchParams(window.location.search)
+      setOrderEntryView(params.get('view') === 'history' ? 'history' : 'new')
+      setSelectedCrmContactId(params.get('contact') || '')
+    }
+    window.addEventListener('popstate', restoreLocation)
+    return () => window.removeEventListener('popstate', restoreLocation)
+  }, [accessMember, accessSession])
 
-    setOrderJobs(nextOrderJobs)
-    setBillets((current) =>
-      current.map((billet) => ({
-        ...billet,
-        status: reconcileBilletStatusForOrderAssignment(billet.id, billet.status, {
-          previousBilletId,
-          nextBilletId,
-          assignedBilletIds: nextAssignedBilletIds,
-        }),
-      })),
-    )
+  async function assignBilletToOrderJob(id: string, nextBilletId: string) {
+    const job = orderJobs.find((item) => item.id === id)
+    if (!job || job.assignedBilletId === nextBilletId || assigningBilletJobId) return
+    setAssigningBilletJobId(id)
+    setOrderActionMessage('')
+    try {
+      // Save other unsynced edits before the guarded server assignment.
+      if (hasPendingLocalSync.current && !(await syncRemoteStateNow())) {
+        throw new Error('Save pending changes before assigning a billet. Try again after sync completes.')
+      }
+      const response = await fetchApi(`/api/production-jobs/${encodeURIComponent(id)}/billet-assignment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ billetId: nextBilletId, expectedBilletId: job.assignedBilletId }),
+      })
+      const payload = await response.json().catch(() => ({})) as { ok?: boolean; message?: string }
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'Billet assignment failed.')
+      if (!(await loadRemoteStateNow({ quiet: true }))) {
+        throw new Error('Assignment saved, but the latest inventory could not be loaded. Refresh before editing.')
+      }
+      setBilletPickerOrderJobId('')
+      setBilletPickerQuery('')
+      setOrderActionMessage(nextBilletId
+        ? 'Billet assigned and marked Production in inventory.'
+        : 'Billet unassigned; its storage status was checked against other jobs.')
+    } catch (error) {
+      setOrderActionMessage(error instanceof Error ? error.message : 'Billet assignment failed.')
+    } finally {
+      setAssigningBilletJobId('')
+    }
   }
 
   function getActiveCrmOwnerAssignment(fallback?: Pick<CrmContact, 'salesOwner' | 'ownerEmail'>) {
@@ -7876,6 +8084,7 @@ function InternalApp({
 
   function addProfileBat(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    setProfileValidationMessage('')
     const profileName = playerNameDraft.trim()
     const savedAffiliation = {
       ...playerAffiliationDraft,
@@ -7890,6 +8099,12 @@ function InternalApp({
       !batDraft.source ||
       !batDraft.idealBilletWeight.trim()
     ) {
+      setProfileValidationMessage('Complete the player, level, model, length, weight, source and billet weight fields.')
+      return
+    }
+    if (typeof batDraft.length === 'number' && (batDraft.length < 20 || batDraft.length > 40) &&
+      !window.confirm(`The entered bat length is ${batDraft.length} inches. Save this unusual length?`)) {
+      setProfileValidationMessage('Review the bat length before saving.')
       return
     }
 
@@ -7969,7 +8184,7 @@ function InternalApp({
   }
 
   function startAddVariant(profile: PlayerProfile) {
-    setActiveSection('players')
+    navigateToSection('players')
     setProfileKindDraft(profile.profileKind)
     setPlayerNameDraft(profile.playerName)
     setPlayerAffiliationDraft(getPlayerAffiliationDraft(profile.playerName, profile))
@@ -7980,7 +8195,7 @@ function InternalApp({
   }
 
   function startEditVariant(profile: PlayerProfile, bat: BatVariation) {
-    setActiveSection('players')
+    navigateToSection('players')
     setProfileKindDraft(profile.profileKind)
     setPlayerNameDraft(profile.playerName)
     setPlayerAffiliationDraft(getPlayerAffiliationDraft(profile.playerName, profile))
@@ -8358,81 +8573,30 @@ function InternalApp({
     <main className={`app-shell app-section-${activeSection}`}>
       <section className="hero-panel">
         <div>
-          <p className="eyebrow">Trinity Bat Company internal tool</p>
-          <h1>Billet command center</h1>
-          <p className="hero-copy">
-            Receive, measure, grade, match billets, and store player bat profiles in your
-            live Shopify-connected production workflow.
-          </p>
+          <p className="eyebrow">Trinity Bat Company / Operations</p>
+          <h1>{sectionTitles[activeSection]}</h1>
+          <p className="hero-copy">{activeSection === 'orders' && orderEntryView === 'history'
+            ? 'My orders and documents'
+            : activeSection === 'inventory'
+              ? 'Receive, find, and track every billet.'
+              : 'Live records and daily work in one place.'}</p>
           <nav className="section-tabs" aria-label="Primary tool sections">
-            <button
-              type="button"
-              className={activeSection === 'inventory' ? 'active' : ''}
-              onClick={() => setActiveSection('inventory')}
-            >
-              Inventory
-            </button>
-            {canAccessToolSection('orders') ? (
-              <button
-                type="button"
-                className={activeSection === 'orders' && orderEntryView === 'new' ? 'active' : ''}
-                onClick={() => { setOrderEntryView('new'); setActiveSection('orders') }}
-              >
-                Submit New Order
-              </button>
-            ) : null}
-            {canAccessToolSection('orders') ? (
-              <button type="button" className={activeSection === 'orders' && orderEntryView === 'history' ? 'active' : ''}
-                onClick={() => { setOrderEntryView('history'); setActiveSection('orders') }}>My orders</button>
-            ) : null}
-            {canAccessToolSection('production') ? (
-              <button
-                type="button"
-                className={activeSection === 'production' ? 'active' : ''}
-                onClick={() => setActiveSection('production')}
-              >
-                Production Queue
-              </button>
-            ) : null}
-            {canAccessToolSection('sales') ? (
-              <button
-                type="button"
-                className={activeSection === 'sales' ? 'active' : ''}
-                onClick={() => setActiveSection('sales')}
-              >
-                Sales Dashboard
-              </button>
-            ) : null}
-            {canAccessToolSection('crm') ? (
-              <button
-                type="button"
-                className={activeSection === 'crm' ? 'active' : ''}
-                onClick={() => setActiveSection('crm')}
-              >
-                CRM
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className={activeSection === 'players' ? 'active' : ''}
-              onClick={() => setActiveSection('players')}
-            >
-              Player Bat Profiles
-            </button>
-            <button
-              type="button"
-              className={activeSection === 'models' ? 'active' : ''}
-              onClick={() => setActiveSection('models')}
-            >
-              Bat Model Repository
-            </button>
-            <button
-              type="button"
-              className={activeSection === 'costs' ? 'active' : ''}
-              onClick={() => setActiveSection('costs')}
-            >
-              Billet Cost Guide
-            </button>
+            <div className="nav-brand"><span>TRINITY</span><small>BAT CO. / OPERATIONS</small></div>
+            <div className="nav-group"><span className="nav-group-label">WORK</span>
+              {canAccessToolSection('orders') ? <button type="button" className={activeSection === 'orders' && orderEntryView === 'new' ? 'active' : ''} onClick={() => navigateToSection('orders', 'new')}>New order</button> : null}
+              {canAccessToolSection('orders') ? <button type="button" className={activeSection === 'orders' && orderEntryView === 'history' ? 'active' : ''} onClick={() => navigateToSection('orders', 'history')}>My orders</button> : null}
+              {canAccessToolSection('production') ? <button type="button" className={activeSection === 'production' ? 'active' : ''} onClick={() => navigateToSection('production')}>Production queue</button> : null}
+              <button type="button" className={activeSection === 'inventory' ? 'active' : ''} onClick={() => navigateToSection('inventory')}>Inventory</button>
+              {canAccessToolSection('crm') ? <button type="button" className={activeSection === 'crm' ? 'active' : ''} onClick={() => navigateToSection('crm')}>Customers</button> : null}
+            </div>
+            <div className="nav-group"><span className="nav-group-label">REFERENCE</span>
+              <button type="button" className={activeSection === 'players' ? 'active' : ''} onClick={() => navigateToSection('players')}>Player profiles</button>
+              <button type="button" className={activeSection === 'models' ? 'active' : ''} onClick={() => navigateToSection('models')}>Bat models</button>
+              <button type="button" className={activeSection === 'costs' ? 'active' : ''} onClick={() => navigateToSection('costs')}>Billet cost guide</button>
+            </div>
+            {canAccessToolSection('sales') ? <div className="nav-group"><span className="nav-group-label">REPORTS</span>
+              <button type="button" className={activeSection === 'sales' ? 'active' : ''} onClick={() => navigateToSection('sales')}>Sales dashboard</button>
+            </div> : null}
           </nav>
         </div>
         <div className="hero-card" aria-label="Connection status">
@@ -8568,12 +8732,14 @@ function InternalApp({
         </section>
       ) : activeSection === 'inventory' ? (
         <>
-          <section className="intake-first">
+          <details className="intake-first workflow-disclosure">
+            <summary><strong>Receive a billet</strong><span>Scan or enter a new billet</span></summary>
             <form className="panel intake-panel intake-panel-primary" onSubmit={addBillet}>
               <div className="section-heading">
                 <p className="eyebrow">Storage intake</p>
                 <h2>Add a billet</h2>
               </div>
+              {inventoryActionMessage ? <p role="status" className="helper-text">{inventoryActionMessage}</p> : null}
 
               <div className="quick-entry">
                 <label>
@@ -8801,7 +8967,7 @@ function InternalApp({
 
               <button type="submit">Add billet</button>
             </form>
-          </section>
+          </details>
 
           <section className="metrics-grid" aria-label="Inventory summary">
             <article>
@@ -8822,6 +8988,30 @@ function InternalApp({
             </article>
           </section>
 
+          {dataQualityIssues.length > 0 ? (
+            <details className="workflow-disclosure quality-disclosure">
+              <summary><strong>{dataQualityIssues.length} records to review</strong><span>Possible entry errors; no data changed</span></summary>
+              <div className="quality-review-list">
+                {dataQualityIssues.slice(0, 30).map((issue, index) => (
+                  <button type="button" key={`${issue.kind}-${issue.recordId}-${index}`} onClick={() => {
+                    if (issue.kind === 'bat_length') {
+                      const player = players.find((item) => item.id === issue.recordId)
+                      setPlayerQuery(player?.playerName || '')
+                      navigateToSection('players')
+                    } else {
+                      const billet = billets.find((item) => item.id === issue.recordId)
+                      setInventoryStatusFilter('all')
+                      setQuery(billet?.barcode || '')
+                    }
+                  }}>{issue.label}</button>
+                ))}
+                {dataQualityIssues.length > 30 ? <p>Showing 30 of {dataQualityIssues.length} review items.</p> : null}
+              </div>
+            </details>
+          ) : null}
+
+          <details className="workflow-disclosure fit-disclosure">
+            <summary><strong>Find a billet for a build</strong><span>Compare available inventory to a target bat</span></summary>
           <section className="workspace-grid fit-grid">
             <section className="panel recommendation-panel">
               <div className="section-heading">
@@ -8909,7 +9099,10 @@ function InternalApp({
                       <span>Option {index + 1}</span>
                       <strong>{billet.barcode}</strong>
                       <p>
-                        {score}% fit for {build.model}. {billet.weight || 'unweighed'} oz{' '}
+                        {typeof billet.weight === 'number'
+                          ? `${score}% fit for ${build.model}. ${billet.weight} oz `
+                          : `Weight check required before matching ${build.model}. Weight not recorded. `}
+                        {' '}
                         {billet.species},{' '}
                         {standardBilletLength} in round, {billet.grade} grade from{' '}
                         {billet.source}.
@@ -8920,6 +9113,7 @@ function InternalApp({
               </div>
             </section>
           </section>
+          </details>
 
           <section className="panel inventory-panel">
             <div className="inventory-toolbar">
@@ -9278,6 +9472,17 @@ function InternalApp({
                             </option>
                           ))}
                         </select>
+                        {jobByAssignedBilletId.get(billet.id) ? (
+                          <button type="button" className="inventory-order-link" onClick={() => {
+                            const linkedJob = jobByAssignedBilletId.get(billet.id)
+                            if (!linkedJob) return
+                            setOrderQuery(linkedJob.id)
+                            navigateToSection('production')
+                          }}>
+                            {jobByAssignedBilletId.get(billet.id)?.orderReference ||
+                              jobByAssignedBilletId.get(billet.id)?.shopifyOrderName || 'Open linked job'}
+                          </button>
+                        ) : null}
                       </td>
                       <td>{billet.notes || 'No notes yet'}</td>
                     </tr>
@@ -9322,7 +9527,7 @@ function InternalApp({
               setSalesOrderAttachmentFile(null)
               setReorderContext({ reference, warnings })
               setOrderActionMessage('')
-              setOrderEntryView('new')
+              navigateToSection('orders', 'new')
               window.scrollTo({ top: 0, behavior: 'smooth' })
             }} />
           ) : (
@@ -9341,14 +9546,30 @@ function InternalApp({
               }}>Start a blank order</button>
             </div> : null}
 
+            {pendingInternalDraftReview ? <section className="internal-draft-review" aria-label="Created draft invoice review">
+              <div>
+                <span className="profile-type-pill">Draft created · customer invoice {pendingInternalDraftReview.invoiceSent ? 'sent' : 'not sent'}</span>
+                <h3>{pendingInternalDraftReview.draftOrder.orderReference || pendingInternalDraftReview.draftOrder.name || 'Shopify draft'}</h3>
+                <p>Payer: {getPublicDraftPayerName(pendingInternalDraftReview.draft)} · Player: {pendingInternalDraftReview.draft.playerName}</p>
+                <p>{pendingInternalDraftReview.draft.lines.length} order line{pendingInternalDraftReview.draft.lines.length === 1 ? '' : 's'} · Shopify total {formatSalesOrderMoney(getDraftOrderTotal(pendingInternalDraftReview))}</p>
+                <p>Review the Shopify invoice before emailing the customer.</p>
+              </div>
+              <div className="order-actions">
+                {pendingInternalDraftReview.draftOrder.invoiceUrl ? <a className="secondary-button" href={pendingInternalDraftReview.draftOrder.invoiceUrl} target="_blank" rel="noreferrer">Open invoice preview</a> : null}
+                <button type="button" disabled={isSendingReviewedInternalInvoice || pendingInternalDraftReview.invoiceSent || !getPublicDraftPayerEmail(pendingInternalDraftReview.draft).trim()}
+                  onClick={() => void sendReviewedInternalDraftInvoice()}>
+                  {pendingInternalDraftReview.invoiceSent ? 'Invoice sent' : isSendingReviewedInternalInvoice ? 'Sending…' : 'Send reviewed invoice'}
+                </button>
+              </div>
+            </section> : null}
+
             <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
               <div className="form-instructions">
-                <strong>Internal sales orders create payment-pending Shopify orders</strong>
+                <strong>Review the order before creating it</strong>
                 <p>
-                  Sales reps can enter phone, team, or custom orders here. The app creates
-                  the Shopify order, triggers the same staff order notifications as the site,
-                  sends the invoice when selected, and drops each bat line into the production
-                  queue.
+                  The default creates a Shopify draft and keeps the customer invoice unsent.
+                  Choose a direct order only when the order is ready to finalize; its invoice
+                  email is a separate choice. Each bat line enters the production queue.
                 </p>
               </div>
 
@@ -9391,6 +9612,17 @@ function InternalApp({
                 isSubmitting={isCreatingDraftOrder}
                 submissionMessage={orderActionMessage}
                 hideSalesRepFields={!hasAdminAccess}
+                reviewSummary={isOrderReviewed ? <div className="order-review-summary" role="status">
+                  <strong>Final review before Shopify creation</strong>
+                  <p>Player: {salesOrderDraft.playerName} · Payer: {getPublicDraftPayerName(salesOrderDraft)}</p>
+                  <p>Delivery: {salesOrderDraft.shippingAddress1}, {salesOrderDraft.shippingCity}, {salesOrderDraft.shippingProvinceCode} {salesOrderDraft.shippingZip}</p>
+                  <ul>{salesOrderDraft.lines.map((line) => <li key={line.id}>{line.quantity} × {line.title} · {formatSalesOrderMoney(getSalesLineTotal(line))}</li>)}</ul>
+                  <p>Product subtotal: {formatSalesOrderMoney(getSalesOrderTotal(salesOrderDraft))}. Shopify calculates shipping and tax when you create the order.</p>
+                  <p>{salesOrderDraft.createDraftOrder ? 'Customer invoice: not sent on draft creation.' : salesOrderDraft.sendInvoice ? 'Customer invoice: email after order creation.' : 'Customer invoice: do not email.'}</p>
+                </div> : null}
+                submitLabel={isCreatingDraftOrder ? undefined : isOrderReviewed
+                  ? salesOrderDraft.createDraftOrder ? 'Create unsent draft in Shopify' : salesOrderDraft.sendInvoice ? 'Create order and email invoice' : 'Create order without email'
+                  : 'Review order'}
               />
             </form>
           </section>
@@ -9448,10 +9680,18 @@ function InternalApp({
                     </option>
                   ))}
                 </select>
+                <select aria-label="Filter billet assignment" value={orderAssignmentFilter}
+                  onChange={(event) => setOrderAssignmentFilter(event.target.value as 'all' | 'unassigned' | 'assigned')}>
+                  <option value="all">All billet assignments</option>
+                  <option value="unassigned">Needs billet</option>
+                  <option value="assigned">Billet assigned</option>
+                </select>
               </div>
             </div>
 
             {hasAdminAccess ? (
+              <details className="queue-admin-tools">
+                <summary>Queue administration</summary>
               <div className="order-actions">
                 <button
                   type="button"
@@ -9470,6 +9710,7 @@ function InternalApp({
                   {isRegisteringWebhooks ? 'Connecting...' : 'Connect website webhooks'}
                 </button>
               </div>
+              </details>
             ) : null}
 
             {productionShortcutTarget ? <div className="order-actions" aria-label="Selected Shopify order">
@@ -9491,9 +9732,18 @@ function InternalApp({
               ) : (
                 renderedOrderJobs.map((job) => {
                   const assignedBillet = billets.find((billet) => billet.id === job.assignedBilletId)
-                  const availableBilletsForJob = billets.filter(
-                    (billet) => billet.status === 'storage' || billet.id === job.assignedBilletId,
-                  )
+                  const availableBilletsForJob = billets
+                    .filter((billet) => billet.id === job.assignedBilletId ||
+                      Boolean(getBilletAssignmentCandidate(job, billet, assignedBilletIds)))
+                    .filter((billet) => billet.id === job.assignedBilletId ||
+                      !billetPickerQuery.trim() || getBilletLabel(billet).toLowerCase().includes(billetPickerQuery.trim().toLowerCase()))
+                    .sort((a, b) => {
+                      if (a.id === job.assignedBilletId) return -1
+                      if (b.id === job.assignedBilletId) return 1
+                      const aCheck = getBilletAssignmentCandidate(job, a, new Set())?.needsWeightCheck ? 1 : 0
+                      const bCheck = getBilletAssignmentCandidate(job, b, new Set())?.needsWeightCheck ? 1 : 0
+                      return aCheck - bCheck || a.barcode.localeCompare(b.barcode)
+                    })
                   const displayPlayerName = job.playerName || job.customerName || 'No player saved'
                   const displayPayerName = job.billingName || job.customerName || 'No payer saved'
                   const displayPayerEmail = job.billingEmail || job.customerEmail
@@ -9524,6 +9774,8 @@ function InternalApp({
                         </div>
                       </div>
 
+                      <details className="job-details">
+                        <summary>View build, customer, billet and documents</summary>
                       <div className="order-actions" aria-label="Internal production documents">
                         <button type="button" className="secondary-button" onClick={() => {
                           try { openProductionDocument(orderJobs, job, 'detail') }
@@ -9635,40 +9887,50 @@ function InternalApp({
                                 ? getBilletLabel(assignedBillet)
                                 : 'No billet assigned'}
                             </strong>
+                            {job.quantity > 1 ? <p className="helper-text">This job contains {job.quantity} bats; the current record can link only one billet. Track the remaining billets separately before cutting.</p> : null}
                             <button
                               type="button"
                               className="secondary-button"
                               aria-expanded={billetPickerOrderJobId === job.id}
-                              onClick={() =>
-                                setBilletPickerOrderJobId((current) =>
-                                  current === job.id ? '' : job.id,
-                                )
-                              }
+                              disabled={Boolean(assigningBilletJobId)}
+                              onClick={() => {
+                                setBilletPickerQuery('')
+                                setBilletPickerOrderJobId((current) => current === job.id ? '' : job.id)
+                              }}
                             >
-                              {billetPickerOrderJobId === job.id
+                              {assigningBilletJobId === job.id ? 'Saving assignment…' : billetPickerOrderJobId === job.id
                                 ? 'Close billet picker'
-                                : 'Change billet'}
+                                : assignedBillet ? 'Change billet' : 'Assign billet'}
                             </button>
                           </div>
 
                           {billetPickerOrderJobId === job.id ? (
+                            <div className="billet-picker">
+                              <label>Search available billets
+                                <input type="search" value={billetPickerQuery}
+                                  placeholder="Barcode, source, species, grade…"
+                                  onChange={(event) => setBilletPickerQuery(event.target.value)} />
+                              </label>
+                              <p className="helper-text">Showing {Math.min(100, availableBilletsForJob.length)} of {availableBilletsForJob.length} available billets matching wood and bat purpose. Confirm weight, grade and production specs before assignment.</p>
+                              {availableBilletsForJob.length === 0 ? <p className="empty-state">No available billets match this order’s wood and bat purpose. Check inventory measurements or the order specifications.</p> : null}
                             <label>
                               Choose assigned billet
                               <select
                                 value={job.assignedBilletId}
+                                disabled={Boolean(assigningBilletJobId)}
                                 onChange={(event) => {
-                                  assignBilletToOrderJob(job.id, event.target.value)
-                                  setBilletPickerOrderJobId('')
+                                  void assignBilletToOrderJob(job.id, event.target.value)
                                 }}
                               >
                                 <option value="">No billet assigned</option>
-                                {availableBilletsForJob.map((billet) => (
+                                {availableBilletsForJob.slice(0, 100).map((billet) => (
                                   <option key={billet.id} value={billet.id}>
-                                    {getBilletLabel(billet)}
+                                    {getBilletLabel(billet)}{typeof billet.weight !== 'number' ? ' · WEIGH FIRST' : ''}
                                   </option>
                                 ))}
                               </select>
                             </label>
+                            </div>
                           ) : null}
 
                           <div className="form-row">
@@ -9784,6 +10046,7 @@ function InternalApp({
                           ) : null}
                         </div>
                       </div>
+                      </details>
 
                       <div className="order-job-footer">
                         <p>
@@ -9792,7 +10055,7 @@ function InternalApp({
                         </p>
                         <p>
                           {assignedBillet
-                            ? `Billet ${assignedBillet.barcode} assigned`
+                            ? `Billet ${assignedBillet.barcode} allocated · Inventory: Production`
                             : 'No billet assigned yet'}
                         </p>
                       </div>
@@ -10888,6 +11151,35 @@ function InternalApp({
                 </select>
               </div>
 
+              <details className="crm-order-customer-index">
+                <summary>{unlinkedOrderCustomers.length} order contacts without a saved CRM profile</summary>
+                <p className="helper-text">These read-only groups come from this tool’s order jobs. Saved-profile links follow the existing customer matching rules; remaining jobs group by payer email or phone, or stay separate when both are missing. Review a customer before creating a profile.</p>
+                <div className="crm-order-customer-list">
+                  {unlinkedOrderCustomers.slice(0, 30).map((row) => (
+                    <article key={row.key}>
+                      <div>
+                        <strong>{row.name}</strong>
+                        <span>{row.company || row.email || row.phone || 'Contact method not recorded'}</span>
+                        <small>{buildPlayerOrderHistory(row.jobs).length} linked order{buildPlayerOrderHistory(row.jobs).length === 1 ? '' : 's'} · Last {formatSalesDashboardDate(row.lastAt)}</small>
+                      </div>
+                      <button type="button" className="secondary-button" onClick={() => {
+                        setNewCrmContactDraft({
+                          ...emptyCrmContact(),
+                          name: row.name === 'Name not recorded' ? '' : row.name,
+                          company: row.company,
+                          email: row.email,
+                          phone: row.phone,
+                          salesOwner: activeCrmOwnerOption?.name || accessOwner?.name || '',
+                          ownerEmail: activeCrmOwnerOption?.email || accessOwner?.email || '',
+                        })
+                        setActiveCrmView('new_contact')
+                      }}>Review and create</button>
+                    </article>
+                  ))}
+                  {unlinkedOrderCustomers.length > 30 ? <p>Showing 30 of {unlinkedOrderCustomers.length}. Search to find a specific customer.</p> : null}
+                </div>
+              </details>
+
               <div className="crm-contact-list">
                 {filteredCrmSummaries.length === 0 ? (
                   <p className="empty-state">No CRM contacts match this view yet.</p>
@@ -10912,6 +11204,10 @@ function InternalApp({
                           key={summary.contact.id}
                           onClick={() => {
                             setSelectedCrmContactId(summary.contact.id)
+                            const url = new URL(window.location.href)
+                            url.searchParams.set('section', 'crm')
+                            url.searchParams.set('contact', summary.contact.id)
+                            window.history.pushState(null, '', url)
                             setCrmTouchpointDraft({
                               ...emptyCrmTouchpointDraft(),
                               salesRep: summary.contact.salesOwner,
@@ -10972,8 +11268,16 @@ function InternalApp({
 
                   {crmMessage ? <p className="helper-text">{crmMessage}</p> : null}
 
-                  <div className="crm-detail-grid">
-                    <section className="crm-profile-editor">
+                  <nav className="customer-detail-jumps" aria-label="Customer record sections">
+                    <a href="#customer-summary">Summary</a>
+                    <a href="#customer-orders">Orders</a>
+                    <a href="#customer-activity">Activity</a>
+                    <a href="#customer-edit">Edit profile</a>
+                  </nav>
+
+                  <div className="crm-detail-grid" id="customer-summary">
+                    <details className="crm-profile-editor crm-editor-details" id="customer-edit">
+                      <summary>Edit contact, relationships and preferences</summary>
                       <div className="form-row">
                         <label>
                           Customer name
@@ -11218,7 +11522,7 @@ function InternalApp({
                           />
                         </label>
                       </div>
-                    </section>
+                    </details>
 
                     <aside className="crm-intelligence-panel">
                       <div className="crm-stat-grid">
@@ -11240,6 +11544,8 @@ function InternalApp({
                         </article>
                       </div>
 
+                      <details className="crm-touchpoint-disclosure">
+                        <summary>Log a conversation or follow-up</summary>
                       <form className="crm-touchpoint-form" onSubmit={addCrmTouchpoint}>
                         <div className="section-heading">
                           <p className="eyebrow">Log touchpoint</p>
@@ -11341,11 +11647,12 @@ function InternalApp({
                         </div>
                         <button type="submit">Save touchpoint</button>
                       </form>
+                      </details>
                     </aside>
                   </div>
 
                   <section className="crm-history-grid">
-                    <div className="crm-history-column">
+                    <div className="crm-history-column" id="customer-activity">
                       <div className="section-heading">
                         <p className="eyebrow">Timeline</p>
                         <h2>{selectedCrmSummary.contact.touchpoints.length} engagements</h2>
@@ -11356,7 +11663,7 @@ function InternalApp({
                       />
                     </div>
 
-                    <div className="crm-history-column">
+                    <div className="crm-history-column" id="customer-orders">
                       <div className="section-heading">
                         <p className="eyebrow">Order history</p>
                         <h2>Past orders and invoices</h2>
@@ -11414,6 +11721,7 @@ function InternalApp({
             </div>
 
             <form className="bat-form profile-entry-form" onSubmit={addProfileBat}>
+              {profileValidationMessage ? <p role="alert" className="helper-text">{profileValidationMessage}</p> : null}
               <div className="form-instructions">
                 <strong>
                   {editingVariantTarget
