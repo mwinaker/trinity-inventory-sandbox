@@ -7102,7 +7102,8 @@ function InternalApp({
       (salesDashboardRepFilter === 'all' || line.repKey === salesDashboardRepFilter),
     ), [activeSalesPaymentReconciliation, batPriceChannel, salesDashboardRepFilter])
   const salesBatCategoryLines = useMemo(() => salesBatLines.filter((line) =>
-    salesBatCategoryFilter === 'all' || line.category === salesBatCategoryFilter,
+    salesBatCategoryFilter === 'all' ||
+    (salesBatCategoryFilter === 'review' ? line.needsReview : line.category === salesBatCategoryFilter),
   ), [salesBatLines, salesBatCategoryFilter])
   const salesBatCategorySummary = useMemo(() =>
     summarizeSalesBatCategoryLines(salesBatCategoryLines), [salesBatCategoryLines])
@@ -10391,7 +10392,7 @@ function InternalApp({
               {salesBatCategoryFilter === 'review' ? <p className="canonical-reconciliation-warning" role="status">
                 {salesBatCategorySummary.review.reviewLines} line(s) require category or quantity review. Their values are excluded from category averages.
               </p> : <div className="bat-price-metrics">
-                <article><span>Paid bats</span><strong>{salesBatCategorySummary.all.paidUnits}</strong></article>
+                <article><span>Priced bats</span><strong>{salesBatCategorySummary.all.paidUnits}</strong></article>
                 <article><span>Bat sales</span><strong>{formatSalesOrderMoney(salesBatCategorySummary.all.netSales)}</strong></article>
                 <article><span>Average per bat</span><strong>{salesBatCategorySummary.all.average === null
                   ? '—' : formatSalesOrderMoney(salesBatCategorySummary.all.average)}</strong></article>
@@ -10400,7 +10401,7 @@ function InternalApp({
               </div>}
               {salesBatShownCategories.length > 0 ? <div className="table-wrap">
                 <table className="bat-category-table">
-                  <thead><tr><th>Bat category</th><th>Paid bats</th><th>Bat sales</th><th>Avg / bat</th><th>Median / bat</th><th>Comped</th><th>Pending</th><th>Orders</th></tr></thead>
+                  <thead><tr><th>Bat category</th><th>Priced bats</th><th>Bat sales</th><th>Avg / bat</th><th>Median / bat</th><th>No unit price</th><th>Comped</th><th>Pending</th><th>Orders</th></tr></thead>
                   <tbody>{salesBatShownCategories.map((option) => {
                     const bucket = salesBatCategorySummary[option.value]
                     return <tr key={option.value}>
@@ -10409,6 +10410,7 @@ function InternalApp({
                       <td>{formatSalesOrderMoney(bucket.netSales)}</td>
                       <td>{bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</td>
                       <td>{bucket.median === null ? '—' : formatSalesOrderMoney(bucket.median)}</td>
+                      <td>{bucket.unallocatedSales ? formatSalesOrderMoney(bucket.unallocatedSales) : '—'}</td>
                       <td>{bucket.compedUnits}</td>
                       <td>{bucket.pendingUnits}</td>
                       <td>{bucket.orderCount}</td>
@@ -10449,11 +10451,11 @@ function InternalApp({
                   </tbody>
                 </table></div>
               </div> : null}
-              <p className="helper-text bat-category-definition">A mixed order contributes each line to its own category. Averages use paid, documented Shopify line units; comped and pending bats are shown separately. The salesperson filter above applies to this view. Online orders have their own row because no salesperson is assigned to them.</p>
-              {salesBatLines.filter((line) => line.category === 'review').length > 0 ?
-                <details className="bat-category-review" open={salesBatCategoryFilter === 'review'}><summary>{salesBatLines.filter((line) => line.category === 'review').length} line(s) need category or quantity review</summary>
+              <p className="helper-text bat-category-definition">Mixed orders contribute each line to its category. Average and median use paid bats with a documented unit price. Known-purpose deposits and balances count in category sales under “No unit price” until their physical bats can be allocated; comped and pending bats are separate. Online orders have their own row because no salesperson is assigned.</p>
+              {salesBatLines.filter((line) => line.needsReview).length > 0 ?
+                <details className="bat-category-review" open={salesBatCategoryFilter === 'review'}><summary>{salesBatLines.filter((line) => line.needsReview).length} line(s) need category or quantity review</summary>
                   <div className="table-wrap"><table><thead><tr><th>Order</th><th>Line</th><th>Reason</th><th>Line value</th></tr></thead><tbody>
-                    {salesBatLines.filter((line) => line.category === 'review').map((line) =>
+                    {salesBatLines.filter((line) => line.needsReview).map((line) =>
                       <tr key={`${line.orderId}:${line.lineId}`}><td>{line.orderName}</td><td>{line.title}</td><td>{line.basis}</td><td>{line.value === null ? '—' : formatSalesOrderMoney(line.value)}</td></tr>)}
                   </tbody></table></div>
                 </details> : null}
@@ -10465,11 +10467,12 @@ function InternalApp({
                       <td>{order.orderName}</td><td>{formatSalesReportingCategory(order.reportingCategory)}</td>
                       <td>{order.reportingCategory === 'online_store' ? 'Online Store' : order.salesRep || order.salesRepEmail || 'Unassigned'}</td>
                       <td>{[...new Set(matchingLines.map((line) => salesBatCategoryLabels[line.category]))].join(', ')}</td>
-                      <td>{matchingLines.reduce((sum, line) => sum + line.quantity, 0)}
+                      <td>{matchingLines.some((line) => line.needsReview) ? 'Review' :
+                        matchingLines.reduce((sum, line) => sum + line.quantity, 0)}
                         {matchingLines.some((line) => line.quantity !== line.shopifyQuantity) ?
                           <small>Shopify lines: {matchingLines.reduce((sum, line) => sum + line.shopifyQuantity, 0)} units</small> : null}</td>
                       <td>{formatSalesOrderStatusBucket(order.statusBucket)}</td>
-                      <td>{formatSalesOrderMoney(matchingLines.reduce((sum, line) => sum + (line.saleStatus === 'paid' ? line.value ?? 0 : 0), 0))}</td>
+                      <td>{formatSalesOrderMoney(matchingLines.reduce((sum, line) => sum + (['paid', 'paid_unallocated'].includes(line.saleStatus) ? line.value ?? 0 : 0), 0))}</td>
                     </tr>
                   })}
                 </tbody></table></div>
