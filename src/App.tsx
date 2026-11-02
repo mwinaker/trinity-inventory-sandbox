@@ -2,7 +2,7 @@ import { openProductionDocument } from './production-documents.ts'
 import { productionModelLabel, supportsPuckKnob } from '../shared/production-model.ts'
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
-import { getBilletAssignmentCandidate } from '../shared/billet-assignment.mjs'
+import { getAssignedBilletIds, getBilletAssignmentCandidate } from '../shared/billet-assignment.mjs'
 import { isActionableProductionJob, isConfirmedProductionJob, isProductionBatJob } from '../shared/production-queue.mjs'
 import { getOperationalDataQualityIssues, isCalendarDate } from '../shared/data-quality.mjs'
 import {
@@ -248,6 +248,13 @@ type PlayerProfile = {
   affiliationVerifiedAt: string
   affiliationNote: string
   bats: BatVariation[]
+  productionBilletAssignments?: Array<{
+    jobId: string
+    orderReference: string
+    billetIds: string[]
+    billetNumbers: string[]
+    assignedAt: string
+  }>
 }
 
 type ModelWeightRange = {
@@ -406,6 +413,8 @@ type OrderJob = {
   invoiceStatus: InvoiceStatus
   productionStatus: ProductionStatus
   assignedBilletId: string
+  assignedBilletIds?: string[]
+  assignedBilletBarcodes?: string[]
   billetAssignmentHistory?: Array<{ at: string; fromBilletId: string; toBilletId: string; by: string }>
   linkedProducedBatId: string
   salesRep: string
@@ -1804,6 +1813,10 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     invoiceStatus: isOrderJobPaid(record) ? 'paid' : normalizeInvoiceStatus(record.invoiceStatus === 'paid' ? 'sent' : record.invoiceStatus),
     productionStatus: normalizeProductionStatus(record.productionStatus),
     assignedBilletId: record.assignedBilletId ?? '',
+    assignedBilletIds: getAssignedBilletIds(record),
+    assignedBilletBarcodes: Array.isArray(record.assignedBilletBarcodes)
+      ? record.assignedBilletBarcodes.filter((value): value is string => typeof value === 'string')
+      : [],
     billetAssignmentHistory: Array.isArray(record.billetAssignmentHistory)
       ? record.billetAssignmentHistory.slice(-50)
       : [],
@@ -2790,6 +2803,9 @@ function normalizePlayerProfile(
       record.affiliationVerifiedAt?.trim() || knownAffiliation?.affiliationVerifiedAt || '',
     affiliationNote: record.affiliationNote?.trim() || knownAffiliation?.note || '',
     bats: Array.isArray(record.bats) ? record.bats.map((bat) => normalizeBatVariation(bat)) : [],
+    productionBilletAssignments: Array.isArray(record.productionBilletAssignments)
+      ? record.productionBilletAssignments.filter((item) => item && typeof item.jobId === 'string')
+      : [],
   }
 }
 
@@ -3426,6 +3442,12 @@ function mergeOrderJobs(remote: OrderJob[], local: OrderJob[]) {
       ...job,
       productionStatus: job.productionStatus || existing?.productionStatus || 'new',
       assignedBilletId: job.assignedBilletId || existing?.assignedBilletId || '',
+      assignedBilletIds: getAssignedBilletIds(job).length
+        ? getAssignedBilletIds(job)
+        : getAssignedBilletIds(existing),
+      assignedBilletBarcodes: job.assignedBilletBarcodes?.length
+        ? job.assignedBilletBarcodes
+        : existing?.assignedBilletBarcodes ?? [],
       linkedProducedBatId: job.linkedProducedBatId || existing?.linkedProducedBatId || '',
       orderSubmittedAt: getEarlierDate(
         job.orderSubmittedAt || job.createdAt,
@@ -6134,6 +6156,8 @@ function InternalApp({
   const [billetPickerOrderJobId, setBilletPickerOrderJobId] = useState('')
   const [billetPickerQuery, setBilletPickerQuery] = useState('')
   const [assigningBilletJobId, setAssigningBilletJobId] = useState('')
+  const [uploadingBilletPhotoJobId, setUploadingBilletPhotoJobId] = useState('')
+  const [billetPhotoMessage, setBilletPhotoMessage] = useState<{ jobId: string; text: string; ok: boolean } | null>(null)
   const [inventoryActionMessage, setInventoryActionMessage] = useState('')
   const [profileValidationMessage, setProfileValidationMessage] = useState('')
   const [newDeliveryDate, setNewDeliveryDate] = useState('')
@@ -6816,12 +6840,12 @@ function InternalApp({
     [orderJobs],
   )
   const assignedBilletIds = useMemo(
-    () => new Set(productionOrderJobs.map((job) => job.assignedBilletId).filter(Boolean)),
+    () => new Set(productionOrderJobs.flatMap((job) => getAssignedBilletIds(job))),
     [productionOrderJobs],
   )
   const jobByAssignedBilletId = useMemo(
-    () => new Map(productionOrderJobs.filter((job) => job.assignedBilletId)
-      .map((job) => [job.assignedBilletId, job])),
+    () => new Map(productionOrderJobs.flatMap((job) =>
+      getAssignedBilletIds(job).map((billetId) => [billetId, job] as const))),
     [productionOrderJobs],
   )
   const selectedProducedBatModel = useMemo(
@@ -6863,13 +6887,12 @@ function InternalApp({
         const matchesStatus =
           orderStatusFilter === 'all' || orderStatusFilter === 'active' || orderStatusFilter === 'confirmed' || job.productionStatus === orderStatusFilter
         if (!matchesStatus) return false
-        if (orderAssignmentFilter === 'unassigned' && job.assignedBilletId) return false
-        if (orderAssignmentFilter === 'assigned' && !job.assignedBilletId) return false
+        if (orderAssignmentFilter === 'unassigned' && getAssignedBilletIds(job).length >= job.quantity) return false
+        if (orderAssignmentFilter === 'assigned' && !getAssignedBilletIds(job).length) return false
         if (!normalizedOrderQuery) return true
 
-        const assignedBillet = job.assignedBilletId
-          ? billetById.get(job.assignedBilletId)?.barcode ?? job.assignedBilletId
-          : ''
+        const assignedBillet = getAssignedBilletIds(job)
+          .map((id) => billetById.get(id)?.barcode ?? id).join(' ')
         const searchable = [
           job.orderReference,
           job.id,
@@ -7827,9 +7850,10 @@ function InternalApp({
     return () => window.removeEventListener('popstate', restoreLocation)
   }, [accessMember, accessSession])
 
-  async function assignBilletToOrderJob(id: string, nextBilletId: string) {
+  async function assignBilletToOrderJob(id: string, nextBilletIds: string[]) {
     const job = orderJobs.find((item) => item.id === id)
-    if (!job || job.assignedBilletId === nextBilletId || assigningBilletJobId) return
+    const previousIds = getAssignedBilletIds(job)
+    if (!job || (previousIds.length === nextBilletIds.length && previousIds.every((value, index) => value === nextBilletIds[index])) || assigningBilletJobId) return
     setAssigningBilletJobId(id)
     setOrderActionMessage('')
     try {
@@ -7840,7 +7864,7 @@ function InternalApp({
       const response = await fetchApi(`/api/production-jobs/${encodeURIComponent(id)}/billet-assignment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ billetId: nextBilletId, expectedBilletId: job.assignedBilletId }),
+        body: JSON.stringify({ billetIds: nextBilletIds, expectedBilletIds: previousIds }),
       })
       const payload = await response.json().catch(() => ({})) as { ok?: boolean; message?: string }
       if (!response.ok || !payload.ok) throw new Error(payload.message || 'Billet assignment failed.')
@@ -7849,13 +7873,63 @@ function InternalApp({
       }
       setBilletPickerOrderJobId('')
       setBilletPickerQuery('')
-      setOrderActionMessage(nextBilletId
-        ? 'Billet assigned and marked Production in inventory.'
-        : 'Billet unassigned; its storage status was checked against other jobs.')
+      setOrderActionMessage(nextBilletIds.length
+        ? 'Billets saved to this order and marked Production in inventory.'
+        : 'Billets released from this order and returned to storage where appropriate.')
     } catch (error) {
       setOrderActionMessage(error instanceof Error ? error.message : 'Billet assignment failed.')
     } finally {
       setAssigningBilletJobId('')
+    }
+  }
+
+  async function uploadBilletPhoto(jobId: string, file: File) {
+    if (uploadingBilletPhotoJobId || assigningBilletJobId) return
+    setUploadingBilletPhotoJobId(jobId)
+    setBilletPhotoMessage({ jobId, text: 'Reading both passes of the photo and checking each billet against inventory…', ok: false })
+    try {
+      if (hasPendingLocalSync.current && !(await syncRemoteStateNow())) {
+        throw new Error('Save pending edits before uploading the production sheet.')
+      }
+      let image: Blob = file
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
+        const bitmap = await createImageBitmap(file)
+        const scale = Math.min(1, 2600 / Math.max(bitmap.width, bitmap.height))
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.round(bitmap.width * scale)
+        canvas.height = Math.round(bitmap.height * scale)
+        const context = canvas.getContext('2d')
+        if (!context) throw new Error('This browser could not prepare the photo. Use a JPEG image.')
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+        bitmap.close()
+        image = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+          (blob) => blob ? resolve(blob) : reject(new Error('This browser could not prepare the photo.')),
+          'image/jpeg', 0.88,
+        ))
+      }
+      if (image.size > 8 * 1024 * 1024) throw new Error('The photo is still over 8 MB. Try a closer photo of the sheet.')
+      const response = await fetchApi(`/api/production-jobs/${encodeURIComponent(jobId)}/billet-photo`, {
+        method: 'POST',
+        headers: { 'Content-Type': image.type },
+        body: image,
+      })
+      const payload = await response.json().catch(() => ({})) as {
+        ok?: boolean; message?: string; billetNumbers?: string[]; playerProfiles?: string[]
+      }
+      if (!response.ok || !payload.ok) throw new Error(payload.message || 'The photo could not be assigned.')
+      if (!(await loadRemoteStateNow({ quiet: true }))) {
+        throw new Error('The assignment was saved, but the latest order and inventory could not be reloaded. Refresh before editing.')
+      }
+      const count = payload.billetNumbers?.length ?? 0
+      setBilletPhotoMessage({
+        jobId,
+        ok: true,
+        text: `${count} billet${count === 1 ? '' : 's'} saved to the order and marked In production in inventory.${payload.playerProfiles?.length ? ` Also saved to ${payload.playerProfiles.join(', ')}’s player profile.` : ''}`,
+      })
+    } catch (error) {
+      setBilletPhotoMessage({ jobId, ok: false, text: error instanceof Error ? error.message : 'The photo could not be processed. No billets were changed.' })
+    } finally {
+      setUploadingBilletPhotoJobId('')
     }
   }
 
@@ -9765,15 +9839,12 @@ function InternalApp({
                 <p className="empty-state">No order jobs match this view yet.</p>
               ) : (
                 renderedOrderJobs.map((job) => {
-                  const assignedBillet = billets.find((billet) => billet.id === job.assignedBilletId)
+                  const jobBilletIds = getAssignedBilletIds(job)
+                  const assignedBillets = jobBilletIds.map((id) => billets.find((billet) => billet.id === id)).filter((billet): billet is Billet => Boolean(billet))
                   const availableBilletsForJob = billets
-                    .filter((billet) => billet.id === job.assignedBilletId ||
-                      Boolean(getBilletAssignmentCandidate(job, billet, assignedBilletIds)))
-                    .filter((billet) => billet.id === job.assignedBilletId ||
-                      !billetPickerQuery.trim() || getBilletLabel(billet).toLowerCase().includes(billetPickerQuery.trim().toLowerCase()))
+                    .filter((billet) => Boolean(getBilletAssignmentCandidate(job, billet, assignedBilletIds)))
+                    .filter((billet) => !billetPickerQuery.trim() || getBilletLabel(billet).toLowerCase().includes(billetPickerQuery.trim().toLowerCase()))
                     .sort((a, b) => {
-                      if (a.id === job.assignedBilletId) return -1
-                      if (b.id === job.assignedBilletId) return 1
                       const aCheck = getBilletAssignmentCandidate(job, a, new Set())?.needsWeightCheck ? 1 : 0
                       const bCheck = getBilletAssignmentCandidate(job, b, new Set())?.needsWeightCheck ? 1 : 0
                       return aCheck - bCheck || a.barcode.localeCompare(b.barcode)
@@ -9915,18 +9986,26 @@ function InternalApp({
                           </label>
 
                           <div className="job-billet-assignment">
-                            <span>Assigned billet</span>
-                            <strong>
-                              {assignedBillet
-                                ? getBilletLabel(assignedBillet)
-                                : 'No billet assigned'}
-                            </strong>
-                            {job.quantity > 1 ? <p className="helper-text">This job contains {job.quantity} bats; the current record can link only one billet. Track the remaining billets separately before cutting.</p> : null}
+                            <span>Billets assigned · {jobBilletIds.length} of {job.quantity} bats</span>
+                            {assignedBillets.length ? (
+                              <div className="assigned-billet-list">
+                                {assignedBillets.map((billet) => (
+                                  <div key={billet.id} className="assigned-billet-item">
+                                    <strong>{getBilletLabel(billet)}</strong>
+                                    <button type="button" className="secondary-button compact-button"
+                                      disabled={Boolean(assigningBilletJobId || uploadingBilletPhotoJobId)}
+                                      onClick={() => void assignBilletToOrderJob(job.id, jobBilletIds.filter((id) => id !== billet.id))}>
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : <strong>No billet assigned</strong>}
                             <button
                               type="button"
                               className="secondary-button"
                               aria-expanded={billetPickerOrderJobId === job.id}
-                              disabled={Boolean(assigningBilletJobId)}
+                              disabled={Boolean(assigningBilletJobId || uploadingBilletPhotoJobId) || jobBilletIds.length >= job.quantity || !isActionableProductionJob(job)}
                               onClick={() => {
                                 setBilletPickerQuery('')
                                 setBilletPickerOrderJobId((current) => current === job.id ? '' : job.id)
@@ -9934,8 +10013,30 @@ function InternalApp({
                             >
                               {assigningBilletJobId === job.id ? 'Saving assignment…' : billetPickerOrderJobId === job.id
                                 ? 'Close billet picker'
-                                : assignedBillet ? 'Change billet' : 'Assign billet'}
+                                : 'Add billet by number'}
                             </button>
+                          </div>
+
+                          <div className="production-photo-upload">
+                            <div>
+                              <strong>Photographed production sheet</strong>
+                              <p>Write each used billet number beside its product line, then upload one clear photo of the full sheet. The order number and Job IDs must be visible. The photo is sent to OpenAI for handwriting reading and is not attached to the order.</p>
+                            </div>
+                            <label>
+                              Upload sheet photo
+                              <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment"
+                                disabled={Boolean(assigningBilletJobId || uploadingBilletPhotoJobId) || !isActionableProductionJob(job)}
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0]
+                                  event.target.value = ''
+                                  if (file) void uploadBilletPhoto(job.id, file)
+                                }} />
+                            </label>
+                            {billetPhotoMessage?.jobId === job.id ? (
+                              <p className={billetPhotoMessage.ok ? 'photo-upload-success' : 'photo-upload-status'} role="status">
+                                {billetPhotoMessage.text}
+                              </p>
+                            ) : null}
                           </div>
 
                           {billetPickerOrderJobId === job.id ? (
@@ -9948,15 +10049,15 @@ function InternalApp({
                               <p className="helper-text">Showing {Math.min(100, availableBilletsForJob.length)} of {availableBilletsForJob.length} available billets matching wood and bat purpose. Confirm weight, grade and production specs before assignment.</p>
                               {availableBilletsForJob.length === 0 ? <p className="empty-state">No available billets match this order’s wood and bat purpose. Check inventory measurements or the order specifications.</p> : null}
                             <label>
-                              Choose assigned billet
+                              Choose an available billet to add
                               <select
-                                value={job.assignedBilletId}
+                                value=""
                                 disabled={Boolean(assigningBilletJobId)}
                                 onChange={(event) => {
-                                  void assignBilletToOrderJob(job.id, event.target.value)
+                                  if (event.target.value) void assignBilletToOrderJob(job.id, [...jobBilletIds, event.target.value])
                                 }}
                               >
-                                <option value="">No billet assigned</option>
+                                <option value="">Select a billet</option>
                                 {availableBilletsForJob.slice(0, 100).map((billet) => (
                                   <option key={billet.id} value={billet.id}>
                                     {getBilletLabel(billet)}{typeof billet.weight !== 'number' ? ' · WEIGH FIRST' : ''}
@@ -10088,8 +10189,8 @@ function InternalApp({
                           {job.fulfillmentStatus || 'unknown'}
                         </p>
                         <p>
-                          {assignedBillet
-                            ? `Billet ${assignedBillet.barcode} allocated · Inventory: Production`
+                          {assignedBillets.length
+                            ? `${assignedBillets.map((billet) => billet.barcode).join(', ')} allocated · Inventory: Production`
                             : 'No billet assigned yet'}
                         </p>
                       </div>
@@ -12254,6 +12355,26 @@ function InternalApp({
                         )
                       })}
                     </div>
+
+                    {profile.productionBilletAssignments?.length ? (
+                      <section className="profile-order-section">
+                        <div className="section-heading">
+                          <p className="eyebrow">Production billet history</p>
+                          <h3>Billets assigned to this player’s orders</h3>
+                        </div>
+                        <div className="crm-order-history profile-order-history">
+                          {profile.productionBilletAssignments.map((assignment) => (
+                            <article className="sales-dashboard-card" key={assignment.jobId}>
+                              <div>
+                                <h3>{assignment.orderReference || 'Production order'}</h3>
+                                <p>{assignment.billetNumbers?.join(', ') || assignment.billetIds.join(', ')}</p>
+                              </div>
+                              <span>{formatSalesDashboardDate(assignment.assignedAt)}</span>
+                            </article>
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
 
                     <section className="profile-order-section">
                       <div className="section-heading">

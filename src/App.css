@@ -3303,6 +3303,14 @@ td select {
 .app-shell .job-details[open] > summary { margin-bottom: 13px; }
 .app-shell .job-details .order-actions { margin-bottom: 10px; }
 .app-shell .job-billet-assignment { padding: 10px; border: 1px solid #dce7dc; border-radius: 9px; background: #f6faf6; }
+.app-shell .assigned-billet-list { display: grid; gap: 7px; margin: 8px 0; }
+.app-shell .assigned-billet-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid #dce7dc; border-radius: 7px; background: #fff; }
+.app-shell .assigned-billet-item strong { overflow-wrap: anywhere; }
+.app-shell .production-photo-upload { display: grid; gap: 8px; padding: 14px; border: 1px solid #cadacc; border-radius: 10px; background: #f5f9f4; }
+.app-shell .production-photo-upload p { margin: 3px 0 0; color: #405047; }
+.app-shell .production-photo-upload input[type="file"] { display: block; width: 100%; margin-top: 6px; }
+.app-shell .production-photo-upload .photo-upload-success { color: #1e5b37; font-weight: 700; }
+.app-shell .production-photo-upload .photo-upload-status { color: #7c4619; font-weight: 700; }
 .app-shell .billet-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid #dce7dc; border-radius: 9px; background: #fbfdfb; }
 .app-shell .billet-picker input { width: 100%; }
 .app-shell .inventory-order-link { display: block; width: fit-content; min-height: 0; margin-top: 5px; padding: 1px 0; border: 0; background: none; color: #28633d; font-size: .74rem; text-align: left; text-decoration: underline; }

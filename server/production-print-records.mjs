@@ -12,6 +12,8 @@ export function mergeCurrentPrintJobs(current, saved) {
       salesRep: job.salesRep || source.salesRep,
       productionStatus: exact?.productionStatus || job.productionStatus,
       assignedBilletId: exact?.assignedBilletId || '',
+      assignedBilletIds: exact?.assignedBilletIds || (exact?.assignedBilletId ? [exact.assignedBilletId] : []),
+      assignedBilletBarcodes: exact?.assignedBilletBarcodes || [],
       linkedProducedBatId: exact?.linkedProducedBatId || '',
       internalNotes: notes,
       additionalInternalAttachments: [...(job.additionalInternalAttachments || []), ...(index === 0 ? attachments : [])],

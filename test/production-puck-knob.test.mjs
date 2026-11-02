@@ -8,6 +8,7 @@ import { productionModelLabel } from '../shared/production-model.ts'
 import { productionLineDetails } from '../server/production-line-details.mjs'
 import { buildProductionDocument } from '../shared/production-documents.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
+import { getAssignedBilletIds } from '../shared/billet-assignment.mjs'
 
 // Exercise the application's actual mapping/merge functions without starting its
 // HTTP server or connecting to Shopify. This follows private-order-notes.test.mjs.
@@ -30,7 +31,7 @@ const appAst = ts.createSourceFile('App.tsx', appSource, ts.ScriptTarget.Latest,
 const clientFunctions = new Set(['normalizeOrderJob', 'normalizeInvoiceStatus', 'normalizeProductionStatus',
   'normalizeOrderAttachment', 'normalizeInternalAttachmentNotifications', 'mergeOrderSpecs'])
 const appFunctions = appAst.statements.filter(n => ts.isFunctionDeclaration(n) && clientFunctions.has(n.name?.text))
-const client = vm.createContext({ isOrderJobPaid })
+const client = vm.createContext({ isOrderJobPaid, getAssignedBilletIds })
 vm.runInContext(ts.transpileModule(appFunctions.map(n => n.getText(appAst)).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
 }).outputText, client)
