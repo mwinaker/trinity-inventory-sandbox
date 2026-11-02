@@ -1,4 +1,5 @@
 import { billetSpeciesOptions } from './species-options.mjs'
+import { isActionableProductionJob, isProductionBatJob } from './production-queue.mjs'
 
 const knownSpecies = new Set(billetSpeciesOptions.map((value) => value.toLowerCase()))
 
@@ -18,8 +19,11 @@ export function getBilletAssignmentConflict({ job, nextBillet, allJobs, expected
   if (String(job.assignedBilletId ?? '') !== expectedBilletId) {
     return 'This job changed in another session. Refresh before assigning a billet.'
   }
-  if (job.productionStatus === 'cancelled' || job.productionStatus === 'complete') {
-    return 'A cancelled or completed job cannot receive a new billet.'
+  if (nextBillet && !isProductionBatJob(job)) {
+    return 'Only bat jobs can receive a billet.'
+  }
+  if (nextBillet && !isActionableProductionJob(job)) {
+    return 'A fulfilled, cancelled, or completed job cannot receive a new billet.'
   }
   if (!nextBillet) return ''
   if (nextBillet.status !== 'storage' && nextBillet.id !== expectedBilletId) {
@@ -38,6 +42,7 @@ export function getBilletAssignmentConflict({ job, nextBillet, allJobs, expected
 }
 
 export function getBilletAssignmentCandidate(job, billet, assignedBilletIds = new Set()) {
+  if (!isActionableProductionJob(job)) return null
   if (billet.status !== 'storage' || assignedBilletIds.has(billet.id)) return null
   const requestedWood = String(job.specs?.wood ?? '').trim().toLowerCase()
   if (knownSpecies.has(requestedWood) && String(billet.species ?? '').trim().toLowerCase() !== requestedWood) return null

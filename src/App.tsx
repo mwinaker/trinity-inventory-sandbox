@@ -3,6 +3,7 @@ import { productionModelLabel, supportsPuckKnob } from '../shared/production-mod
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 import { getBilletAssignmentCandidate } from '../shared/billet-assignment.mjs'
+import { isActionableProductionJob, isProductionBatJob } from '../shared/production-queue.mjs'
 import { getOperationalDataQualityIssues, isCalendarDate } from '../shared/data-quality.mjs'
 import {
   type Dispatch,
@@ -6099,7 +6100,7 @@ function InternalApp({
   const [crmMessage, setCrmMessage] = useState('')
   const [orderQuery, setOrderQuery] = useState('')
   const [productionShortcutTarget, setProductionShortcutTarget] = useState(() => productionShortcut(window.location.search))
-  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductionStatus>('all')
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'active' | 'all' | ProductionStatus>('active')
   const [orderAssignmentFilter, setOrderAssignmentFilter] = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
   const [isCreatingDraftOrder, setIsCreatingDraftOrder] = useState(false)
@@ -6788,7 +6789,7 @@ function InternalApp({
     [billets],
   )
   const productionOrderJobs = useMemo(
-    () => orderJobs.filter((job) => job.itemType === 'bat'),
+    () => orderJobs.filter(isProductionBatJob),
     [orderJobs],
   )
   const assignedBilletIds = useMemo(
@@ -6820,26 +6821,25 @@ function InternalApp({
     [producedBatDraft.shopifyVariantId, selectedShopifyProduct],
   )
   const openOrderJobs = useMemo(
-    () =>
-      productionOrderJobs.filter(
-        (job) => job.productionStatus !== 'complete' && job.productionStatus !== 'cancelled',
-      ),
+    () => productionOrderJobs.filter(isActionableProductionJob),
     [productionOrderJobs],
   )
   const readyOrderJobs = useMemo(
     () =>
-      productionOrderJobs.filter(
+      openOrderJobs.filter(
         (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
       ),
-    [productionOrderJobs],
+    [openOrderJobs],
   )
-  const normalizedOrderQuery = orderQuery.toLowerCase()
+  const normalizedOrderQuery = orderQuery.trim().toLowerCase()
   const filteredOrderJobs = useMemo(
     () =>
       productionOrderJobs.filter((job) => {
         if (!matchesProductionShortcut(job, productionShortcutTarget)) return false
+        if (orderStatusFilter === 'active' && !normalizedOrderQuery && !productionShortcutTarget &&
+          !isActionableProductionJob(job)) return false
         const matchesStatus =
-          orderStatusFilter === 'all' || job.productionStatus === orderStatusFilter
+          orderStatusFilter === 'all' || orderStatusFilter === 'active' || job.productionStatus === orderStatusFilter
         if (!matchesStatus) return false
         if (orderAssignmentFilter === 'unassigned' && job.assignedBilletId) return false
         if (orderAssignmentFilter === 'assigned' && !job.assignedBilletId) return false
@@ -9640,15 +9640,15 @@ function InternalApp({
               <strong>{readyOrderJobs.length}</strong>
             </article>
             <article>
-              <span>Website jobs</span>
+              <span>Website work</span>
               <strong>
-                {productionOrderJobs.filter((job) => job.origin === 'website').length}
+                {openOrderJobs.filter((job) => job.origin === 'website').length}
               </strong>
             </article>
             <article>
-              <span>Sales intake</span>
+              <span>Sales intake work</span>
               <strong>
-                {productionOrderJobs.filter((job) => job.origin === 'internal_sales').length}
+                {openOrderJobs.filter((job) => job.origin === 'internal_sales').length}
               </strong>
             </article>
           </section>
@@ -9670,9 +9670,10 @@ function InternalApp({
                   aria-label="Filter production status"
                   value={orderStatusFilter}
                   onChange={(event) =>
-                    setOrderStatusFilter(event.target.value as 'all' | ProductionStatus)
+                    setOrderStatusFilter(event.target.value as 'active' | 'all' | ProductionStatus)
                   }
                 >
+                  <option value="active">Active bat work</option>
                   <option value="all">All statuses</option>
                   {Object.entries(productionStatusLabels).map(([value, label]) => (
                     <option key={value} value={value}>
@@ -9688,6 +9689,7 @@ function InternalApp({
                 </select>
               </div>
             </div>
+            <p className="helper-text queue-search-help">Search includes historical jobs. Choose All statuses to browse them.</p>
 
             {hasAdminAccess ? (
               <details className="queue-admin-tools">
