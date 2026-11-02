@@ -5386,6 +5386,10 @@ function formatSalesOrderMoney(value: number | string) {
   }).format(amount)
 }
 
+function formatSalesBatUnitCount(count: number) {
+  return `${count} ${count === 1 ? 'bat' : 'bats'}`
+}
+
 function getSalesLineTotal(line: SalesOrderLineDraft) {
   const quantity = Number.isFinite(line.quantity) ? line.quantity : 0
   const unitPrice = Number(line.unitPrice)
@@ -10432,24 +10436,24 @@ function InternalApp({
                         ? 'All sales' : batPriceChannel === 'online_store' ? 'Online Store total' : 'Sales team total'}</th>
                       {salesBatShownCategories.map((option) => {
                         const bucket = salesBatCategorySummary[option.value]
-                        return <td key={option.value}>{bucket.paidUnits} bats · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
+                        return <td key={option.value}>{formatSalesBatUnitCount(bucket.paidUnits)} · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
                       })}
-                      <td>{salesBatCategorySummary.all.paidUnits} bats · {formatSalesOrderMoney(salesBatCategorySummary.all.netSales)}</td>
+                      <td>{formatSalesBatUnitCount(salesBatCategorySummary.all.paidUnits)} · {formatSalesOrderMoney(salesBatCategorySummary.all.netSales)}</td>
                     </tr>
                     {salesDashboardRepFilter === 'all' && batPriceChannel === 'combined' ?
                       <tr className="team-total"><th scope="row">Sales team total</th>
                         {salesBatShownCategories.map((option) => {
                           const bucket = salesBatManualSummary[option.value]
-                          return <td key={option.value}>{bucket.paidUnits} bats · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
+                          return <td key={option.value}>{formatSalesBatUnitCount(bucket.paidUnits)} · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
                         })}
-                        <td>{salesBatManualSummary.all.paidUnits} bats · {formatSalesOrderMoney(salesBatManualSummary.all.netSales)}</td>
+                        <td>{formatSalesBatUnitCount(salesBatManualSummary.all.paidUnits)} · {formatSalesOrderMoney(salesBatManualSummary.all.netSales)}</td>
                       </tr> : null}
                     {salesBatSellerRows.map((seller) => <tr key={seller.key}><th scope="row">{seller.label}</th>
                       {salesBatShownCategories.map((option) => {
                         const bucket = seller.summary[option.value]
-                        return <td key={option.value}>{bucket.paidUnits} bats · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
+                        return <td key={option.value}>{formatSalesBatUnitCount(bucket.paidUnits)} · {formatSalesOrderMoney(bucket.netSales)}<small>Avg {bucket.average === null ? '—' : formatSalesOrderMoney(bucket.average)}</small></td>
                       })}
-                      <td>{seller.summary.all.paidUnits} bats · {formatSalesOrderMoney(seller.summary.all.netSales)}</td>
+                      <td>{formatSalesBatUnitCount(seller.summary.all.paidUnits)} · {formatSalesOrderMoney(seller.summary.all.netSales)}</td>
                     </tr>)}
                   </tbody>
                 </table></div>
