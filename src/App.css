@@ -762,13 +762,23 @@ button:hover {
 
 .order-job-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 0.26fr) minmax(180px, 0.26fr) minmax(0, 0.48fr);
-  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
 }
 
 .job-controls {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-column: 1 / -1;
   gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.job-controls > :is(.production-photo-upload, .billet-picker, .form-row, .notes-field) {
+  grid-column: 1 / -1;
 }
 
 .order-job-footer {
@@ -794,7 +804,7 @@ button:hover {
 
 .sales-dashboard-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(380px, 0.92fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 430px), 1fr));
   gap: 20px;
   align-items: end;
 }
@@ -1700,14 +1710,14 @@ button:hover {
 
 .crm-filter-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(130px, 0.7fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
 
 .crm-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 0.32fr) minmax(0, 0.68fr);
+  grid-template-columns: minmax(280px, 34%) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
@@ -2826,7 +2836,6 @@ td select {
   .players-layout,
   .profiles-page,
   .models-page,
-  .order-job-grid,
   .order-actions,
   .cost-results,
   .invoice-review-summary,
@@ -3301,14 +3310,22 @@ td select {
 .app-shell .job-details { border-top: 1px solid #e7ebe6; padding-top: 7px; }
 .app-shell .job-details > summary { width: fit-content; color: #285b39; cursor: pointer; font-size: .8rem; font-weight: 750; }
 .app-shell .job-details[open] > summary { margin-bottom: 13px; }
-.app-shell .job-details .order-actions { margin-bottom: 10px; }
+.app-shell .job-details .order-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-bottom: 10px; }
+.app-shell .job-details .order-actions button { width: auto; min-height: 38px; padding: 7px 11px; font-size: .78rem; }
+.app-shell .job-details .order-actions .helper-text { margin: 0; font-size: .75rem; }
+.app-shell .order-job-grid > .compatible-list { align-self: start; min-width: 0; overflow-wrap: anywhere; }
+.app-shell .order-job-grid > .compatible-list p { line-height: 1.45; }
+.app-shell .job-controls > label:first-child { align-self: start; padding: 12px; border: 1px solid #dce7dc; border-radius: 9px; background: #f8faf7; }
 .app-shell .job-billet-assignment { padding: 10px; border: 1px solid #dce7dc; border-radius: 9px; background: #f6faf6; }
 .app-shell .assigned-billet-list { display: grid; gap: 7px; margin: 8px 0; }
 .app-shell .assigned-billet-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid #dce7dc; border-radius: 7px; background: #fff; }
 .app-shell .assigned-billet-item strong { overflow-wrap: anywhere; }
-.app-shell .production-photo-upload { display: grid; gap: 8px; padding: 14px; border: 1px solid #cadacc; border-radius: 10px; background: #f5f9f4; }
-.app-shell .production-photo-upload p { margin: 3px 0 0; color: #405047; }
-.app-shell .production-photo-upload input[type="file"] { display: block; width: 100%; margin-top: 6px; }
+.app-shell .production-photo-upload { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .8fr); gap: 10px 18px; align-items: center; padding: 14px; border: 1px solid #cadacc; border-radius: 10px; background: #f5f9f4; }
+.app-shell .production-photo-upload p { margin: 4px 0 0; color: #405047; line-height: 1.45; }
+.app-shell .production-photo-upload small { display: block; margin-top: 6px; color: #607368; line-height: 1.4; }
+.app-shell .production-photo-upload input[type="file"] { display: block; width: 100%; min-width: 0; margin-top: 6px; }
+.app-shell .production-photo-upload > .photo-upload-success,
+.app-shell .production-photo-upload > .photo-upload-status { grid-column: 1 / -1; }
 .app-shell .production-photo-upload .photo-upload-success { color: #1e5b37; font-weight: 700; }
 .app-shell .production-photo-upload .photo-upload-status { color: #7c4619; font-weight: 700; }
 .app-shell .billet-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid #dce7dc; border-radius: 9px; background: #fbfdfb; }
@@ -3371,4 +3388,15 @@ td select {
   .app-shell .crm-toolbar { grid-template-columns: 1fr; }
   .app-shell .crm-toolbar-actions { justify-content: flex-start; }
   .app-shell .crm-tab-strip { justify-content: flex-start; }
+}
+
+@media (min-width: 560px) and (max-width: 980px) {
+  .app-shell .dashboard-controls { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .app-shell .order-job-grid,
+  .app-shell .job-controls,
+  .app-shell .production-photo-upload { grid-template-columns: minmax(0, 1fr); }
+  .app-shell .job-details .order-actions button { width: 100%; }
 }

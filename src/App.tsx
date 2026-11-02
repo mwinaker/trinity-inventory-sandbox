@@ -10020,7 +10020,8 @@ function InternalApp({
                           <div className="production-photo-upload">
                             <div>
                               <strong>Photographed production sheet</strong>
-                              <p>Write each used billet number beside its product line, then upload one clear photo of the full sheet. The order number and Job IDs must be visible. The photo is sent to OpenAI for handwriting reading and is not attached to the order.</p>
+                              <p>Show the order number, Job IDs, and handwritten billets beside the correct bat lines.</p>
+                              <small>Read by OpenAI; the photo is not attached to the order.</small>
                             </div>
                             <label>
                               Upload sheet photo
