@@ -3,7 +3,6 @@ const successfulPaymentKinds = new Set(['SALE', 'CAPTURE'])
 export const salesReportingCategories = Object.freeze([
   'manual_sales_order_entry',
   'online_store',
-  'shop',
   'point_of_sale',
   'other_unresolved',
 ])
@@ -47,10 +46,7 @@ export function classifyPaidInvoiceSource(sourceName, hasInventoryMarker) {
   return ''
 }
 
-// The owner-approved initial Shop orders predate the all-channel review cutoff.
-const originalShopCutoff = Date.parse('2026-10-04T00:00:00Z')
-
-export function classifySalesReportingCategory({ sourceName, appName, orderCreatedAt, hasInventoryMarker }) {
+export function classifySalesReportingCategory({ sourceName, appName, hasInventoryMarker }) {
   const normalizedSource = cleanString(sourceName).toLowerCase()
   const normalizedApp = cleanString(appName).toLowerCase()
 
@@ -58,12 +54,7 @@ export function classifySalesReportingCategory({ sourceName, appName, orderCreat
     return 'manual_sales_order_entry'
   }
   if (normalizedSource === 'web' && normalizedApp === 'online store') return 'online_store'
-  if (normalizedApp === 'shop') {
-    const created = Date.parse(cleanString(orderCreatedAt))
-    return Number.isFinite(created) && created < originalShopCutoff
-      ? 'online_store'
-      : 'shop'
-  }
+  if (normalizedApp === 'shop' || normalizedSource === 'shop') return 'online_store'
   if (normalizedSource === 'pos' || normalizedApp === 'point of sale') return 'point_of_sale'
   return 'other_unresolved'
 }
@@ -140,7 +131,7 @@ export function buildSalesReconciliationChecks(
   const orderIds = rows.map((order) => cleanString(order?.orderId)).filter(Boolean)
   const duplicateOrderIds = [...new Set(orderIds.filter((id, index) => orderIds.indexOf(id) !== index))]
   const unresolvedOrderNames = rows
-    .filter((order) => ['other_unresolved', 'shop'].includes(order?.reportingCategory))
+    .filter((order) => order?.reportingCategory === 'other_unresolved')
     .map((order) => cleanString(order?.orderName) || cleanString(order?.orderId))
     .filter(Boolean)
   const unresolvedManualRepOrderNames = rows

@@ -109,7 +109,7 @@ test('classifies reporting channels with manual markers taking precedence', () =
   )
   assert.equal(
     classifySalesReportingCategory({ sourceName: 'web', appName: 'Shop' }),
-    'shop',
+    'online_store',
   )
   assert.equal(
     classifySalesReportingCategory({ sourceName: 'shop', appName: 'Shop', orderCreatedAt: '2026-05-15T00:00:00Z' }),
@@ -120,8 +120,12 @@ test('classifies reporting channels with manual markers taking precedence', () =
     'online_store',
   )
   assert.equal(
-    classifySalesReportingCategory({ sourceName: 'shop', appName: 'Shop', orderCreatedAt: '2026-10-15T00:00:00Z' }),
-    'shop',
+    classifySalesReportingCategory({ sourceName: '12345', appName: 'Shop', orderCreatedAt: '2026-11-01T00:00:00Z' }),
+    'online_store',
+  )
+  assert.equal(
+    classifySalesReportingCategory({ sourceName: 'shop', appName: '', orderCreatedAt: '2026-10-15T00:00:00Z' }),
+    'online_store',
   )
   assert.equal(
     classifySalesReportingCategory({ sourceName: 'pos', appName: 'Point of Sale' }),
@@ -154,6 +158,21 @@ test('keeps zero-dollar completed orders as comped without inventing a payment e
     getSalesOrderStatusBucket({ financialStatus: 'REFUNDED', total: 0, paidAt: '' }),
     'refunded',
   )
+})
+
+test('groups a later Shop app purchase with website sales without a third channel', () => {
+  const orders = [
+    { orderId: '1', orderName: '#web', reportingCategory: classifySalesReportingCategory({
+      sourceName: 'web', appName: 'Online Store',
+    }), currentOrderValue: 100 },
+    { orderId: '2', orderName: '#shop', reportingCategory: classifySalesReportingCategory({
+      sourceName: '12345', appName: 'Shop', orderCreatedAt: '2026-11-01T00:00:00Z',
+    }), currentOrderValue: 121.69 },
+  ]
+  const summary = buildCanonicalSalesSummary(orders)
+  assert.deepEqual(summary.categories.online_store, { count: 2, value: 221.69 })
+  assert.equal(Object.hasOwn(summary.categories, 'shop'), false)
+  assert.deepEqual(buildSalesReconciliationChecks(orders, summary).unresolvedOrderNames, [])
 })
 
 test('reconciles mutually exclusive channel and manual-status totals', () => {

@@ -594,7 +594,6 @@ type SalesWebsiteOrder = {
 type SalesReportingCategory =
   | 'manual_sales_order_entry'
   | 'online_store'
-  | 'shop'
   | 'point_of_sale'
   | 'other_unresolved'
 
@@ -708,7 +707,6 @@ const salesReportingCategoryOptions: Array<{
 }> = [
   { value: 'manual_sales_order_entry', label: 'Manual sales order entries' },
   { value: 'online_store', label: 'Online Store orders' },
-  { value: 'shop', label: 'Shop · channel review' },
   { value: 'point_of_sale', label: 'Point of Sale · audit only' },
   { value: 'other_unresolved', label: 'Needs channel review' },
 ]
@@ -2927,7 +2925,6 @@ function formatSalesReportingCategory(value: SalesReportingCategory) {
   return {
     manual_sales_order_entry: 'Manual sales order entry',
     online_store: 'Online Store',
-    shop: 'Shop',
     point_of_sale: 'Point of Sale',
     other_unresolved: 'Needs channel review',
   }[value]
@@ -10249,7 +10246,7 @@ function InternalApp({
                   <h2>{salesDashboardWindowLabel} order reconciliation</h2>
                   <p className="helper-text">
                     Orders are counted once by Shopify order creation date. Online Store includes
-                    website orders and the two owner-approved original Shop orders. Inventory-tool
+                    website and Shop app orders. Inventory-tool
                     orders and Shopify Draft Orders are combined as manual sales order entries.
                     Other native sources remain visible for review.
                   </p>
@@ -10653,8 +10650,8 @@ function InternalApp({
               <section className="panel website-orders-panel">
                 <div className="split-heading">
                   <div className="section-heading">
-                    <p className="eyebrow">Admin only · Website sales</p>
-                    <h2>Orders placed through the Online Store</h2>
+                    <p className="eyebrow">Admin only · Online sales</p>
+                    <h2>Online Store and Shop orders</h2>
                   </div>
                   <div className="dashboard-total-chip">
                     <span>{salesDashboardWebsiteOrders.length} orders · invoice total</span>
@@ -10662,9 +10659,8 @@ function InternalApp({
                   </div>
                 </div>
                 <p className="helper-text">
-                  Website orders and the two owner-approved original Shop orders from{' '}
-                  {salesDashboardWindowLabel.toLowerCase()}. Manual orders, other Shop orders,
-                  draft invoices, and point-of-sale orders are excluded.
+                  Website and Shop app orders from {salesDashboardWindowLabel.toLowerCase()}.
+                  Manual orders, draft invoices, and point-of-sale orders are excluded.
                 </p>
 
                 {salesDashboardReconciliationMessage ? (

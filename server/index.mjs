@@ -6757,7 +6757,6 @@ function mapOrderToCanonicalCompletedOrder(
   const reportingCategory = classifySalesReportingCategory({
     sourceName: order?.sourceName,
     appName: order?.app?.name,
-    orderCreatedAt: order?.createdAt,
     hasInventoryMarker,
   })
   const submission = getMatchingCanonicalSubmission(
