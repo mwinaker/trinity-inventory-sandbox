@@ -112,6 +112,18 @@ test('classifies reporting channels with manual markers taking precedence', () =
     'shop',
   )
   assert.equal(
+    classifySalesReportingCategory({ sourceName: 'shop', appName: 'Shop', orderCreatedAt: '2026-05-15T00:00:00Z' }),
+    'online_store',
+  )
+  assert.equal(
+    classifySalesReportingCategory({ sourceName: 'shop', appName: 'Shop', orderCreatedAt: '2026-08-22T00:00:00Z' }),
+    'online_store',
+  )
+  assert.equal(
+    classifySalesReportingCategory({ sourceName: 'shop', appName: 'Shop', orderCreatedAt: '2026-10-15T00:00:00Z' }),
+    'shop',
+  )
+  assert.equal(
     classifySalesReportingCategory({ sourceName: 'pos', appName: 'Point of Sale' }),
     'point_of_sale',
   )
@@ -172,7 +184,7 @@ test('reconciles mutually exclusive channel and manual-status totals', () => {
     {
       orderId: '4',
       orderName: '#4',
-      reportingCategory: 'shop',
+      reportingCategory: 'point_of_sale',
       statusBucket: 'paid_positive',
       currentOrderValue: 20,
     },
@@ -209,4 +221,22 @@ test('fails reconciliation for duplicate order IDs and unresolved channels', () 
   assert.equal(reconciliation.ok, false)
   assert.deepEqual(reconciliation.duplicateOrderIds, ['1'])
   assert.deepEqual(reconciliation.unresolvedOrderNames, ['#2'])
+})
+
+test('flags manual completed orders with no matching submitted record', () => {
+  const orders = [{ orderId: '1', orderName: '#1', reportingCategory: 'manual_sales_order_entry',
+    statusBucket: 'paid_positive', currentOrderValue: 150, submissionMatched: false }]
+  const result = buildSalesReconciliationChecks(orders)
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.unmatchedManualOrderNames, ['#1'])
+})
+
+test('flags a Shopify order linked to more than one manual submission', () => {
+  const submissions = [
+    { draftOrderName: '#D1', paidOrderName: '#TBC1' },
+    { draftOrderName: '#D2', paidOrderName: '#TBC1' },
+  ]
+  const result = buildSalesReconciliationChecks([], undefined, submissions)
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.duplicateSubmissionKeys, ['paidOrderName: #tbc1'])
 })

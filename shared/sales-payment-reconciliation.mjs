@@ -47,7 +47,10 @@ export function classifyPaidInvoiceSource(sourceName, hasInventoryMarker) {
   return ''
 }
 
-export function classifySalesReportingCategory({ sourceName, appName, hasInventoryMarker }) {
+// The owner-approved initial Shop orders predate the all-channel review cutoff.
+const originalShopCutoff = Date.parse('2026-10-04T00:00:00Z')
+
+export function classifySalesReportingCategory({ sourceName, appName, orderCreatedAt, hasInventoryMarker }) {
   const normalizedSource = cleanString(sourceName).toLowerCase()
   const normalizedApp = cleanString(appName).toLowerCase()
 
@@ -55,7 +58,12 @@ export function classifySalesReportingCategory({ sourceName, appName, hasInvento
     return 'manual_sales_order_entry'
   }
   if (normalizedSource === 'web' && normalizedApp === 'online store') return 'online_store'
-  if (normalizedApp === 'shop') return 'shop'
+  if (normalizedApp === 'shop') {
+    const created = Date.parse(cleanString(orderCreatedAt))
+    return Number.isFinite(created) && created < originalShopCutoff
+      ? 'online_store'
+      : 'shop'
+  }
   if (normalizedSource === 'pos' || normalizedApp === 'point of sale') return 'point_of_sale'
   return 'other_unresolved'
 }
@@ -123,12 +131,16 @@ export function buildCanonicalSalesSummary(orders) {
   return { total, categories, manualStatuses }
 }
 
-export function buildSalesReconciliationChecks(orders, summary = buildCanonicalSalesSummary(orders)) {
+export function buildSalesReconciliationChecks(
+  orders,
+  summary = buildCanonicalSalesSummary(orders),
+  submissions = [],
+) {
   const rows = Array.isArray(orders) ? orders : []
   const orderIds = rows.map((order) => cleanString(order?.orderId)).filter(Boolean)
   const duplicateOrderIds = [...new Set(orderIds.filter((id, index) => orderIds.indexOf(id) !== index))]
   const unresolvedOrderNames = rows
-    .filter((order) => order?.reportingCategory === 'other_unresolved')
+    .filter((order) => ['other_unresolved', 'shop'].includes(order?.reportingCategory))
     .map((order) => cleanString(order?.orderName) || cleanString(order?.orderId))
     .filter(Boolean)
   const unresolvedManualRepOrderNames = rows
@@ -139,6 +151,21 @@ export function buildSalesReconciliationChecks(orders, summary = buildCanonicalS
     )
     .map((order) => cleanString(order?.orderName) || cleanString(order?.orderId))
     .filter(Boolean)
+  const unmatchedManualOrderNames = rows
+    .filter((order) => order?.reportingCategory === 'manual_sales_order_entry' &&
+      order?.submissionMatched === false)
+    .map((order) => cleanString(order?.orderName) || cleanString(order?.orderId))
+    .filter(Boolean)
+  const duplicateSubmissionKeys = []
+  for (const field of ['draftOrderName', 'paidOrderName']) {
+    const seen = new Set()
+    for (const submission of Array.isArray(submissions) ? submissions : []) {
+      const value = cleanString(submission?.[field]).toLowerCase()
+      if (!value) continue
+      if (seen.has(value)) duplicateSubmissionKeys.push(`${field}: ${value}`)
+      seen.add(value)
+    }
+  }
   const categoryCount = Object.values(summary.categories).reduce(
     (sum, bucket) => sum + bucket.count,
     0,
@@ -199,6 +226,20 @@ export function buildSalesReconciliationChecks(orders, summary = buildCanonicalS
           ? 'Every manual order has a resolved status.'
           : `${summary.manualStatuses.other.count} manual order(s) need status review.`,
     },
+    {
+      key: 'manual_submission_links',
+      ok: unmatchedManualOrderNames.length === 0,
+      message: unmatchedManualOrderNames.length === 0
+        ? 'Every completed manual order is linked to one submitted record.'
+        : `${unmatchedManualOrderNames.length} completed manual order(s) need a submission link.`,
+    },
+    {
+      key: 'unique_submissions',
+      ok: duplicateSubmissionKeys.length === 0,
+      message: duplicateSubmissionKeys.length === 0
+        ? 'Each Shopify draft and completed order appears in one manual submission.'
+        : `${duplicateSubmissionKeys.length} manual submission link(s) are duplicated.`,
+    },
   ]
 
   return {
@@ -207,6 +248,8 @@ export function buildSalesReconciliationChecks(orders, summary = buildCanonicalS
     duplicateOrderIds,
     unresolvedOrderNames,
     unresolvedManualRepOrderNames,
+    unmatchedManualOrderNames,
+    duplicateSubmissionKeys,
   }
 }
 
