@@ -1717,7 +1717,7 @@ button:hover {
 
 .crm-layout {
   display: grid;
-  grid-template-columns: minmax(280px, 34%) minmax(0, 1fr);
+  grid-template-columns: minmax(340px, 40%) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
