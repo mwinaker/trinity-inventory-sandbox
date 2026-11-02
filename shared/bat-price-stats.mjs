@@ -10,13 +10,13 @@ function amount(value) {
 function classifyLine(line) {
   const title = String(line?.title ?? '').toLowerCase()
   const productType = String(line?.variant?.product?.productType ?? '').toLowerCase()
-  const batWords = /\b(bats?|fungos?|trainers?|training|overload|underload|sledge|skinny|short heavy|long heavy|blade barrel|puck knob|split grip|thick grip|big grip|torpedo|pro model|pro order|pro select|softball gamer|el tit[aá]n)\b/i
-  const nonBatWords = /\b(shipping|freight|postage|t-?shirts?|tees?|hoodies?|hats?|caps?|lizard skin|bat grips?|bat wax|stickers?|gift cards?|fees?)\b/i
-  if ((batWords.test(title) || batWords.test(productType)) && nonBatWords.test(title)) {
-    return 'review'
-  }
+  const batWords = /\b(bats?|fungos?|trainers?|training|overload|underload|sledge|skinny|short heavy|long heavy|long light|blade barrel|puck knob|split grip|thick grip|big grip|torpedo|softball|trophy|boom stick|blem|stock|select|semi[ -]?custom|pro (?:model|order|select|birch|maple|ash|softball)|birch|maple|ash|el tit[aá]n)\b/i
+  const modelCode = /\b(?:[a-z]{1,5}\d{1,4}[a-z]{0,3}|scvbb\s*(?:i|ii))\b/i
+  const nonBatWords = /\b(shipping|freight|postage|t-?shirts?|tees?|hoodies?|hats?|caps?|lizard skin|lizard grip|bat grips?|bat wax|batting gloves?|stickers?|gift cards?|fees?|surcharges?)\b/i
+  const apparel = /\b(t-?shirts?|tees?|hoodies?|hats?|caps?|batting gloves?)\b/i
+  if (/\b\d+\s+(?:(?:game|training|trophy)\s+)?bats?\b/i.test(title) && apparel.test(title)) return 'review'
   if (nonBatWords.test(title) || nonBatWords.test(productType)) return 'non_bat'
-  if (batWords.test(title) || /\b(baseball|softball|wood) bats?\b/i.test(productType)) {
+  if (batWords.test(title) || modelCode.test(title) || /\b(baseball|softball|wood) bats?\b/i.test(productType)) {
     return 'bat'
   }
   return 'review'
