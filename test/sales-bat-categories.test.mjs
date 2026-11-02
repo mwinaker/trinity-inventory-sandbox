@@ -104,6 +104,9 @@ test('line attributes and owner-resolved historical exceptions supply classifica
   assert.equal(classifySalesBatLine(line(57, 'The Big Grip', 1, 89)).category, 'training')
   assert.equal(classifySalesBatLine(line(58, 'Split Grip', 1, 89)).category, 'training')
   assert.equal(classifySalesBatLine(line(59, 'X-Load', 1, 89)).category, 'training')
+  assert.equal(classifySalesBatLine(line(17345740898543, 'Puck Knob', 1, 108)).category, 'review')
+  assert.equal(classifySalesBatLine(line(17533758144751, 'Blem maple - 34"', 1, 85)).category, 'review')
+  assert.equal(classifySalesBatLine(line(17913895911663, 'Blem - 34"', 1, 85)).category, 'review')
 })
 
 test('documented multi-bat invoice quantities drive units and average without multiplying sales', () => {
