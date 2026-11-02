@@ -3,6 +3,11 @@ import { isActionableProductionJob, isProductionBatJob } from './production-queu
 
 const knownSpecies = new Set(billetSpeciesOptions.map((value) => value.toLowerCase()))
 
+export function getAssignedBilletIds(job) {
+  const ids = Array.isArray(job?.assignedBilletIds) ? job.assignedBilletIds : []
+  return [...new Set([String(job?.assignedBilletId ?? '').trim(), ...ids.map((id) => String(id ?? '').trim())].filter(Boolean))]
+}
+
 function matchesPhysicalPurpose(job, billet) {
   const title = `${job.productTitle ?? ''} ${job.variantTitle ?? ''}`.toLowerCase()
   const categories = Array.isArray(billet.suitabilityCategories) ? billet.suitabilityCategories : []
@@ -14,9 +19,11 @@ function matchesPhysicalPurpose(job, billet) {
   return !categories.includes('Trainer only') && !categories.includes('Fungo only')
 }
 
-export function getBilletAssignmentConflict({ job, nextBillet, allJobs, expectedBilletId }) {
+export function getBilletAssignmentConflict({ job, nextBillet, allJobs, expectedBilletId, expectedBilletIds }) {
   if (!job) return 'This production job no longer exists. Refresh the queue.'
-  if (String(job.assignedBilletId ?? '') !== expectedBilletId) {
+  const actualIds = getAssignedBilletIds(job)
+  const expectedIds = expectedBilletIds ?? (expectedBilletId ? [expectedBilletId] : [])
+  if (actualIds.length !== expectedIds.length || actualIds.some((id, index) => id !== expectedIds[index])) {
     return 'This job changed in another session. Refresh before assigning a billet.'
   }
   if (nextBillet && !isProductionBatJob(job)) {
@@ -26,10 +33,10 @@ export function getBilletAssignmentConflict({ job, nextBillet, allJobs, expected
     return 'A fulfilled, cancelled, or completed job cannot receive a new billet.'
   }
   if (!nextBillet) return ''
-  if (nextBillet.status !== 'storage' && nextBillet.id !== expectedBilletId) {
+  if (nextBillet.status !== 'storage' && !actualIds.includes(nextBillet.id)) {
     return 'This billet is no longer in storage. Refresh the inventory.'
   }
-  const otherJob = allJobs.find((item) => item.id !== job.id && item.assignedBilletId === nextBillet.id)
+  const otherJob = allJobs.find((item) => item.id !== job.id && getAssignedBilletIds(item).includes(nextBillet.id))
   if (otherJob) return 'This billet is already assigned to another production job.'
   const requestedWood = String(job.specs?.wood ?? '').trim().toLowerCase()
   if (knownSpecies.has(requestedWood) && String(nextBillet.species ?? '').trim().toLowerCase() !== requestedWood) {

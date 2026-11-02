@@ -10,7 +10,10 @@ import { createSubmissionSnapshot, groupSubmittedOrders, pageSubmittedOrders, bu
 import { calculateSalesOrderTax } from './sales-order-tax.mjs'
 import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderReference, needsTrinityOrderReference, readReferenceResource } from './order-reference.mjs'
 import { isFullyPaidFinancialStatus } from '../shared/order-payment-status.mjs'
-import { performBilletAssignment } from './billet-assignment-service.mjs'
+import { performBilletAssignments } from './billet-assignment-service.mjs'
+import { getAssignedBilletIds } from '../shared/billet-assignment.mjs'
+import { readProductionPhoto, resolveProductionPhoto } from './production-photo-reader.mjs'
+import { applyProductionPhotoAssignments } from './production-photo-assignment.mjs'
 import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
 import { buildBatPriceStats } from '../shared/bat-price-stats.mjs'
 import express from 'express'
@@ -142,6 +145,7 @@ const envPath =
 if (fs.existsSync(envPath)) {
   dotenv.config({ path: envPath })
 }
+dotenv.config({ path: path.join(rootDir, '.env.local') })
 
 const requiredEnv = ['SHOPIFY_SHOP', 'SHOPIFY_ADMIN_ACCESS_TOKEN']
 for (const key of requiredEnv) {
@@ -1997,7 +2001,6 @@ app.put('/api/state', requireInternalAccess, async (request, response) => {
       const patch = buildStatePatchFromStates(currentState, nextState)
       const applied = await applyStatePatch(patch, { ensureDefinitions: false })
 
-      primeStateCache(nextState)
       return applied
     })
 
@@ -2040,6 +2043,26 @@ app.patch('/api/state', requireInternalAccess, async (request, response) => {
   }
 })
 
+function productionAssignmentStore() {
+  return {
+    listJobs: () => listRecords(resourceConfigs.orderJobs),
+    listPlayers: () => listRecords(resourceConfigs.players),
+    listBillets: () => listRecords(resourceConfigs.billets),
+    loadJob: (id) => getRecordByHandle(resourceConfigs.orderJobs, id),
+    loadBillet: (id) => getRecordByHandle(resourceConfigs.billets, id),
+    loadPlayer: (id) => getRecordByHandle(resourceConfigs.players, id),
+    saveJob: (job) => upsertRecord(resourceConfigs.orderJobs, job),
+    saveBillet: (billet) => upsertRecord(resourceConfigs.billets, billet),
+    savePlayer: (player) => upsertRecord(resourceConfigs.players, player),
+    syncJob: async (job) => {
+      await syncOrderJobMetafields([job])
+      if (job.shopifyOrderId) await syncProductionBillets('Order', job.shopifyOrderId)
+      if (job.shopifyDraftOrderId) await syncProductionBillets('DraftOrder', job.shopifyDraftOrderId)
+    },
+    invalidate: invalidateStateCache,
+  }
+}
+
 app.post('/api/production-jobs/:id/billet-assignment', requireSalesDashboardAccess, async (request, response) => {
   if (request.salesPortalSession && !request.salesPortalSession.isAdmin && request.salesPortalSession.role !== 'production') {
     response.status(403).json({ ok: false, message: 'Production access is required to assign billets.' })
@@ -2052,29 +2075,25 @@ app.post('/api/production-jobs/:id/billet-assignment', requireSalesDashboardAcce
 
   try {
     const jobId = cleanString(request.params.id)
-    const nextBilletId = cleanString(request.body?.billetId)
-    const expectedBilletId = cleanString(request.body?.expectedBilletId)
-    if (!jobId || jobId.length > 180 || nextBilletId.length > 180 || expectedBilletId.length > 180) {
+    const nextBilletIds = Array.isArray(request.body?.billetIds)
+      ? request.body.billetIds.map(cleanString)
+      : [cleanString(request.body?.billetId)].filter(Boolean)
+    const expectedBilletIds = Array.isArray(request.body?.expectedBilletIds)
+      ? request.body.expectedBilletIds.map(cleanString)
+      : [cleanString(request.body?.expectedBilletId)].filter(Boolean)
+    if (!jobId || jobId.length > 180 || [...nextBilletIds, ...expectedBilletIds].some((id) => !id || id.length > 180)) {
       response.status(400).json({ ok: false, message: 'A valid production job and billet are required.' })
       return
     }
 
     const result = await enqueueStateWrite(async () => {
       await ensureDefinitions()
-      return performBilletAssignment({
+      return performBilletAssignments({
         jobId,
-        nextBilletId,
-        expectedBilletId,
+        nextBilletIds,
+        expectedBilletIds,
         operator: request.salesPortalSession?.email || 'internal',
-        store: {
-          listJobs: () => listRecords(resourceConfigs.orderJobs),
-          loadJob: (id) => getRecordByHandle(resourceConfigs.orderJobs, id),
-          loadBillet: (id) => getRecordByHandle(resourceConfigs.billets, id),
-          saveJob: (job) => upsertRecord(resourceConfigs.orderJobs, job),
-          saveBillet: (billet) => upsertRecord(resourceConfigs.billets, billet),
-          syncJob: (job) => syncOrderJobMetafields([job]),
-          invalidate: invalidateStateCache,
-        },
+        store: productionAssignmentStore(),
       })
     })
     response.status(result.status).set('Cache-Control', 'no-store').json({ ok: result.status === 200, ...result })
@@ -2082,6 +2101,64 @@ app.post('/api/production-jobs/:id/billet-assignment', requireSalesDashboardAcce
     response.status(500).json({ ok: false, message: error instanceof Error ? error.message : 'Billet assignment failed.' })
   }
 })
+
+app.post(
+  '/api/production-jobs/:id/billet-photo',
+  requireSalesDashboardAccess,
+  express.raw({ type: ['image/jpeg', 'image/png', 'image/webp'], limit: '8mb' }),
+  async (request, response) => {
+    if (cleanString(request.get('origin')) !== getRequestOrigin(request)) {
+      response.status(403).json({ ok: false, message: 'Open the production tool to upload a sheet photo.' })
+      return
+    }
+    if (request.salesPortalSession && !request.salesPortalSession.isAdmin && request.salesPortalSession.role !== 'production') {
+      response.status(403).json({ ok: false, message: 'Production access is required to assign billets.' })
+      return
+    }
+    if (!shopDomain || !adminToken) {
+      response.status(503).json({ ok: false, message: 'Shopify inventory is unavailable.' })
+      return
+    }
+    if (!process.env.OPENAI_API_KEY) {
+      response.status(503).json({ ok: false, message: 'Photo reading is not configured on this server.' })
+      return
+    }
+    const jobId = cleanString(request.params.id)
+    const mimeType = cleanString(request.get('content-type')).split(';')[0].toLowerCase()
+    if (!jobId || jobId.length > 180 || !Buffer.isBuffer(request.body) || request.body.length < 100) {
+      response.status(400).json({ ok: false, message: 'Choose a production job and a clear JPEG, PNG, or WebP photo.' })
+      return
+    }
+    try {
+      const extraction = await readProductionPhoto({
+        apiKey: process.env.OPENAI_API_KEY,
+        image: request.body,
+        mimeType,
+        model: cleanString(process.env.TRINITY_PRODUCTION_PHOTO_MODEL) || 'gpt-4.1',
+      })
+      const imageSha256 = crypto.createHash('sha256').update(request.body).digest('hex')
+      const result = await enqueueStateWrite(async () => {
+        await ensureDefinitions()
+        const store = productionAssignmentStore()
+        const [jobs, billets] = await Promise.all([store.listJobs(), store.listBillets()])
+        const resolved = resolveProductionPhoto({ selectedJobId: jobId, jobs, billets, extraction })
+        if (resolved.status !== 200) return resolved
+        return applyProductionPhotoAssignments({
+          assignments: resolved.assignments,
+          operator: request.salesPortalSession?.email || 'internal',
+          imageSha256,
+          store,
+        })
+      })
+      response.status(result.status).set('Cache-Control', 'no-store').json({ ok: result.status === 200, ...result })
+    } catch (error) {
+      response.status(422).set('Cache-Control', 'no-store').json({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The photo could not be processed. No billets were changed.',
+      })
+    }
+  },
+)
 
 app.post('/api/sales-orders/tax-preview', async (request, response) => {
   try {
@@ -4824,14 +4901,26 @@ async function applyStatePatch(payload, options = {}) {
   }
 
   const patch = normalizeStatePatch(payload)
+  // Billet links on pro profiles are owned by the guarded assignment action.
+  patch.players = await Promise.all(patch.players.map(async (player) => {
+    const existing = await getRecordByHandle(resourceConfigs.players, player.id)
+    return {
+      ...player,
+      productionBilletAssignments: existing?.productionBilletAssignments ?? [],
+    }
+  }))
   // An older client or a production edit cannot erase or replace the original form snapshot.
   patch.orderJobs = await Promise.all(patch.orderJobs.map(async job => {
     const existing = await getRecordByHandle(resourceConfigs.orderJobs, job.id)
-    if (cleanString(existing?.assignedBilletId) !== cleanString(job?.assignedBilletId)) {
+    if (cleanString(existing?.assignedBilletId) !== cleanString(job?.assignedBilletId) ||
+        (Array.isArray(job?.assignedBilletIds) && JSON.stringify(getAssignedBilletIds(existing)) !== JSON.stringify(getAssignedBilletIds(job)))) {
       throw new Error('Billet assignments changed outside the guarded assignment action. Refresh the queue and try again.')
     }
     return {
       ...keepOriginalSubmissionSnapshot(existing, job),
+      assignedBilletId: cleanString(existing?.assignedBilletId),
+      assignedBilletIds: getAssignedBilletIds(existing),
+      assignedBilletBarcodes: existing?.assignedBilletBarcodes ?? [],
       billetAssignmentHistory: existing?.billetAssignmentHistory ?? [],
     }
   }))
@@ -4843,7 +4932,7 @@ async function applyStatePatch(payload, options = {}) {
     })))).filter((item) => item.previous?.status === 'production')
     if (previouslyProduction.length > 0) {
       const linkedIds = new Set((await listRecords(resourceConfigs.orderJobs))
-        .map((job) => cleanString(job.assignedBilletId)).filter(Boolean))
+        .flatMap((job) => getAssignedBilletIds(job)))
       if (previouslyProduction.some((item) => linkedIds.has(item.id))) {
         throw new Error('An assigned billet cannot be moved to storage. Release it from the production job first.')
       }
@@ -7521,6 +7610,41 @@ async function syncOrderJobMetafields(orderJobs) {
   }
 }
 
+async function syncProductionBillets(ownerType, ownerId) {
+  const idField = ownerType === 'DraftOrder' ? 'shopifyDraftOrderId' : 'shopifyOrderId'
+  const related = (await listRecords(resourceConfigs.orderJobs))
+    .filter((job) => cleanString(job[idField]) === cleanString(ownerId))
+    .filter((job) => getAssignedBilletIds(job).length)
+    .map((job) => ({
+      jobId: job.id,
+      orderReference: job.orderReference || job.shopifyOrderName || '',
+      billetIds: getAssignedBilletIds(job),
+      billetNumbers: Array.isArray(job.assignedBilletBarcodes) ? job.assignedBilletBarcodes : [],
+    }))
+  const value = JSON.stringify(related)
+  const result = await shopifyGraphQL(
+    `
+      mutation SetOrderProductionBillets($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) {
+          metafields { key value }
+          userErrors { field message code }
+        }
+      }
+    `,
+    { metafields: [{
+      namespace: 'trinity',
+      key: 'production_billets_json',
+      ownerId: toShopifyGid(ownerType, ownerId),
+      type: 'json',
+      value,
+    }] },
+  )
+  const payload = result?.data?.metafieldsSet
+  if (payload?.userErrors?.length || payload?.metafields?.[0]?.value !== value) {
+    throw new Error('Shopify did not confirm the complete order billet list.')
+  }
+}
+
 async function syncDraftOrderJobAttachmentMetafields(orderJobs) {
   const jobsWithDraftAttachments = orderJobs.filter(
     (job) =>
@@ -9672,6 +9796,10 @@ function mergeOrderJob(existing, incoming) {
     shopifyDraftOrderName: existing.shopifyDraftOrderName || incoming.shopifyDraftOrderName,
     shopifyDraftInvoiceUrl: existing.shopifyDraftInvoiceUrl || incoming.shopifyDraftInvoiceUrl,
     assignedBilletId: existing.assignedBilletId || incoming.assignedBilletId,
+    assignedBilletIds: getAssignedBilletIds(existing).length
+      ? getAssignedBilletIds(existing)
+      : getAssignedBilletIds(incoming),
+    assignedBilletBarcodes: existing.assignedBilletBarcodes || incoming.assignedBilletBarcodes || [],
     linkedProducedBatId: existing.linkedProducedBatId || incoming.linkedProducedBatId,
     orderSubmittedAt: getEarlierOrderTimestamp(
       existing.orderSubmittedAt,

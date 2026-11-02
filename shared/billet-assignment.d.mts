@@ -1,6 +1,7 @@
 export type AssignmentJob = {
   id: string
   assignedBilletId: string
+  assignedBilletIds?: string[]
   productionStatus: string
   productTitle?: string
   variantTitle?: string
@@ -19,7 +20,9 @@ export function getBilletAssignmentConflict(input: {
   nextBillet: AssignmentBillet | null | undefined
   allJobs: AssignmentJob[]
   expectedBilletId: string
+  expectedBilletIds?: string[]
 }): string
+export function getAssignedBilletIds(job: { assignedBilletId?: string; assignedBilletIds?: string[] } | null | undefined): string[]
 export function getBilletAssignmentCandidate(
   job: AssignmentJob,
   billet: AssignmentBillet,
