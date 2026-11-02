@@ -3247,6 +3247,11 @@ td select {
 .app-shell .order-job-list { gap: 9px; }
 .app-shell .queue-admin-tools { margin: 7px 0 13px; }
 .app-shell .queue-search-help { margin: -5px 0 10px; color: #687a6d; font-size: .75rem; }
+@media (min-width: 981px) {
+  .app-shell .production-queue-page .inventory-toolbar {
+    grid-template-columns: minmax(170px, .3fr) minmax(0, 1fr);
+  }
+}
 .app-shell .queue-admin-tools > summary { width: fit-content; color: #526b56; cursor: pointer; font-size: .77rem; font-weight: 700; }
 .app-shell .queue-admin-tools .order-actions { margin-top: 9px; }
 .app-shell .queue-admin-tools .order-actions button { width: auto; min-height: 36px; padding: 6px 12px; background: #f3f7f2; color: #275035; font-size: .78rem; }
