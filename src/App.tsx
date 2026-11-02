@@ -3,7 +3,7 @@ import { productionModelLabel, supportsPuckKnob } from '../shared/production-mod
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
 import { isOrderJobPaid } from '../shared/order-payment-status.mjs'
 import { getBilletAssignmentCandidate } from '../shared/billet-assignment.mjs'
-import { isActionableProductionJob, isProductionBatJob } from '../shared/production-queue.mjs'
+import { isActionableProductionJob, isConfirmedProductionJob, isProductionBatJob } from '../shared/production-queue.mjs'
 import { getOperationalDataQualityIssues, isCalendarDate } from '../shared/data-quality.mjs'
 import {
   type Dispatch,
@@ -6100,7 +6100,8 @@ function InternalApp({
   const [crmMessage, setCrmMessage] = useState('')
   const [orderQuery, setOrderQuery] = useState('')
   const [productionShortcutTarget, setProductionShortcutTarget] = useState(() => productionShortcut(window.location.search))
-  const [orderStatusFilter, setOrderStatusFilter] = useState<'active' | 'all' | ProductionStatus>('active')
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'confirmed' | 'active' | 'all' | ProductionStatus>('confirmed')
+  const [orderSort, setOrderSort] = useState<'newest' | 'oldest' | 'priority'>('newest')
   const [orderAssignmentFilter, setOrderAssignmentFilter] = useState<'all' | 'unassigned' | 'assigned'>('all')
   const [orderActionMessage, setOrderActionMessage] = useState('')
   const [isCreatingDraftOrder, setIsCreatingDraftOrder] = useState(false)
@@ -6824,11 +6825,8 @@ function InternalApp({
     () => productionOrderJobs.filter(isActionableProductionJob),
     [productionOrderJobs],
   )
-  const readyOrderJobs = useMemo(
-    () =>
-      openOrderJobs.filter(
-        (job) => job.productionStatus === 'ready' || job.productionStatus === 'in_production',
-      ),
+  const confirmedOrderJobs = useMemo(
+    () => openOrderJobs.filter(isConfirmedProductionJob),
     [openOrderJobs],
   )
   const normalizedOrderQuery = orderQuery.trim().toLowerCase()
@@ -6836,10 +6834,12 @@ function InternalApp({
     () =>
       productionOrderJobs.filter((job) => {
         if (!matchesProductionShortcut(job, productionShortcutTarget)) return false
+        if (orderStatusFilter === 'confirmed' && !normalizedOrderQuery && !productionShortcutTarget &&
+          !isConfirmedProductionJob(job)) return false
         if (orderStatusFilter === 'active' && !normalizedOrderQuery && !productionShortcutTarget &&
           !isActionableProductionJob(job)) return false
         const matchesStatus =
-          orderStatusFilter === 'all' || orderStatusFilter === 'active' || job.productionStatus === orderStatusFilter
+          orderStatusFilter === 'all' || orderStatusFilter === 'active' || orderStatusFilter === 'confirmed' || job.productionStatus === orderStatusFilter
         if (!matchesStatus) return false
         if (orderAssignmentFilter === 'unassigned' && job.assignedBilletId) return false
         if (orderAssignmentFilter === 'assigned' && !job.assignedBilletId) return false
@@ -6895,10 +6895,13 @@ function InternalApp({
         return searchable.includes(normalizedOrderQuery)
       }).sort((a, b) => {
         const rank: Record<ProductionStatus, number> = { ready: 0, in_production: 1, new: 2, waiting_payment: 3, complete: 4, cancelled: 5 }
-        return rank[a.productionStatus] - rank[b.productionStatus] ||
-          getDateTimestamp(a.orderSubmittedAt || a.createdAt) - getDateTimestamp(b.orderSubmittedAt || b.createdAt)
+        const dateDifference = getDateTimestamp(a.orderSubmittedAt || a.createdAt) -
+          getDateTimestamp(b.orderSubmittedAt || b.createdAt)
+        if (orderSort === 'newest') return -dateDifference
+        if (orderSort === 'oldest') return dateDifference
+        return rank[a.productionStatus] - rank[b.productionStatus] || dateDifference
       }),
-    [billetById, normalizedOrderQuery, orderStatusFilter, orderAssignmentFilter, productionOrderJobs, productionShortcutTarget],
+    [billetById, normalizedOrderQuery, orderStatusFilter, orderAssignmentFilter, orderSort, productionOrderJobs, productionShortcutTarget],
   )
   const renderedOrderJobs = getProgressiveListSlice(filteredOrderJobs, productionRenderLimit)
   const activeSalesPaymentReconciliation = useMemo(() => {
@@ -9632,23 +9635,23 @@ function InternalApp({
         <section className="orders-page production-queue-page">
           <section className="metrics-grid" aria-label="Production queue summary">
             <article>
-              <span>Open jobs</span>
-              <strong>{openOrderJobs.length}</strong>
+              <span>Paid bat work</span>
+              <strong>{confirmedOrderJobs.length}</strong>
             </article>
             <article>
-              <span>Ready / cutting</span>
-              <strong>{readyOrderJobs.length}</strong>
+              <span>Awaiting payment or review</span>
+              <strong>{openOrderJobs.length - confirmedOrderJobs.length}</strong>
             </article>
             <article>
-              <span>Website work</span>
+              <span>Website paid work</span>
               <strong>
-                {openOrderJobs.filter((job) => job.origin === 'website').length}
+                {confirmedOrderJobs.filter((job) => job.origin === 'website').length}
               </strong>
             </article>
             <article>
-              <span>Sales intake work</span>
+              <span>Sales intake paid work</span>
               <strong>
-                {openOrderJobs.filter((job) => job.origin === 'internal_sales').length}
+                {confirmedOrderJobs.filter((job) => job.origin === 'internal_sales').length}
               </strong>
             </article>
           </section>
@@ -9670,10 +9673,11 @@ function InternalApp({
                   aria-label="Filter production status"
                   value={orderStatusFilter}
                   onChange={(event) =>
-                    setOrderStatusFilter(event.target.value as 'active' | 'all' | ProductionStatus)
+                    setOrderStatusFilter(event.target.value as 'confirmed' | 'active' | 'all' | ProductionStatus)
                   }
                 >
-                  <option value="active">Active bat work</option>
+                  <option value="confirmed">Paid bat work</option>
+                  <option value="active">All unfulfilled bat jobs</option>
                   <option value="all">All statuses</option>
                   {Object.entries(productionStatusLabels).map(([value, label]) => (
                     <option key={value} value={value}>
@@ -9687,9 +9691,15 @@ function InternalApp({
                   <option value="unassigned">Needs billet</option>
                   <option value="assigned">Billet assigned</option>
                 </select>
+                <select aria-label="Sort production jobs" value={orderSort}
+                  onChange={(event) => setOrderSort(event.target.value as 'newest' | 'oldest' | 'priority')}>
+                  <option value="newest">Newest first</option>
+                  <option value="oldest">Oldest first</option>
+                  <option value="priority">Status then oldest</option>
+                </select>
               </div>
             </div>
-            <p className="helper-text queue-search-help">Search includes historical jobs. Choose All statuses to browse them.</p>
+            <p className="helper-text queue-search-help">Paid bat work shows unfulfilled, paid orders. Search includes history; use the other filters to review drafts and older jobs.</p>
 
             {hasAdminAccess ? (
               <details className="queue-admin-tools">
