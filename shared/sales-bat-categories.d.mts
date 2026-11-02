@@ -7,6 +7,7 @@ export type SalesBatCategoryLine = {
   lineId: string
   title: string
   category: SalesBatCategory
+  needsReview: boolean
   basis: string
   channel: 'manual_sales_order_entry' | 'online_store'
   repKey: string
@@ -14,7 +15,7 @@ export type SalesBatCategoryLine = {
   quantity: number
   shopifyQuantity: number
   value: number | null
-  saleStatus: 'paid' | 'comped' | 'pending'
+  saleStatus: 'paid' | 'paid_unallocated' | 'comped' | 'pending'
 }
 
 export type SalesBatCategoryBucket = {
@@ -24,6 +25,8 @@ export type SalesBatCategoryBucket = {
   compedUnits: number
   pendingUnits: number
   netSales: number
+  pricedSales: number
+  unallocatedSales: number
   average: number | null
   median: number | null
   reviewLines: number

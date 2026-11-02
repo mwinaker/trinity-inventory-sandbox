@@ -53,7 +53,7 @@ test('comped and pending bats stay visible without changing paid average', () =>
   assert.equal(summary.trophy.orderCount, 3)
 })
 
-test('ambiguous bundles and balances are reviewable; fees and synthetic tests are excluded', () => {
+test('ambiguous bundles are reviewable; known-purpose balances add revenue without double-counting bats', () => {
   const report = buildSalesBatCategoryReport([
     order(1, 'manual_sales_order_entry', '', 'PAID', [
       line(41, '24 Game Bats, 12 Trophy Bats, 30 t-shirts', 1, 1200),
@@ -62,9 +62,33 @@ test('ambiguous bundles and balances are reviewable; fees and synthetic tests ar
       line(44, 'TEST ONLY — DO NOT PRODUCE', 1, 1),
     ]),
   ])
-  assert.deepEqual(report.lines.map((item) => item.category), ['review', 'review'])
-  assert.equal(summarizeSalesBatCategoryLines(report.lines).all.netSales, 0)
-  assert.equal(summarizeSalesBatCategoryLines(report.lines).review.reviewLines, 2)
+  assert.deepEqual(report.lines.map((item) => item.category), ['review', 'trophy'])
+  assert.deepEqual(report.lines.map((item) => item.saleStatus), ['paid_unallocated', 'paid_unallocated'])
+  assert.equal(report.lines[1].quantity, 1)
+  const summary = summarizeSalesBatCategoryLines(report.lines)
+  assert.equal(summary.all.netSales, 500)
+  assert.equal(summary.trophy.paidUnits, 0)
+  assert.equal(summary.trophy.unallocatedSales, 500)
+  assert.equal(summary.trophy.average, null)
+  assert.equal(summary.review.reviewLines, 2)
+})
+
+test('separate trophy deposit and final balance count once in units and twice in revenue', () => {
+  const report = buildSalesBatCategoryReport([
+    order(1493, 'manual_sales_order_entry', 'Jeremy McKee', 'PAID', [
+      line(18001376575727, '50% deposit for Trophy bats - 22 bats', 1, 1199),
+    ]),
+    order(1558, 'manual_sales_order_entry', '', 'PAID', [
+      line(18156501041391, 'Trophy bats - remaining balance for 22 bats', 1, 1199),
+    ]),
+  ])
+  const summary = summarizeSalesBatCategoryLines(report.lines)
+  assert.equal(summary.trophy.netSales, 2398)
+  assert.equal(summary.trophy.unallocatedSales, 2398)
+  assert.equal(summary.trophy.paidUnits, 0)
+  assert.equal(summary.trophy.average, null)
+  assert.equal(summary.trophy.orderCount, 2)
+  assert.deepEqual(report.lines.map((item) => item.needsReview), [true, true])
 })
 
 test('line attributes and owner-resolved historical exceptions supply classification evidence', () => {
@@ -74,6 +98,12 @@ test('line attributes and owner-resolved historical exceptions supply classifica
     [['trinity_item_type', 'bat']])).category, 'review')
   assert.equal(classifySalesBatLine(line(17087447564527, 'Towel Bat', 1, 0)).category, 'training')
   assert.equal(classifySalesBatLine(line(53, 'Short One-Hand Trainer', 1, 109, [], 'Training Series')).category, 'training')
+  assert.equal(classifySalesBatLine(line(54, 'On-Deck bat', 1, 85)).category, 'training')
+  assert.equal(classifySalesBatLine(line(55, 'White Lizard Grip', 1, 15)).category, 'non_bat')
+  assert.equal(classifySalesBatLine(line(56, 'Skinny Bat', 1, 89)).category, 'training')
+  assert.equal(classifySalesBatLine(line(57, 'The Big Grip', 1, 89)).category, 'training')
+  assert.equal(classifySalesBatLine(line(58, 'Split Grip', 1, 89)).category, 'training')
+  assert.equal(classifySalesBatLine(line(59, 'X-Load', 1, 89)).category, 'training')
 })
 
 test('documented multi-bat invoice quantities drive units and average without multiplying sales', () => {
