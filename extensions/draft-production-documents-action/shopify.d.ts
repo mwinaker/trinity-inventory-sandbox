@@ -1,6 +1,6 @@
 import '@shopify/ui-extensions';
 
-//@ts-ignore
+// @ts-expect-error: Shopify generates this module augmentation for the extension entry point.
 declare module './src/ActionExtension.jsx' {
   const shopify: import('@shopify/ui-extensions/admin.draft-order-details.action.render').Api;
   const globalThis: { shopify: typeof shopify };

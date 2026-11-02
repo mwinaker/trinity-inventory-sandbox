@@ -3098,3 +3098,223 @@ td select {
 .order-document-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
 .order-document-panel li { margin: 8px 0; overflow-wrap: anywhere; }
 .order-document-panel .muted { font-size: 12px; color: #526058; }
+
+/* Internal operations workspace */
+.app-shell {
+  min-height: 100vh;
+  padding: 24px 32px 64px 268px;
+  background: #f5f6f3;
+  color: #172920;
+  font-family: Inter, 'Avenir Next', Arial, sans-serif;
+}
+.app-shell h1,
+.app-shell h2,
+.app-shell h3 { color: #172920; }
+.app-shell .hero-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 320px);
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 16px 22px;
+  border: 1px solid #e1e7e0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(18, 44, 30, .04);
+}
+.app-shell .hero-panel > div:first-child {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+.app-shell .hero-panel .eyebrow {
+  margin-bottom: 5px;
+  color: #77837a;
+  font-size: .68rem;
+  letter-spacing: .12em;
+}
+.app-shell .hero-panel h1 {
+  max-width: none;
+  font-family: var(--display-font);
+  font-size: clamp(1.8rem, 2.5vw, 2.55rem);
+  line-height: 1.05;
+  letter-spacing: -.04em;
+}
+.app-shell .hero-copy {
+  margin: 5px 0 0;
+  color: #65736a;
+  font-size: .85rem;
+}
+.app-shell .hero-card {
+  min-height: 0;
+  padding: 12px 14px;
+  border: 1px solid #dce6dd;
+  border-radius: 12px;
+  background: #f3f8f3;
+  box-shadow: none;
+  color: #284735;
+}
+.app-shell .hero-card .status-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 0 0 2px;
+  box-shadow: 0 0 0 3px rgba(68, 138, 74, .15);
+}
+.app-shell .hero-card strong { margin: 3px 0; color: #244531; font-size: .84rem; }
+.app-shell .hero-card p { color: #506a57; font-size: .72rem; line-height: 1.3; }
+.app-shell .hero-card .sales-portal-session { margin-top: 7px; font-size: .72rem; }
+.app-shell .hero-card .sales-portal-session .secondary-button { min-height: 30px; padding: 3px 8px; font-size: .72rem; }
+.app-shell .hero-card .sales-portal-code-issuer { position: fixed; left: 13px; bottom: 14px; z-index: 30; width: 208px; max-height: min(55vh, 420px); overflow: auto; margin: 0; padding: 9px 11px; border: 1px solid #4a654f; border-radius: 10px; background: #294333; color: #edf4ed; box-shadow: 0 10px 24px rgba(0, 0, 0, .16); }
+.app-shell .hero-card .sales-portal-code-issuer summary { color: #f0f4ed; cursor: pointer; font-size: .8rem; font-weight: 700; }
+.app-shell .hero-card .sales-portal-code-issuer label { color: #edf4ed; font-size: .75rem; }
+.app-shell .hero-card .sales-portal-code-issuer select { width: 100%; background: #fff; }
+.app-shell .section-tabs {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  display: block;
+  width: 236px;
+  margin: 0;
+  padding: 24px 13px;
+  overflow-y: auto;
+  border-right: 1px solid #34473c;
+  background: #16291f;
+  box-shadow: none;
+}
+.app-shell .nav-brand { display: grid; gap: 1px; margin: 0 10px 31px; color: #fff; }
+.app-shell .nav-brand span { font-family: var(--display-font); font-size: 1.65rem; letter-spacing: -.06em; line-height: 1; }
+.app-shell .nav-brand small { color: #c4a76e; font-size: .58rem; font-weight: 800; letter-spacing: .18em; }
+.app-shell .nav-group { display: grid; gap: 3px; margin: 0 0 22px; }
+.app-shell .nav-group-label { padding: 0 12px 6px; color: #91a99a; font-size: .62rem; font-weight: 800; letter-spacing: .15em; }
+.app-shell .section-tabs button {
+  width: 100%;
+  min-height: 39px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #d5e2d8;
+  font-size: .86rem;
+  font-weight: 600;
+  text-align: left;
+  box-shadow: none;
+}
+.app-shell .section-tabs button:hover,
+.app-shell .section-tabs button:focus-visible { background: #294333; color: #fff; }
+.app-shell .section-tabs button.active { border-color: #49634d; background: #36543c; color: #fff; box-shadow: inset 3px 0 0 #d4b36c; }
+.app-shell .panel,
+.app-shell .metrics-grid article {
+  border: 1px solid #e0e6df;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 2px 10px rgba(19, 43, 28, .035);
+  backdrop-filter: none;
+}
+.app-shell .metrics-grid { gap: 12px; margin-bottom: 16px; }
+.app-shell .metrics-grid article { padding: 15px 18px; }
+.app-shell .metrics-grid strong { color: #183b27; font-family: var(--display-font); font-size: 2rem; }
+.app-shell .section-heading .eyebrow { color: #758477; font-size: .7rem; }
+.app-shell .section-heading h2 { font-size: clamp(1.35rem, 2vw, 1.8rem); line-height: 1.15; }
+.app-shell .workflow-disclosure {
+  margin-bottom: 15px;
+  border: 1px solid #dce5dc;
+  border-radius: 13px;
+  background: #fff;
+}
+.app-shell .workflow-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 56px;
+  padding: 12px 20px;
+  color: #173b27;
+  cursor: pointer;
+  list-style: none;
+}
+.app-shell .workflow-disclosure > summary::-webkit-details-marker { display: none; }
+.app-shell .workflow-disclosure > summary::before { content: '+'; display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid #c9d8cb; border-radius: 7px; font-size: 1.2rem; font-weight: 400; }
+.app-shell .workflow-disclosure[open] > summary::before { content: '−'; }
+.app-shell .workflow-disclosure > summary strong { font-size: .92rem; }
+.app-shell .workflow-disclosure > summary span { color: #718077; font-size: .8rem; }
+.app-shell .workflow-disclosure .panel { margin: 0 12px 12px; box-shadow: none; }
+.app-shell .workflow-disclosure .fit-grid { margin: 0 12px 12px; }
+.app-shell .order-job-list { gap: 9px; }
+.app-shell .queue-admin-tools { margin: 7px 0 13px; }
+.app-shell .queue-admin-tools > summary { width: fit-content; color: #526b56; cursor: pointer; font-size: .77rem; font-weight: 700; }
+.app-shell .queue-admin-tools .order-actions { margin-top: 9px; }
+.app-shell .queue-admin-tools .order-actions button { width: auto; min-height: 36px; padding: 6px 12px; background: #f3f7f2; color: #275035; font-size: .78rem; }
+.app-shell .order-job-card { gap: 9px; border: 1px solid #dfe7df; border-radius: 12px; padding: 14px 17px; background: #fff; box-shadow: none; }
+.app-shell .order-job-card h3 { margin: 3px 0; font-family: var(--display-font); font-size: 1.27rem; letter-spacing: -.03em; }
+.app-shell .order-job-card .profile-type-pill { font-size: .67rem; }
+.app-shell .job-details { border-top: 1px solid #e7ebe6; padding-top: 7px; }
+.app-shell .job-details > summary { width: fit-content; color: #285b39; cursor: pointer; font-size: .8rem; font-weight: 750; }
+.app-shell .job-details[open] > summary { margin-bottom: 13px; }
+.app-shell .job-details .order-actions { margin-bottom: 10px; }
+.app-shell .job-billet-assignment { padding: 10px; border: 1px solid #dce7dc; border-radius: 9px; background: #f6faf6; }
+.app-shell .billet-picker { display: grid; gap: 8px; padding: 10px; border: 1px solid #dce7dc; border-radius: 9px; background: #fbfdfb; }
+.app-shell .billet-picker input { width: 100%; }
+.app-shell .inventory-order-link { display: block; width: fit-content; min-height: 0; margin-top: 5px; padding: 1px 0; border: 0; background: none; color: #28633d; font-size: .74rem; text-align: left; text-decoration: underline; }
+.app-shell .crm-editor-details > summary { margin-bottom: 14px; color: #285b39; cursor: pointer; font-weight: 750; }
+.app-shell .crm-editor-details:not([open]) { padding: 16px; }
+.app-shell .crm-touchpoint-disclosure { padding: 14px; border: 1px solid #dce7db; border-radius: 10px; background: #f8fbf7; }
+.app-shell .crm-touchpoint-disclosure > summary { color: #285b39; cursor: pointer; font-size: .83rem; font-weight: 750; }
+.app-shell .crm-touchpoint-disclosure .crm-touchpoint-form { margin-top: 13px; }
+.app-shell .crm-contact-card { border-radius: 10px; }
+.app-shell .crm-page { gap: 12px; }
+.app-shell .crm-toolbar { grid-template-columns: minmax(170px, 1fr) auto; align-items: center; gap: 12px; padding: 15px 20px; }
+.app-shell .crm-toolbar-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; }
+.app-shell .crm-owner-selector { width: 195px; gap: 3px; font-size: .72rem; }
+.app-shell .crm-owner-selector select { min-height: 36px; padding: 6px 8px; }
+.app-shell .crm-tab-strip { gap: 5px; }
+.app-shell .crm-tab-strip button { min-height: 36px; padding: 6px 10px; border-radius: 7px; font-size: .76rem; }
+.app-shell .crm-order-customer-index { margin: 13px 0; padding: 11px 12px; border: 1px solid #dce6dc; border-radius: 10px; background: #f8fbf7; }
+.app-shell .crm-order-customer-index > summary { color: #315840; cursor: pointer; font-size: .83rem; font-weight: 750; }
+.app-shell .crm-order-customer-index .helper-text { margin: 9px 0; font-size: .76rem; }
+.app-shell .crm-order-customer-list { display: grid; gap: 6px; max-height: 400px; overflow: auto; }
+.app-shell .crm-order-customer-list article { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 9px; border: 1px solid #e1e9df; border-radius: 8px; background: #fff; }
+.app-shell .crm-order-customer-list article div { display: grid; gap: 1px; min-width: 0; }
+.app-shell .crm-order-customer-list article :is(strong, span, small) { overflow-wrap: anywhere; }
+.app-shell .crm-order-customer-list article span,
+.app-shell .crm-order-customer-list article small { color: #66776b; font-size: .72rem; }
+.app-shell .crm-order-customer-list article button { width: auto; min-height: 31px; padding: 5px 8px; font-size: .71rem; white-space: nowrap; }
+.app-shell .customer-detail-jumps { display: flex; flex-wrap: wrap; gap: 6px; margin: 13px 0; }
+.app-shell .customer-detail-jumps a { padding: 6px 10px; border: 1px solid #d9e5da; border-radius: 7px; color: #285a39; font-size: .76rem; font-weight: 700; text-decoration: none; }
+.app-shell .customer-detail-jumps a:hover { background: #eef5ed; }
+.app-shell .quality-review-list { display: grid; gap: 5px; max-height: 360px; overflow: auto; padding: 0 14px 14px; }
+.app-shell .quality-review-list button { width: 100%; min-height: 34px; padding: 7px 10px; border: 1px solid #e4e9e1; border-radius: 7px; background: #fbfcfa; color: #344b39; font-size: .8rem; text-align: left; }
+.app-shell .quality-review-list button:hover { background: #eff5ed; }
+.app-shell .quality-review-list p { margin: 5px 0; color: #66746b; font-size: .8rem; }
+.app-shell .order-review-summary,
+.app-shell .internal-draft-review { display: grid; gap: 8px; margin: 14px 0; padding: 17px 19px; border: 1px solid #d7c28f; border-radius: 11px; background: #fcf8ee; }
+.app-shell .order-review-summary p,
+.app-shell .internal-draft-review p { margin: 0; color: #445244; font-size: .85rem; }
+.app-shell .order-review-summary ul { margin: 0; padding-left: 22px; }
+.app-shell .internal-draft-review h3 { margin: 6px 0; font-family: var(--display-font); font-size: 1.3rem; }
+.app-shell .internal-draft-review .order-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.app-shell .internal-draft-review .order-actions :is(button, a) { width: auto; min-height: 37px; padding: 7px 12px; font-size: .8rem; }
+.app-shell :is(button, a, input, select, textarea):focus-visible { outline: 3px solid #c6a866; outline-offset: 2px; }
+@media (max-width: 980px) {
+  .app-shell { padding: 12px 14px 38px; }
+  .app-shell .hero-panel { display: block; padding: 14px 16px; }
+  .app-shell .hero-panel h1 { font-size: 1.8rem; }
+  .app-shell .hero-card { margin-top: 12px; }
+  .app-shell .hero-card .sales-portal-code-issuer { position: static; width: auto; max-height: none; margin-top: 8px; background: #294333; }
+  .app-shell .section-tabs { position: static; display: flex; flex-wrap: nowrap; width: auto; gap: 6px; margin: 13px -4px 0; padding: 0 4px 6px; overflow-x: auto; overflow-y: hidden; border: 0; background: transparent; scrollbar-width: thin; }
+  .app-shell .nav-brand,
+  .app-shell .nav-group-label { display: none; }
+  .app-shell .nav-group { display: flex; flex: 0 0 auto; gap: 6px; margin: 0; }
+  .app-shell .section-tabs button { width: auto; min-height: 38px; padding: 8px 11px; border-color: #dce5dc; background: #f6f8f5; color: #244531; white-space: nowrap; font-size: .8rem; }
+  .app-shell .section-tabs button.active { background: #36543c; }
+  .app-shell .hero-card .sales-portal-session { display: flex; align-items: center; gap: 4px; }
+  .app-shell .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app-shell .workflow-disclosure > summary { flex-wrap: wrap; gap: 6px 10px; }
+  .app-shell .crm-toolbar { grid-template-columns: 1fr; }
+  .app-shell .crm-toolbar-actions { justify-content: flex-start; }
+  .app-shell .crm-tab-strip { justify-content: flex-start; }
+}

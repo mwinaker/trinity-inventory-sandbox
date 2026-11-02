@@ -10,6 +10,7 @@ import { createSubmissionSnapshot, groupSubmittedOrders, pageSubmittedOrders, bu
 import { calculateSalesOrderTax } from './sales-order-tax.mjs'
 import { createReferenceStore, ensureTrinityOrderReference, getTrinityOrderReference, needsTrinityOrderReference, readReferenceResource } from './order-reference.mjs'
 import { isFullyPaidFinancialStatus } from '../shared/order-payment-status.mjs'
+import { performBilletAssignment } from './billet-assignment-service.mjs'
 import { manualOrderSourceName, hasTrinityManualOrderMarker, getManualOrderSourceDetail } from '../shared/manual-order-provenance.mjs'
 import express from 'express'
 import path from 'node:path'
@@ -2022,6 +2023,49 @@ app.patch('/api/state', requireInternalAccess, async (request, response) => {
   }
 })
 
+app.post('/api/production-jobs/:id/billet-assignment', requireSalesDashboardAccess, async (request, response) => {
+  if (request.salesPortalSession && !request.salesPortalSession.isAdmin && request.salesPortalSession.role !== 'production') {
+    response.status(403).json({ ok: false, message: 'Production access is required to assign billets.' })
+    return
+  }
+  if (!shopDomain || !adminToken) {
+    response.status(503).json({ ok: false, message: 'Shopify inventory is unavailable.' })
+    return
+  }
+
+  try {
+    const jobId = cleanString(request.params.id)
+    const nextBilletId = cleanString(request.body?.billetId)
+    const expectedBilletId = cleanString(request.body?.expectedBilletId)
+    if (!jobId || jobId.length > 180 || nextBilletId.length > 180 || expectedBilletId.length > 180) {
+      response.status(400).json({ ok: false, message: 'A valid production job and billet are required.' })
+      return
+    }
+
+    const result = await enqueueStateWrite(async () => {
+      await ensureDefinitions()
+      return performBilletAssignment({
+        jobId,
+        nextBilletId,
+        expectedBilletId,
+        operator: request.salesPortalSession?.email || 'internal',
+        store: {
+          listJobs: () => listRecords(resourceConfigs.orderJobs),
+          loadJob: (id) => getRecordByHandle(resourceConfigs.orderJobs, id),
+          loadBillet: (id) => getRecordByHandle(resourceConfigs.billets, id),
+          saveJob: (job) => upsertRecord(resourceConfigs.orderJobs, job),
+          saveBillet: (billet) => upsertRecord(resourceConfigs.billets, billet),
+          syncJob: (job) => syncOrderJobMetafields([job]),
+          invalidate: invalidateStateCache,
+        },
+      })
+    })
+    response.status(result.status).set('Cache-Control', 'no-store').json({ ok: result.status === 200, ...result })
+  } catch (error) {
+    response.status(500).json({ ok: false, message: error instanceof Error ? error.message : 'Billet assignment failed.' })
+  }
+})
+
 app.post('/api/sales-orders/tax-preview', async (request, response) => {
   try {
     if (!shopDomain || !adminToken) {
@@ -2115,7 +2159,8 @@ app.post('/api/sales-orders', async (request, response) => {
     if (shouldCreateDraftOrder) {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
-      const payerInvoiceNotification = await trySendDraftOrderPayerInvoice(draftOrder, payload)
+      // Draft creation is review-only. Sending requires the separate invoice action.
+      const payerInvoiceNotification = { sentAt: '', recipient: '', error: '' }
       const mappedJobs = mapDraftOrderToJobs(
         draftOrder,
         payload,
@@ -2193,8 +2238,7 @@ app.post('/api/sales-orders', async (request, response) => {
     }
 
     const payerEmail = resolvePayer(payload).email
-    const shouldSendInvoice =
-      Boolean(payerEmail) && (payload.sendInvoice !== false || isZeroDollarOrder)
+    const shouldSendInvoice = Boolean(payerEmail) && payload.sendInvoice === true
     const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
     const { order, sourceDraft } = await createTaxCalculatedPendingOrder(draftInput)
     const payerInvoice = await trySendCompletedOrderInvoice(order, payload, shouldSendInvoice)
@@ -2232,7 +2276,7 @@ app.post('/api/sales-orders', async (request, response) => {
       ok: true,
       order,
       invoiceSent,
-      zeroDollarDocumentationInvoice: isZeroDollarOrder,
+      zeroDollarDocumentationInvoice: isZeroDollarOrder && invoiceSent,
       emailNotificationMethod: invoiceSent ? 'order_invoice' : 'none',
       payerNotificationError: payerInvoice.error,
       internalNotificationRecipients: internalOrderNotification.recipients,
@@ -3813,30 +3857,6 @@ async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice =
   return updatedJobs
 }
 
-async function trySendDraftOrderPayerInvoice(draftOrder, payload) {
-  const emailInput = buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder)
-  if (!emailInput.to) return { sentAt: '', recipients: [], recipient: '', error: '' }
-
-  try {
-    await sendDraftOrderInvoice(draftOrder.id, emailInput)
-    return {
-      sentAt: new Date().toISOString(),
-      recipients: [emailInput.to],
-      recipient: emailInput.to,
-      error: '',
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown payer invoice error.'
-    console.error(`Draft payer invoice error: ${message}`)
-    return {
-      sentAt: '',
-      recipients: [],
-      recipient: emailInput.to,
-      error: message,
-    }
-  }
-}
-
 async function trySendInternalOrderCopyNotification({
   payload,
   draftOrder = null,
@@ -4788,9 +4808,30 @@ async function applyStatePatch(payload, options = {}) {
 
   const patch = normalizeStatePatch(payload)
   // An older client or a production edit cannot erase or replace the original form snapshot.
-  patch.orderJobs = await Promise.all(patch.orderJobs.map(async job =>
-    keepOriginalSubmissionSnapshot(await getRecordByHandle(resourceConfigs.orderJobs, job.id), job),
-  ))
+  patch.orderJobs = await Promise.all(patch.orderJobs.map(async job => {
+    const existing = await getRecordByHandle(resourceConfigs.orderJobs, job.id)
+    if (cleanString(existing?.assignedBilletId) !== cleanString(job?.assignedBilletId)) {
+      throw new Error('Billet assignments changed outside the guarded assignment action. Refresh the queue and try again.')
+    }
+    return {
+      ...keepOriginalSubmissionSnapshot(existing, job),
+      billetAssignmentHistory: existing?.billetAssignmentHistory ?? [],
+    }
+  }))
+  const billetsReturningToStorage = patch.billets.filter((billet) => billet.status === 'storage')
+  if (billetsReturningToStorage.length > 0) {
+    const previouslyProduction = (await Promise.all(billetsReturningToStorage.map(async (billet) => ({
+      id: billet.id,
+      previous: await getRecordByHandle(resourceConfigs.billets, billet.id),
+    })))).filter((item) => item.previous?.status === 'production')
+    if (previouslyProduction.length > 0) {
+      const linkedIds = new Set((await listRecords(resourceConfigs.orderJobs))
+        .map((job) => cleanString(job.assignedBilletId)).filter(Boolean))
+      if (previouslyProduction.some((item) => linkedIds.has(item.id))) {
+        throw new Error('An assigned billet cannot be moved to storage. Release it from the production job first.')
+      }
+    }
+  }
   if (patch.crmContacts.length > 0 || patch.deletes.crmContacts.length > 0) {
     const staleCrmContactIds = getDerivedCrmContactDeleteIds(
       await listRecords(resourceConfigs.crmContacts),
@@ -8726,7 +8767,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
     productionTimeline === 'rush'
       ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
       : 'Production timeline: Normal',
-    isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
+    isZeroDollarOrder ? '$0 sample order: no product payment due' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
     playerPhone ? `Player phone: ${playerPhone}` : '',
@@ -8870,7 +8911,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
     productionTimeline === 'rush'
       ? `Production timeline: Rush (${rushProductionSurchargeAmount} per bat)`
       : 'Production timeline: Normal',
-    isZeroDollarOrder ? '$0 sample order - invoice sent for documentation' : '',
+    isZeroDollarOrder ? '$0 sample order: no product payment due' : '',
     playerName ? `Player: ${playerName}` : '',
     playerEmail ? `Player email: ${playerEmail}` : '',
     playerPhone ? `Player phone: ${playerPhone}` : '',
