@@ -3101,6 +3101,9 @@ function getSalesRepSummaryKey(sale: Pick<SalesDashboardSale, 'salesRep' | 'sale
 }
 
 function getSalesRepSummaryLabel(sale: Pick<SalesDashboardSale, 'salesRep' | 'salesRepEmail'>) {
+  if (!sale.salesRepEmail.trim() && sale.salesRep.trim().toLowerCase() === 'jeremy') {
+    return 'Jeremy (unresolved)'
+  }
   return createCrmOwnerOption(sale.salesRep, sale.salesRepEmail)?.label ||
     sale.salesRep.trim() ||
     sale.salesRepEmail.trim() ||
@@ -10465,7 +10468,7 @@ function InternalApp({
                     const matchingLines = salesBatCategoryLines.filter((line) => line.orderId === order.orderId)
                     return <tr key={order.orderId}><td>{formatSalesDashboardDate(order.orderCreatedAt)}</td>
                       <td>{order.orderName}</td><td>{formatSalesReportingCategory(order.reportingCategory)}</td>
-                      <td>{order.reportingCategory === 'online_store' ? 'Online Store' : order.salesRep || order.salesRepEmail || 'Unassigned'}</td>
+                      <td>{matchingLines[0]?.repLabel || 'Unassigned'}</td>
                       <td>{[...new Set(matchingLines.map((line) => salesBatCategoryLabels[line.category]))].join(', ')}</td>
                       <td>{matchingLines.some((line) => line.needsReview) ? 'Review' :
                         matchingLines.reduce((sum, line) => sum + line.quantity, 0)}

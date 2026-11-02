@@ -130,7 +130,8 @@ export function buildSalesBatCategoryReport(orders, ownerKeyForOrder = () => 'un
         channel: order.reportingCategory,
         repKey: order.reportingCategory === 'online_store' ? 'online_store' : ownerKeyForOrder(order),
         repLabel: order.reportingCategory === 'online_store' ? 'Online Store' :
-          order.salesRep || order.salesRepEmail || 'Unassigned',
+          ownerKeyForOrder(order) === 'jeremy' ? 'Jeremy (unresolved)' :
+            order.salesRep || order.salesRepEmail || 'Unassigned',
         quantity: physicalQuantity,
         shopifyQuantity: quantity,
         value: Number.isFinite(value) ? round(value) : null,
