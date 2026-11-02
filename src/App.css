@@ -900,8 +900,7 @@ button:hover {
   min-width: 650px;
 }
 
-.bat-category-table td:not(:first-child),
-.bat-category-team-table td {
+.bat-category-table td:not(:first-child) {
   white-space: nowrap;
 }
 
@@ -913,6 +912,21 @@ button:hover {
 
 .bat-category-team-table {
   min-width: 780px;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.bat-category-team-table th:first-child {
+  width: 130px;
+}
+
+.bat-category-team-table th:last-child {
+  width: 145px;
+}
+
+.bat-category-team-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .bat-category-team-table .team-total {
