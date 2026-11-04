@@ -6433,7 +6433,8 @@ function InternalApp({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ ...patch, stateSnapshot: snapshot }),
+        // Keep saves proportional to the edit as the shared workspace grows.
+        body: JSON.stringify(patch),
       })
       const payload = (await response.json().catch(() => ({}))) as {
         ok?: boolean
