@@ -9,9 +9,9 @@ const aliases = {
   'barrel color': 'barrelColor', 'band color': 'bandColor', logo: 'logoColor',
   'logo color': 'logoColor', cupped: 'cupped', 'puck knob': 'puckKnob',
   'engraved text (26 characters max)': 'engraving', 'engraved text': 'engraving',
-  engraving: 'engraving', notes: 'notes',
+  engraving: 'engraving', notes: 'notes', 'level of play': 'levelOfPlay',
 }
-const manual = {trinity_model:'model',trinity_length:'length',trinity_weight:'targetWeight',trinity_wood:'wood',trinity_handle_color:'handleColor',trinity_barrel_color:'barrelColor',trinity_band_color:'bandColor',trinity_logo_color:'logoColor',trinity_engraving:'engraving',trinity_cupped:'cupped',trinity_puck_knob:'puckKnob',trinity_notes:'notes'}
+const manual = {trinity_level_of_play:'levelOfPlay',trinity_model:'model',trinity_length:'length',trinity_weight:'targetWeight',trinity_wood:'wood',trinity_handle_color:'handleColor',trinity_barrel_color:'barrelColor',trinity_band_color:'bandColor',trinity_logo_color:'logoColor',trinity_engraving:'engraving',trinity_cupped:'cupped',trinity_puck_knob:'puckKnob',trinity_notes:'notes'}
 export function productionLineDetails(attributes = [], baseSpecs = {}, productTitle = '') {
   // This is the current exact line: an absent/unchecked option clears old metadata.
   const specs = { ...baseSpecs, puckKnob: '' }

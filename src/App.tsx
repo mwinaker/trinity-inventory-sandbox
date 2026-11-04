@@ -1,3 +1,4 @@
+import type { ProductionContact, ProductionLayout } from '../shared/production-documents.ts'
 import { openProductionDocument } from './production-documents.ts'
 import { productionModelLabel, supportsPuckKnob } from '../shared/production-model.ts'
 import { productionShortcut, matchesProductionShortcut } from './production-shortcut.ts'
@@ -378,6 +379,9 @@ type InternalAttachmentNotification = {
 }
 
 type OrderJob = {
+  levelOfPlay?: string
+  productionContact?: ProductionContact
+  sourceOrderNotes?: string
   submissionSnapshot?: { version: number; draft: SalesOrderDraft }
   orderReference?: string
   test?: boolean
@@ -470,6 +474,7 @@ const maxSalesOrderAttachmentBytes = 20 * 1024 * 1024
 
 type SalesOrderDraft = {
   playerName: string
+  levelOfPlay: string
   payerEmail: string
   playerEmail: string
   playerPhone: string
@@ -1432,6 +1437,7 @@ const emptySalesLine = (itemType: SalesOrderItemType = 'bat'): SalesOrderLineDra
 
 const emptySalesOrderDraft = (): SalesOrderDraft => ({
   playerName: '',
+  levelOfPlay: '',
   payerEmail: '',
   playerEmail: '',
   playerPhone: '',
@@ -1793,6 +1799,9 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
   return {
     id: record.id,
     submissionSnapshot: record.submissionSnapshot,
+    levelOfPlay: record.levelOfPlay ?? '',
+    productionContact: record.productionContact,
+    sourceOrderNotes: record.sourceOrderNotes,
     itemType:
       record.itemType === 'shirt' ? 'shirt' : record.itemType === 'misc' ? 'misc' : 'bat',
     origin: record.origin === 'internal_sales' ? 'internal_sales' : 'website',
@@ -1844,6 +1853,7 @@ function normalizeOrderJob(record: Partial<OrderJob> & Pick<OrderJob, 'id'>): Or
     totalPrice: record.totalPrice ?? '',
     currency: record.currency ?? '',
     specs: {
+      ...specs,
       model: specs.model ?? '',
       puckKnob: specs.puckKnob,
       productionModel: specs.productionModel,
@@ -4283,6 +4293,26 @@ function fetchApi(path: string, init?: RequestInit) {
   return fetch(path, { ...init, headers })
 }
 
+async function openCurrentProductionDocument(all: OrderJob[], job: OrderJob, layout: ProductionLayout) {
+  if (isLocalPreviewHost()) return openProductionDocument(all, job, layout)
+  const orderId = job.shopifyOrderId || job.shopifyDraftOrderId
+  if (!orderId) throw new Error('This order has no Shopify record to print.')
+  const popup = window.open('', '_blank')
+  if (!popup) throw new Error('Allow pop-ups to open the production document.')
+  popup.opener = null
+  popup.document.body.textContent = 'Loading current production details…'
+  try {
+    const response = await fetchApi(`/api/production-print-link?orderId=${encodeURIComponent(orderId)}`, { cache: 'no-store' })
+    const result = await response.json() as { urls?: Partial<Record<ProductionLayout, string>>; message?: string }
+    const url = result.urls?.[layout]
+    if (!response.ok || !url?.startsWith('/api/production-print?')) throw new Error(result.message || 'Could not load current production details.')
+    popup.location.href = new URL(url, window.location.origin).href
+  } catch (error) {
+    popup.close()
+    throw error
+  }
+}
+
 function saveTeamAccessToken(token: string) {
   if (token) {
     writeLocalStorageValue(teamAccessTokenStorageKey, token)
@@ -4637,6 +4667,25 @@ function SalesOrderFormFields({
           </label>
         ) : null}
       </div>
+
+      <fieldset className="order-player-level">
+        <legend>Level of play</legend>
+        <p className="helper-text">Select the player’s level for the production sheet.</p>
+        <div className="player-level-options">
+          {['', ...playerLevelOptions].map((level) => (
+            <label className="checkbox-row" key={level || 'not-recorded'}>
+              <input
+                type="radio"
+                name="order-level-of-play"
+                value={level}
+                checked={(draft.levelOfPlay || '') === level}
+                onChange={() => updateField('levelOfPlay', level)}
+              />
+              <span>{level === 'MILB' ? 'MiLB' : level === 'Indy Ball/International' ? 'Independent / International' : level || 'Not recorded'}</span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
 
       <div className="form-row single-field-row">
         <label>
@@ -5663,6 +5712,7 @@ function PublicSalesOrderForm() {
             <div>
               <span>Player</span>
               <strong>{pendingDraftReview.draft.playerName}</strong>
+              <p>Level of play: {pendingDraftReview.draft.levelOfPlay || 'Not recorded'}</p>
               <p>{pendingDraftReview.draft.salesRep || 'Sales rep not recorded'}</p>
             </div>
             <div>
@@ -9710,6 +9760,7 @@ function InternalApp({
                 <span className="profile-type-pill">Draft created · customer invoice {pendingInternalDraftReview.invoiceSent ? 'sent' : 'not sent'}</span>
                 <h3>{pendingInternalDraftReview.draftOrder.orderReference || pendingInternalDraftReview.draftOrder.name || 'Shopify draft'}</h3>
                 <p>Payer: {getPublicDraftPayerName(pendingInternalDraftReview.draft)} · Player: {pendingInternalDraftReview.draft.playerName}</p>
+                <p>Level of play: {pendingInternalDraftReview.draft.levelOfPlay || 'Not recorded'}</p>
                 <p>{pendingInternalDraftReview.draft.lines.length} order line{pendingInternalDraftReview.draft.lines.length === 1 ? '' : 's'} · Shopify total {formatSalesOrderMoney(getDraftOrderTotal(pendingInternalDraftReview))}</p>
                 <p>Review the Shopify invoice before emailing the customer.</p>
               </div>
@@ -9774,6 +9825,7 @@ function InternalApp({
                 reviewSummary={isOrderReviewed ? <div className="order-review-summary" role="status">
                   <strong>Final review before Shopify creation</strong>
                   <p>Player: {salesOrderDraft.playerName} · Payer: {getPublicDraftPayerName(salesOrderDraft)}</p>
+                  <p>Level of play: {salesOrderDraft.levelOfPlay || 'Not recorded'}</p>
                   <p>Delivery: {salesOrderDraft.shippingAddress1}, {salesOrderDraft.shippingCity}, {salesOrderDraft.shippingProvinceCode} {salesOrderDraft.shippingZip}</p>
                   <ul>{salesOrderDraft.lines.map((line) => <li key={line.id}>{line.quantity} × {line.title} · {formatSalesOrderMoney(getSalesLineTotal(line))}</li>)}</ul>
                   <p>Product subtotal: {formatSalesOrderMoney(getSalesOrderTotal(salesOrderDraft))}. Shopify calculates shipping and tax when you create the order.</p>
@@ -9942,12 +9994,12 @@ function InternalApp({
                       <details className="job-details">
                         <summary>View build, customer, billet and documents</summary>
                       <div className="order-actions" aria-label="Internal production documents">
-                        <button type="button" className="secondary-button" onClick={() => {
-                          try { openProductionDocument(orderJobs, job, 'detail') }
+                        <button type="button" className="secondary-button" onClick={async () => {
+                          try { await openCurrentProductionDocument(orderJobs, job, 'detail') }
                           catch (error) { setOrderActionMessage(error instanceof Error ? error.message : 'Could not open production document.') }
                         }}>Production only - detailed copy</button>
-                        <button type="button" className="secondary-button" onClick={() => {
-                          try { openProductionDocument(orderJobs, job, 'landscape') }
+                        <button type="button" className="secondary-button" onClick={async () => {
+                          try { await openCurrentProductionDocument(orderJobs, job, 'landscape') }
                           catch (error) { setOrderActionMessage(error instanceof Error ? error.message : 'Could not open production document.') }
                         }}>Production only - landscape sheet</button>
                         <span className="helper-text">Whole order · internal notes and attachments · never included in customer emails</span>
