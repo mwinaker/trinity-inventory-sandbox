@@ -1,8 +1,9 @@
+import { normalizePlayerLevel } from '../shared/player-level.ts'
 // Private submission snapshots are stored only in the internal order-job payload.
 // Never include them in Shopify order notes, attributes, or invoice messages.
 const text = value => value == null ? '' : String(value)
 const draftFields = [
-  'playerName', 'payerEmail', 'playerEmail', 'playerPhone', 'purchaseOrder',
+  'playerName', 'levelOfPlay', 'payerEmail', 'playerEmail', 'playerPhone', 'purchaseOrder',
   'shippingAddress1', 'shippingAddress2', 'shippingCity', 'shippingProvinceCode',
   'shippingZip', 'shippingCountryCode', 'billingName', 'billingEmail', 'billingPhone',
   'billingCompany', 'billingRelationship', 'salesRep', 'salesRepEmail', 'notes',
@@ -17,6 +18,7 @@ export function createSubmissionSnapshot(payload) {
   for (const key of ['billingDifferent', 'requiresShipping', 'createDraftOrder', 'sendInvoice']) {
     snapshot[key] = payload[key] === true
   }
+  snapshot.levelOfPlay = normalizePlayerLevel(payload.levelOfPlay)
   snapshot.requiresShipping = payload.requiresShipping !== false
   snapshot.createDraftOrder = payload.createDraftOrder !== false
   snapshot.lines = (payload.lines ?? []).map(line => ({
@@ -98,6 +100,7 @@ export function buildReorderDraft(group, source, owner) {
     const billingDifferent = Boolean(primary.billingDifferent)
     draft = {
       playerName: primary.playerName || primary.customerName || '',
+      levelOfPlay: normalizePlayerLevel(primary.levelOfPlay || attributes.trinity_level_of_play),
       payerEmail: billingDifferent ? '' : primary.customerEmail || source?.email || '',
       playerEmail: primary.playerEmail || attributes.trinity_player_email || '',
       playerPhone: attributes.trinity_player_phone || (!billingDifferent ? primary.billingPhone : '') || '',
@@ -128,6 +131,7 @@ export function buildReorderDraft(group, source, owner) {
     if (!source) warnings.push('The original Shopify record was unavailable. Missing contact or address fields must be completed before submitting.')
   }
   // Reorders have new line identities and no payment, fulfillment, or invoice state.
+  draft.levelOfPlay = normalizePlayerLevel(draft.levelOfPlay)
   draft.salesRep = owner.name
   draft.salesRepEmail = owner.email
   draft.attachment = null

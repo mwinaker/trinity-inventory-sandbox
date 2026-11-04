@@ -10,6 +10,8 @@ export function mergeCurrentPrintJobs(current, saved) {
       ...job,
       orderReference: job.orderReference || source.orderReference,
       salesRep: job.salesRep || source.salesRep,
+      playerProfileId: exact?.playerProfileId || '',
+      levelOfPlay: job.levelOfPlay || exact?.levelOfPlay || saved.find(old => old.submissionSnapshot)?.submissionSnapshot?.draft?.levelOfPlay || '',
       productionStatus: exact?.productionStatus || job.productionStatus,
       assignedBilletId: exact?.assignedBilletId || '',
       assignedBilletIds: exact?.assignedBilletIds || (exact?.assignedBilletId ? [exact.assignedBilletId] : []),

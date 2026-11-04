@@ -4,7 +4,7 @@ import { createSubmissionSnapshot, groupSubmittedOrders, pageSubmittedOrders, bu
 
 const owner = { name: 'Shane Telfer', email: 'shane@trinitybats.com' }
 const payload = {
-  playerName: 'Test Player', payerEmail: 'payer@example.com', playerEmail: 'player@example.com',
+  playerName: 'Test Player', levelOfPlay: 'Youth', payerEmail: 'payer@example.com', playerEmail: 'player@example.com',
   playerPhone: '5550101000', purchaseOrder: 'TEST-PO', shippingAddress1: '123 Test St',
   shippingAddress2: 'Suite 2', shippingCity: 'Test City', shippingProvinceCode: 'CO',
   shippingZip: '80000', shippingCountryCode: 'US', billingDifferent: true,

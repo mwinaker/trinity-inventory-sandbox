@@ -1,3 +1,5 @@
+import { normalizePlayerLevel } from '../shared/player-level.ts'
+import { productionContactFromOrder } from './production-contact.mjs'
 import { createOrderDocumentService } from './order-document-service.mjs'
 import { customerDocumentUrl } from './order-documents.mjs'
 import { buildProductionDocument } from '../shared/production-documents.ts'
@@ -6244,9 +6246,7 @@ async function createDraftOrder(input) {
               displayName
               email
             }
-            shippingAddress {
-              name
-            }
+            shippingAddress { name }
             lineItems(first: 50) {
               nodes {
                 id
@@ -6337,9 +6337,9 @@ async function createTaxCalculatedPendingOrder(input) {
               displayName
               email
             }
-            shippingAddress {
-              name
-            }
+            phone requiresShipping
+            shippingLine { title }
+            shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
             lineItems(first: 50) {
               nodes {
                 id
@@ -7119,12 +7119,14 @@ function invalidateSalesPaymentReconciliationCache() {
 }
 
 async function getProductionPrintJobs(id, ownedJobs = null) {
-  const all = ownedJobs || (await getSharedState()).orderJobs
+  const state = await getSharedState()
+  const all = ownedJobs || state.orderJobs
   const key = id.includes('/DraftOrder/') ? 'shopifyDraftOrderId' : 'shopifyOrderId'
   const selected = all.find(job => job[key] === id)
   if (!selected && !ownedJobs) return []
   const saved = selected ? productionOrderJobs(all, selected) : ownedJobs
-  if (key === 'shopifyDraftOrderId') return saved
+  const withPlayerLevels = jobs => jobs.map(job => ({ ...job, levelOfPlay: job.levelOfPlay || normalizePlayerLevel(state.players?.find(player => player.id === job.playerProfileId)?.levelOfPlay) }))
+  if (key === 'shopifyDraftOrderId') return withPlayerLevels(saved)
   let order, after = null
   const lines = []
   do {
@@ -7135,7 +7137,9 @@ async function getProductionPrintJobs(id, ownedJobs = null) {
         internalAttachment: metafield(namespace: "trinity", key: "internal_attachment") { jsonValue }
         currentTotalPriceSet { shopMoney { amount currencyCode } }
         customer { displayName email }
-        shippingAddress { name }
+        phone requiresShipping
+        shippingLine { title }
+        shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
         lineItems(first: 100, after: $after) {
           pageInfo { hasNextPage endCursor }
           nodes {
@@ -7162,7 +7166,7 @@ async function getProductionPrintJobs(id, ownedJobs = null) {
   })
   const result = mergeCurrentPrintJobs(current, saved)
   if (result[0]) result[0].sourceOrderNotes = order.note || ''
-  return result
+  return withPlayerLevels(result)
 }
 
 async function listRecentOrders(first) {
@@ -7204,9 +7208,9 @@ async function listRecentOrders(first) {
               displayName
               email
             }
-            shippingAddress {
-              name
-            }
+            phone requiresShipping
+            shippingLine { title }
+            shippingAddress { name company address1 address2 city province provinceCode zip country countryCodeV2 phone }
             lineItems(first: 50) {
               nodes {
                 id
@@ -9016,6 +9020,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
       trinity_sales_rep_email: salesRepEmail,
+      trinity_level_of_play: normalizePlayerLevel(payload.levelOfPlay),
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
@@ -9038,6 +9043,7 @@ function buildOrderCreateInput(payload, intakeId, orderSubmittedAt = new Date().
         const title = formatSalesLineShopifyTitle(line, isProOrder)
         const properties = compactLineItemProperties({
           'Order type': isProOrder ? 'Pro Order' : '',
+          trinity_level_of_play: normalizePlayerLevel(payload.levelOfPlay),
           trinity_player_name: playerName,
           trinity_item_type: itemType,
           trinity_shirt_size: itemType === 'shirt' ? line.variantTitle : '',
@@ -9161,6 +9167,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
       trinity_order_submitted_at: orderSubmittedAt,
       trinity_sales_rep: salesRep,
       trinity_sales_rep_email: salesRepEmail,
+      trinity_level_of_play: normalizePlayerLevel(payload.levelOfPlay),
       trinity_player_name: playerName,
       trinity_player_email: playerEmail,
       trinity_player_phone: playerPhone,
@@ -9183,6 +9190,7 @@ function buildDraftOrderInput(payload, intakeId, orderSubmittedAt = new Date().t
         const title = formatSalesLineShopifyTitle(line, isProOrder)
         const customAttributes = compactAttributes({
           order_type: isProOrder ? 'Pro Order' : '',
+          trinity_level_of_play: normalizePlayerLevel(payload.levelOfPlay),
           trinity_player_name: playerName,
           trinity_item_type: itemType,
           trinity_shirt_size: itemType === 'shirt' ? line.variantTitle : '',
@@ -9427,6 +9435,7 @@ function mapDraftOrderToJobs(
       shopifyDraftInvoiceUrl: draftInvoiceUrl,
       lineItemId: draftLine.id ?? '',
       orderSubmittedAt,
+      levelOfPlay: normalizePlayerLevel(payload.levelOfPlay),
       customerName: payer.name || playerName,
       customerEmail: payer.email || draftOrder.email || playerEmail,
       playerName,
@@ -9498,6 +9507,7 @@ function mapCompletedDraftOrderToJobs(
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
+      levelOfPlay: normalizePlayerLevel(payload.levelOfPlay) || job.levelOfPlay || '',
       purchaseOrder: job.purchaseOrder || cleanString(payload.purchaseOrder),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
@@ -9532,6 +9542,7 @@ function mapCreatedOrderToJobs(
       invoiceStatus: invoiceSent ? 'sent' : job.invoiceStatus,
       salesRep: job.salesRep || cleanString(payload.salesRep),
       salesRepEmail: job.salesRepEmail || normalizeEmail(payload.salesRepEmail),
+      levelOfPlay: normalizePlayerLevel(payload.levelOfPlay) || job.levelOfPlay || '',
       purchaseOrder: job.purchaseOrder || cleanString(payload.purchaseOrder),
       specs: mergeSpecs(job.specs, fallbackSpecs),
       internalAttachment: job.internalAttachment || normalizeOrderAttachment(payload.attachment),
@@ -9595,6 +9606,9 @@ function mapGraphQLOrderToJobs(order) {
       shopifyDraftOrderName: '',
       lineItemId: line.id,
       orderSubmittedAt: orderAttributes.trinity_order_submitted_at ?? order.createdAt,
+      levelOfPlay: normalizePlayerLevel(lineAttributes.trinity_level_of_play || orderAttributes.trinity_level_of_play),
+      productionContact: productionContactFromOrder(order, orderAttributes),
+      sourceOrderNotes: order.note || '',
       customerName: order.customer?.displayName ?? '',
       customerEmail: order.email ?? order.customer?.email ?? '',
       playerName: identity.playerName,
@@ -9729,6 +9743,9 @@ function mapOrderWebhookToJobs(order, topic) {
       shopifyDraftOrderName: '',
       lineItemId,
       orderSubmittedAt: orderAttributes.trinity_order_submitted_at ?? order.created_at,
+      levelOfPlay: normalizePlayerLevel(lineAttributes.trinity_level_of_play || orderAttributes.trinity_level_of_play),
+      productionContact: productionContactFromOrder(order, orderAttributes),
+      sourceOrderNotes: order.note || '',
       customerName: customerNameFromWebhook(order.customer),
       customerEmail: order.email ?? order.customer?.email ?? '',
       playerName: identity.playerName,
@@ -9798,6 +9815,8 @@ function mergeOrderJob(existing, incoming) {
         ? 'cancelled'
         : existing.productionStatus || incoming.productionStatus,
     orderReference: incoming.orderReference || existing.orderReference || '',
+    levelOfPlay: incoming.levelOfPlay || existing.levelOfPlay || '',
+    productionContact: incoming.productionContact === undefined ? existing.productionContact : incoming.productionContact,
     intakeId: existing.intakeId || incoming.intakeId,
     shopifyDraftOrderId: existing.shopifyDraftOrderId || incoming.shopifyDraftOrderId,
     shopifyDraftOrderName: existing.shopifyDraftOrderName || incoming.shopifyDraftOrderName,

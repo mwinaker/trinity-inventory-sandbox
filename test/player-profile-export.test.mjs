@@ -25,6 +25,7 @@ test('player level filters expose all approved player levels', () => {
     'Indy Ball/International',
     'College',
     'High School',
+    'Youth',
   ])
 })
 
@@ -35,6 +36,8 @@ test('legacy league names normalize without exposing arbitrary labels', () => {
   assert.equal(normalizePlayerLevel('Minor League Baseball'), 'MILB')
   assert.equal(normalizePlayerLevel('NCAA Division I'), 'College')
   assert.equal(normalizePlayerLevel('College'), 'College')
+  assert.equal(normalizePlayerLevel('Youth'), 'Youth')
+  assert.equal(normalizePlayerLevel('Indie Ball'), 'Indy Ball/International')
   assert.equal(normalizePlayerLevel('High-school varsity'), 'High School')
   assert.equal(normalizePlayerLevel('HS'), 'High School')
   assert.equal(normalizePlayerLevel('unintended-label-123'), '')
