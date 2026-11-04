@@ -4479,11 +4479,11 @@ function SalesOrderShippingAddressFields({
   updateField: SalesOrderDraftFieldUpdater
 }) {
   return (
-    <div className="billing-panel">
-      <p className="helper-text">Enter where the customer receives the goods. For pickup, enter the pickup location. This address determines sales tax, even when someone else pays.</p>
-      <div className="form-row">
+    <div className="order-address-fields">
+      <p className="helper-text">Use the delivery address, or pickup location, to calculate sales tax.</p>
+      {draft.billingDifferent ? (
         <label>
-          {draft.billingDifferent ? 'Shipping recipient phone' : 'Payer phone'}
+          Shipping recipient phone
           <input
             type="tel"
             value={draft.playerPhone}
@@ -4491,71 +4491,63 @@ function SalesOrderShippingAddressFields({
             onChange={(event) => updateField('playerPhone', event.target.value)}
           />
         </label>
+      ) : null}
+      <label>
+        Street address
+        <input
+          value={draft.shippingAddress1}
+          placeholder="Street address"
+          onChange={(event) => updateField('shippingAddress1', event.target.value)}
+        />
+      </label>
+      <div className="form-row">
         <label>
-            Delivery / pickup country code
-            <input
-              value={draft.shippingCountryCode}
-              placeholder="US"
-              onChange={(event) =>
-                updateField('shippingCountryCode', event.target.value.toUpperCase())
-              }
-            />
+          Apartment, suite, etc.
+          <input
+            value={draft.shippingAddress2}
+            placeholder="Optional"
+            onChange={(event) => updateField('shippingAddress2', event.target.value)}
+          />
+        </label>
+        <label>
+          City
+          <input
+            value={draft.shippingCity}
+            placeholder="City"
+            onChange={(event) => updateField('shippingCity', event.target.value)}
+          />
         </label>
       </div>
-
-      <>
-          <div className="form-row">
-            <label>
-              Delivery / pickup address
-              <input
-                value={draft.shippingAddress1}
-                placeholder="Street address"
-                onChange={(event) => updateField('shippingAddress1', event.target.value)}
-              />
-            </label>
-            <label>
-              Apartment, suite, etc.
-              <input
-                value={draft.shippingAddress2}
-                placeholder="Optional"
-                onChange={(event) => updateField('shippingAddress2', event.target.value)}
-              />
-            </label>
-          </div>
-
-          <div className="form-row">
-            <label>
-              Delivery / pickup city
-              <input
-                value={draft.shippingCity}
-                placeholder="City"
-                onChange={(event) => updateField('shippingCity', event.target.value)}
-              />
-            </label>
-            <label>
-              Delivery / pickup state
-              <input
-                value={draft.shippingProvinceCode}
-                placeholder="Example: CO"
-                onChange={(event) =>
-                  updateField('shippingProvinceCode', event.target.value.toUpperCase())
-                }
-              />
-            </label>
-          </div>
-
-          <div className="form-row">
-            <label>
-              Delivery / pickup ZIP
-              <input
-                value={draft.shippingZip}
-                placeholder="ZIP code"
-                onChange={(event) => updateField('shippingZip', event.target.value)}
-              />
-            </label>
-          </div>
-
-      </>
+      <div className="form-row order-address-region">
+        <label>
+          State / province
+          <input
+            value={draft.shippingProvinceCode}
+            placeholder="Example: CO"
+            onChange={(event) =>
+              updateField('shippingProvinceCode', event.target.value.toUpperCase())
+            }
+          />
+        </label>
+        <label>
+          ZIP / postal code
+          <input
+            value={draft.shippingZip}
+            placeholder="ZIP code"
+            onChange={(event) => updateField('shippingZip', event.target.value)}
+          />
+        </label>
+        <label>
+          Country code
+          <input
+            value={draft.shippingCountryCode}
+            placeholder="US"
+            onChange={(event) =>
+              updateField('shippingCountryCode', event.target.value.toUpperCase())
+            }
+          />
+        </label>
+      </div>
     </div>
   )
 }
@@ -4644,704 +4636,751 @@ function SalesOrderFormFields({
   }))
 
   return (
-    <>
-      <div className={`form-row ${draft.billingDifferent ? 'single-field-row' : ''}`}>
-        <label>
-          Player name
-          <input
-            list={playerNameDatalistId}
-            value={draft.playerName}
-            placeholder="Example: Jordan Smith"
-            onChange={(event) => updateField('playerName', event.target.value)}
-          />
-        </label>
-        {!draft.billingDifferent ? (
-          <label>
-            Payer email (optional)
-            <input
-              type="email"
-              value={draft.payerEmail}
-              placeholder="payer@example.com"
-              onChange={(event) => updateField('payerEmail', event.target.value)}
-            />
-          </label>
-        ) : null}
-      </div>
-
-      <fieldset className="order-player-level">
-        <legend>Level of play</legend>
-        <p className="helper-text">Select the player’s level for the production sheet.</p>
-        <div className="player-level-options">
-          {['', ...playerLevelOptions].map((level) => (
-            <label className="checkbox-row" key={level || 'not-recorded'}>
-              <input
-                type="radio"
-                name="order-level-of-play"
-                value={level}
-                checked={(draft.levelOfPlay || '') === level}
-                onChange={() => updateField('levelOfPlay', level)}
-              />
-              <span>{level === 'MILB' ? 'MiLB' : level === 'Indy Ball/International' ? 'Independent / International' : level || 'Not recorded'}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
-      <div className="form-row single-field-row">
-        <label>
-          Purchase order (optional)
-          <input
-            value={draft.purchaseOrder}
-            placeholder="Example: PO-10452"
-            onChange={(event) => updateField('purchaseOrder', event.target.value)}
-          />
-        </label>
-      </div>
-
-      <label className="checkbox-row billing-toggle">
-        <input
-          type="checkbox"
-          checked={draft.billingDifferent}
-          onChange={(event) => {
-            const billingDifferent = event.target.checked
-            setDraft((current) => ({
-              ...current,
-              billingDifferent,
-            }))
-          }}
-        />
-        <span>Bill a team, agent, or other payer</span>
-      </label>
-
-      <label className="checkbox-row billing-toggle">
-        <input
-          type="checkbox"
-          checked={!draft.requiresShipping}
-          onChange={(event) => {
-            const requiresShipping = !event.target.checked
-            setDraft((current) => ({
-              ...current,
-              requiresShipping,
-              shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
-            }))
-          }}
-        />
-        <span>Local delivery / no shipping required</span>
-      </label>
-
-      <div className="form-row fulfillment-options-row">
-        <label>
-          Shipping speed
-          <select
-            aria-label="Shipping speed"
-            required
-            value={draft.shippingSpeed}
-            disabled={!draft.requiresShipping}
-            onChange={(event) =>
-              updateField('shippingSpeed', event.target.value as ShippingSpeedOption)
-            }
-          >
-            {!draft.shippingSpeed ? <option value="">Select shipping speed</option> : null}
-            {shippingSpeedOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <span className="helper-text">
-            {draft.requiresShipping
-              ? `Calculated automatically from ${formatSalesOrderBatCount(shippingBatQuantity)}. Shirts and miscellaneous products do not increase the bat shipping tier.`
-              : 'No shipping charge for local delivery.'}
-          </span>
-        </label>
-        <label>
-          Production timeline
-          <select
-            required
-            value={draft.productionTimeline}
-            onChange={(event) =>
-              updateField('productionTimeline', event.target.value as ProductionTimelineOption)
-            }
-          >
-            {!draft.productionTimeline ? <option value="">Select production timeline</option> : null}
-            {productionTimelineOptions.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {draft.billingDifferent ? (
-        <div className="billing-panel">
-          <div className="form-row">
+    <div className="manual-order-fields">
+      <div className="order-contact-grid">
+        <section className="order-form-section" aria-label="Customer and payer">
+          <header className="order-section-heading"><span className="order-section-number">01</span><div><h3>Customer & payer</h3><p>Who the order is for.</p></div></header>
+          <div className={`form-row ${draft.billingDifferent ? 'single-field-row' : ''}`}>
             <label>
-              Payer name
+              Player name
               <input
-                list={billingContactDatalistId}
-                value={draft.billingName}
-                placeholder={
-                  billingContactDatalistId
-                    ? 'Search name, team, agent, or agency'
-                    : 'Team, agent, agency, or payer name'
-                }
-                onChange={(event) => {
-                  const value = event.target.value
-                  if (updateBillingName) {
-                    updateBillingName(value)
-                  } else {
-                    updateField('billingName', value)
-                  }
-                }}
+                list={playerNameDatalistId}
+                value={draft.playerName}
+                placeholder="Example: Jordan Smith"
+                onChange={(event) => updateField('playerName', event.target.value)}
               />
             </label>
-            <label>
-              Payer email (optional)
-              <input
-                type="email"
-                value={draft.billingEmail}
-                placeholder="billing@example.com"
-                onChange={(event) => updateField('billingEmail', event.target.value)}
-              />
-            </label>
+            {!draft.billingDifferent ? (
+              <label>
+                Payer email (optional)
+                <input
+                  type="email"
+                  value={draft.payerEmail}
+                  placeholder="payer@example.com"
+                  onChange={(event) => updateField('payerEmail', event.target.value)}
+                />
+              </label>
+            ) : null}
           </div>
 
-          <div className="form-row">
-            <label>
-              Payer phone
-              <input
-                type="tel"
-                value={draft.billingPhone}
-                placeholder="Example: (321) 652-1800"
-                onChange={(event) => updateField('billingPhone', event.target.value)}
-              />
-            </label>
-            <label>
-              Team or agency
-              <input
-                value={draft.billingCompany}
-                placeholder="Example: New York Mets"
-                onChange={(event) => updateField('billingCompany', event.target.value)}
-              />
-            </label>
-          </div>
-
-          <div className="form-row">
-            <label>
-              Billing relationship
-              <input
-                value={draft.billingRelationship}
-                placeholder="Example: Minor league clubhouse manager"
-                onChange={(event) => updateField('billingRelationship', event.target.value)}
-              />
-            </label>
-          </div>
-
-          {billingContacts.length > 0 && applyBillingContact ? (
-            <div className="saved-contact-panel">
-              <span>Saved payer contacts</span>
-              <div className="saved-contact-list">
-                {billingContacts.map((contact) => (
-                  <button
-                    type="button"
-                    className="secondary-button compact-button"
-                    key={contact.id}
-                    onClick={() => applyBillingContact(contact)}
-                  >
-                    {[contact.name, contact.company].filter(Boolean).join(' · ') ||
-                      contact.email ||
-                      contact.phone}
-                  </button>
-                ))}
-              </div>
+          {!draft.billingDifferent ? (
+            <div className="form-row">
+              <label>
+                Payer phone
+                <input
+                  type="tel"
+                  value={draft.playerPhone}
+                  placeholder="Example: (321) 652-1800"
+                  onChange={(event) => updateField('playerPhone', event.target.value)}
+                />
+              </label>
             </div>
           ) : null}
-        </div>
-      ) : null}
 
-      <SalesOrderShippingAddressFields draft={draft} updateField={updateField} />
+          <fieldset className="order-player-level">
+            <legend>Level of play</legend>
+            <div className="player-level-options">
+              {['', ...playerLevelOptions].map((level) => (
+                <label className="checkbox-row" key={level || 'not-recorded'}>
+                  <input
+                    type="radio"
+                    name="order-level-of-play"
+                    value={level}
+                    checked={(draft.levelOfPlay || '') === level}
+                    onChange={() => updateField('levelOfPlay', level)}
+                  />
+                  <span>{level === 'MILB' ? 'MiLB' : level === 'Indy Ball/International' ? 'Independent / International' : level || 'Not recorded'}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
 
-      {!hideSalesRepFields ? (
-        <label>
-          Sales rep
-          <select
-            value={getCanonicalCrmOwnerOption(draft.salesRep, draft.salesRepEmail)?.key ?? ''}
-            onChange={(event) => {
-              const owner = seedCrmOwnerOptions.find((option) => option.key === event.target.value)
-              updateField('salesRep', owner?.name ?? '')
-              updateField('salesRepEmail', owner?.email ?? '')
-            }}
-          >
-            <option value="">Unassigned</option>
-            {seedCrmOwnerOptions.map((owner) => (
-              <option key={owner.key} value={owner.key}>
-                {owner.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : null}
+          <label className="checkbox-row billing-toggle">
+            <input
+              type="checkbox"
+              checked={draft.billingDifferent}
+              onChange={(event) => {
+                const billingDifferent = event.target.checked
+                setDraft((current) => ({
+                  ...current,
+                  billingDifferent,
+                }))
+              }}
+            />
+            <span>Bill a team, agent, or other payer</span>
+          </label>
 
-      <div className="sales-line-list">
-        {draft.lines.map((line, index) => {
-          const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
-          const lineVariant = lineProduct?.variants.find((variant) => variant.id === line.variantId)
-          const productInputValue = line.isProOrder
-            ? line.title
-            : (lineProduct?.name ?? line.title)
-          const lineTitle =
-            line.itemType === 'shirt'
-              ? lineProduct?.name || line.title || 'Shirt'
-              : line.itemType === 'misc'
-                ? line.title || 'Miscellaneous product'
-              : line.isProOrder
-                ? line.title || 'Pro custom bat'
-                : lineProduct?.name || line.title || 'Custom bat'
-
-          return (
-            <article className="sales-line-card" key={line.id}>
-              <div className="split-heading">
-                <div>
-                  <span className="profile-type-pill">Line {index + 1}</span>
-                  <h3>{lineTitle}</h3>
-                </div>
-                {draft.lines.length > 1 ? (
-                  <button
-                    type="button"
-                    className="secondary-button destructive-button compact-button"
-                    onClick={() => removeLine(line.id)}
-                  >
-                    Remove
-                  </button>
-                ) : null}
+          {draft.billingDifferent ? (
+            <div className="billing-panel">
+              <div className="form-row">
+                <label>
+                  Payer name
+                  <input
+                    list={billingContactDatalistId}
+                    value={draft.billingName}
+                    placeholder={
+                      billingContactDatalistId
+                        ? 'Search name, team, agent, or agency'
+                        : 'Team, agent, agency, or payer name'
+                    }
+                    onChange={(event) => {
+                      const value = event.target.value
+                      if (updateBillingName) {
+                        updateBillingName(value)
+                      } else {
+                        updateField('billingName', value)
+                      }
+                    }}
+                  />
+                </label>
+                <label>
+                  Payer email (optional)
+                  <input
+                    type="email"
+                    value={draft.billingEmail}
+                    placeholder="billing@example.com"
+                    onChange={(event) => updateField('billingEmail', event.target.value)}
+                  />
+                </label>
               </div>
-
-              {line.itemType === 'shirt' ? (
-                <div className="form-row shirt-order-fields">
-                  <label>
-                    Shirt
-                    <select
-                      value={line.productId}
-                      onChange={(event) => {
-                        const product = shirtCatalog.find(
-                          (catalogProduct) => catalogProduct.id === event.target.value,
-                        )
-                        const firstVariant = product?.variants[0]
-                        updateLine(line.id, {
-                          isProOrder: false,
-                          productId: product?.id ?? '',
-                          variantId: firstVariant?.id ?? '',
-                          variantTitle: firstVariant?.title ?? '',
-                          title: product?.name ?? '',
-                          unitPrice: firstVariant?.price ?? '',
-                        })
-                      }}
-                    >
-                      <option value="">Select a shirt</option>
-                      {shirtCatalog.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Size
-                    <select
-                      value={line.variantId}
-                      disabled={!lineProduct}
-                      onChange={(event) => {
-                        const variant = lineProduct?.variants.find(
-                          (productVariant) => productVariant.id === event.target.value,
-                        )
-                        updateLine(line.id, {
-                          variantId: variant?.id ?? '',
-                          variantTitle: variant?.title ?? '',
-                          unitPrice: variant?.price ?? line.unitPrice,
-                        })
-                      }}
-                    >
-                      <option value="">Select a size</option>
-                      {lineProduct?.variants.map((variant) => (
-                        <option key={variant.id} value={variant.id}>
-                          {variant.title}
-                          {variant.inventoryQuantity > 0
-                            ? ` · ${variant.inventoryQuantity} in stock`
-                            : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {lineProduct && lineVariant ? (
-                    <p className="helper-text shirt-selection-summary">
-                      {lineProduct.name} · {lineVariant.title}
-                    </p>
-                  ) : null}
-                  {shirtCatalog.length === 0 ? (
-                    <p className="helper-text shirt-selection-summary">
-                      No live Shopify shirts are available right now.
-                    </p>
-                  ) : null}
-                </div>
-              ) : line.itemType === 'misc' ? (
-                <div className="form-row single-field-row">
-                  <label>
-                    Description
-                    <input
-                      value={line.title}
-                      placeholder="Describe the miscellaneous product"
-                      onChange={(event) => updateLine(line.id, { title: event.target.value })}
-                    />
-                  </label>
-                </div>
-              ) : (
-                <>
-                  <label className="checkbox-row pro-order-toggle">
-                    <input
-                      type="checkbox"
-                      checked={line.isProOrder}
-                      onChange={(event) => {
-                        const isProOrder = event.target.checked
-                        if (isProOrder) {
-                          updateLine(line.id, {
-                            isProOrder,
-                            productId: '',
-                            variantId: '',
-                            variantTitle: '',
-                            title: line.title || lineProduct?.name || '',
-                          })
-                          return
-                        }
-
-                        updateLine(line.id, {
-                          isProOrder,
-                          ...getTypedBatModelPatch(batCatalog, line.title, line),
-                        })
-                      }}
-                    />
-                    <span>MLB/MILB Order</span>
-                  </label>
-
-                  <div className="form-row">
-                    <label>
-                      Bat model
-                      <input
-                        list={line.isProOrder ? undefined : productDatalistId}
-                        value={productInputValue}
-                        placeholder={
-                          line.isProOrder
-                            ? 'Example: T141 pro custom'
-                            : 'Type a model or choose a Shopify product'
-                        }
-                        onChange={(event) => {
-                          const typedProduct = event.target.value
-                          if (line.isProOrder) {
-                            updateLine(line.id, {
-                              productId: '',
-                              variantId: '',
-                              variantTitle: '',
-                              title: typedProduct,
-                            })
-                            return
-                          }
-
-                          updateLine(line.id, getTypedBatModelPatch(batCatalog, typedProduct, line))
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Wood species
-                      <select
-                        value={line.wood}
-                        onChange={(event) =>
-                          updateLine(line.id, {
-                            wood: event.target.value as SalesOrderLineDraft['wood'],
-                          })
-                        }
-                      >
-                        {!line.wood ? <option value="">Wood not recorded — select species</option> : null}
-                        {speciesOptions.map((species) => (
-                          <option key={species}>{species}</option>
-                        ))}
-                        <option>Other</option>
-                      </select>
-                    </label>
-                  </div>
-                </>
-              )}
 
               <div className="form-row">
                 <label>
-                  {line.itemType === 'misc' ? 'Price' : 'Unit price'}
+                  Payer phone
                   <input
-                    inputMode="decimal"
-                    value={line.unitPrice}
-                    placeholder="Example: 189.00"
-                    onChange={(event) => updateLine(line.id, { unitPrice: event.target.value })}
+                    type="tel"
+                    value={draft.billingPhone}
+                    placeholder="Example: (321) 652-1800"
+                    onChange={(event) => updateField('billingPhone', event.target.value)}
                   />
                 </label>
                 <label>
-                  Quantity
+                  Team or agency
                   <input
-                    type="number"
-                    min="1"
-                    value={line.quantity}
-                    onChange={(event) =>
-                      updateLine(line.id, { quantity: Number(event.target.value) })
-                    }
+                    value={draft.billingCompany}
+                    placeholder="Example: New York Mets"
+                    onChange={(event) => updateField('billingCompany', event.target.value)}
                   />
                 </label>
               </div>
 
-              {line.itemType === 'bat' ? (
-                <>
-                  <div className="form-row">
-                    <label>
-                      Length
-                      <input
-                        value={line.length}
-                        placeholder="Example: 34"
-                        onChange={(event) => updateLine(line.id, { length: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      Weight
-                      <input
-                        value={line.targetWeight}
-                        placeholder="Example: 31.5"
-                        onChange={(event) => updateLine(line.id, { targetWeight: event.target.value })}
-                      />
-                    </label>
-                  </div>
+              <div className="form-row">
+                <label>
+                  Billing relationship
+                  <input
+                    value={draft.billingRelationship}
+                    placeholder="Example: Minor league clubhouse manager"
+                    onChange={(event) => updateField('billingRelationship', event.target.value)}
+                  />
+                </label>
+              </div>
 
-                  <div className="form-row">
-                    <label>
-                      Handle color
-                      <select
-                        value={line.handleColor}
-                        onChange={(event) => updateLine(line.id, { handleColor: event.target.value })}
+              {billingContacts.length > 0 && applyBillingContact ? (
+                <div className="saved-contact-panel">
+                  <span>Saved payer contacts</span>
+                  <div className="saved-contact-list">
+                    {billingContacts.map((contact) => (
+                      <button
+                        type="button"
+                        className="secondary-button compact-button"
+                        key={contact.id}
+                        onClick={() => applyBillingContact(contact)}
                       >
-                        <option value="">Select handle color</option>
-                        {handleColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Barrel color
-                      <select
-                        value={line.barrelColor}
-                        onChange={(event) => updateLine(line.id, { barrelColor: event.target.value })}
-                      >
-                        <option value="">Select barrel color</option>
-                        {barrelColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
+                        {[contact.name, contact.company].filter(Boolean).join(' · ') ||
+                          contact.email ||
+                          contact.phone}
+                      </button>
+                    ))}
                   </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
-                  <div className="form-row">
-                    <label>
-                      Band color
-                      <select
-                        value={line.bandColor}
-                        onChange={(event) => updateLine(line.id, { bandColor: event.target.value })}
-                      >
-                        <option value="">Select band color</option>
-                        {bandColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Logo color
-                      <select
-                        value={line.logoColor}
-                        onChange={(event) => updateLine(line.id, { logoColor: event.target.value })}
-                      >
-                        <option value="">Select logo color</option>
-                        {logoColorOptions.map((color) => (
-                          <option key={color}>{color}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
+          {!hideSalesRepFields ? (
+            <label>
+              Sales rep
+              <select
+                value={getCanonicalCrmOwnerOption(draft.salesRep, draft.salesRepEmail)?.key ?? ''}
+                onChange={(event) => {
+                  const owner = seedCrmOwnerOptions.find((option) => option.key === event.target.value)
+                  updateField('salesRep', owner?.name ?? '')
+                  updateField('salesRepEmail', owner?.email ?? '')
+                }}
+              >
+                <option value="">Unassigned</option>
+                {seedCrmOwnerOptions.map((owner) => (
+                  <option key={owner.key} value={owner.key}>
+                    {owner.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
 
-                  <div className="form-row">
-                    <label>
-                      Cup
-                      <select
-                        value={line.cupped}
-                        onChange={(event) =>
-                          updateLine(line.id, {
-                            cupped: event.target.value as SalesOrderLineDraft['cupped'],
-                          })
-                        }
-                      >
-                        {!line.cupped ? <option value="">Cup not recorded — select option</option> : null}
-                        {manualCupOptions.map((cup) => (
-                          <option key={cup} value={cup}>
-                            {cup === 'Yes' ? 'Cup' : 'No cup'}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Engraving
-                      <input
-                        value={line.engraving}
-                        placeholder="Player name, signature, or custom text"
-                        onChange={(event) => updateLine(line.id, { engraving: event.target.value })}
-                      />
-                    </label>
+          <details className="order-optional-details" open={Boolean(draft.purchaseOrder)}>
+            <summary>Purchase order reference<span>{draft.purchaseOrder || 'Optional'}</span></summary>
+            <div className="order-optional-body">
+              <div className="form-row single-field-row">
+                <label>
+                  Purchase order (optional)
+                  <input
+                    value={draft.purchaseOrder}
+                    placeholder="Example: PO-10452"
+                    onChange={(event) => updateField('purchaseOrder', event.target.value)}
+                  />
+                </label>
+              </div>
+
+
+
+            </div>
+          </details>
+        </section>
+        <section className="order-form-section" aria-label="Delivery and timing">
+          <header className="order-section-heading"><span className="order-section-number">02</span><div><h3>Delivery & timing</h3><p>Where and when it’s needed.</p></div></header>
+          <label className="checkbox-row billing-toggle">
+            <input
+              type="checkbox"
+              checked={!draft.requiresShipping}
+              onChange={(event) => {
+                const requiresShipping = !event.target.checked
+                setDraft((current) => ({
+                  ...current,
+                  requiresShipping,
+                  shippingSpeed: requiresShipping ? current.shippingSpeed : 'standard',
+                }))
+              }}
+            />
+            <span>Local delivery / no shipping required</span>
+          </label>
+
+          <div className="form-row fulfillment-options-row">
+            <label>
+              Shipping speed
+              <select
+                aria-label="Shipping speed"
+                required
+                value={draft.shippingSpeed}
+                disabled={!draft.requiresShipping}
+                onChange={(event) =>
+                  updateField('shippingSpeed', event.target.value as ShippingSpeedOption)
+                }
+              >
+                {!draft.shippingSpeed ? <option value="">Select shipping speed</option> : null}
+                {shippingSpeedOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="helper-text">
+                {draft.requiresShipping
+                  ? `Based on ${formatSalesOrderBatCount(shippingBatQuantity)}. Shirts and other products don’t add to shipping.`
+                  : 'No shipping charge for local delivery.'}
+              </span>
+            </label>
+            <label>
+              Production timeline
+              <select
+                required
+                value={draft.productionTimeline}
+                onChange={(event) =>
+                  updateField('productionTimeline', event.target.value as ProductionTimelineOption)
+                }
+              >
+                {!draft.productionTimeline ? <option value="">Select production timeline</option> : null}
+                {productionTimelineOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <SalesOrderShippingAddressFields draft={draft} updateField={updateField} />
+
+        </section>
+      </div>
+      <section className="order-form-section order-products-section" aria-label="Products">
+        <header className="order-section-heading"><span className="order-section-number">03</span><div><h3>Products</h3><p>Build each item, then add another if needed.</p></div></header>
+        <div className="sales-line-list">
+          {draft.lines.map((line, index) => {
+            const lineProduct = shopifyCatalog.find((product) => product.id === line.productId)
+            const lineVariant = lineProduct?.variants.find((variant) => variant.id === line.variantId)
+            const productInputValue = line.isProOrder
+              ? line.title
+              : (lineProduct?.name ?? line.title)
+            const lineTitle =
+              line.itemType === 'shirt'
+                ? lineProduct?.name || line.title || 'Shirt'
+                : line.itemType === 'misc'
+                  ? line.title || 'Miscellaneous product'
+                  : line.isProOrder
+                    ? line.title || 'Pro custom bat'
+                    : lineProduct?.name || line.title || 'Custom bat'
+
+            return (
+              <article className="sales-line-card" key={line.id}>
+                <div className="split-heading">
+                  <div>
+                    <span className="profile-type-pill">Line {index + 1}</span>
+                    <h3>{lineTitle}</h3>
                   </div>
-                  {supportsPuckKnob(productInputValue, line.itemType) ? (
+                  {draft.lines.length > 1 ? (
+                    <button
+                      type="button"
+                      className="secondary-button destructive-button compact-button"
+                      onClick={() => removeLine(line.id)}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="sales-line-fields">
+                  {line.itemType === 'shirt' ? (
+                    <div className="form-row shirt-order-fields">
+                      <label>
+                        Shirt
+                        <select
+                          value={line.productId}
+                          onChange={(event) => {
+                            const product = shirtCatalog.find(
+                              (catalogProduct) => catalogProduct.id === event.target.value,
+                            )
+                            const firstVariant = product?.variants[0]
+                            updateLine(line.id, {
+                              isProOrder: false,
+                              productId: product?.id ?? '',
+                              variantId: firstVariant?.id ?? '',
+                              variantTitle: firstVariant?.title ?? '',
+                              title: product?.name ?? '',
+                              unitPrice: firstVariant?.price ?? '',
+                            })
+                          }}
+                        >
+                          <option value="">Select a shirt</option>
+                          {shirtCatalog.map((product) => (
+                            <option key={product.id} value={product.id}>
+                              {product.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Size
+                        <select
+                          value={line.variantId}
+                          disabled={!lineProduct}
+                          onChange={(event) => {
+                            const variant = lineProduct?.variants.find(
+                              (productVariant) => productVariant.id === event.target.value,
+                            )
+                            updateLine(line.id, {
+                              variantId: variant?.id ?? '',
+                              variantTitle: variant?.title ?? '',
+                              unitPrice: variant?.price ?? line.unitPrice,
+                            })
+                          }}
+                        >
+                          <option value="">Select a size</option>
+                          {lineProduct?.variants.map((variant) => (
+                            <option key={variant.id} value={variant.id}>
+                              {variant.title}
+                              {variant.inventoryQuantity > 0
+                                ? ` · ${variant.inventoryQuantity} in stock`
+                                : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {lineProduct && lineVariant ? (
+                        <p className="helper-text shirt-selection-summary">
+                          {lineProduct.name} · {lineVariant.title}
+                        </p>
+                      ) : null}
+                      {shirtCatalog.length === 0 ? (
+                        <p className="helper-text shirt-selection-summary">
+                          No live Shopify shirts are available right now.
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : line.itemType === 'misc' ? (
                     <div className="form-row single-field-row">
                       <label>
-                        Puck knob
-                        <select
-                          aria-label={`Puck knob for line ${index + 1}`}
-                          value={line.puckKnob === 'Yes' ? 'Yes' : 'No'}
-                          onChange={(event) => updateLine(line.id, {
-                            puckKnob: event.target.value as SalesOrderLineDraft['puckKnob'],
-                          })}
-                        >
-                          <option value="No">Standard knob</option>
-                          <option value="Yes">Puck knob</option>
-                        </select>
-                        {line.puckKnob === 'Yes' ? (
-                          <span className="helper-text">Production model: {productionModelLabel({ model: productInputValue, puckKnob: line.puckKnob })}</span>
-                        ) : null}
+                        Description
+                        <input
+                          value={line.title}
+                          placeholder="Describe the miscellaneous product"
+                          onChange={(event) => updateLine(line.id, { title: event.target.value })}
+                        />
                       </label>
                     </div>
-                  ) : null}
-                </>
-              ) : null}
-            </article>
-          )
-        })}
-      </div>
+                  ) : (
+                    <>
+                      <label className="checkbox-row pro-order-toggle">
+                        <input
+                          type="checkbox"
+                          checked={line.isProOrder}
+                          onChange={(event) => {
+                            const isProOrder = event.target.checked
+                            if (isProOrder) {
+                              updateLine(line.id, {
+                                isProOrder,
+                                productId: '',
+                                variantId: '',
+                                variantTitle: '',
+                                title: line.title || lineProduct?.name || '',
+                              })
+                              return
+                            }
 
-      <div className="order-line-actions">
-        <button type="button" className="secondary-button" onClick={() => addLine('bat')}>
-          Add another bat
-        </button>
-        <button type="button" className="secondary-button" onClick={() => addLine('shirt')}>
-          Add a shirt
-        </button>
-        <button type="button" className="secondary-button" onClick={() => addLine('misc')}>
-          Add miscellaneous product
-        </button>
-      </div>
+                            updateLine(line.id, {
+                              isProOrder,
+                              ...getTypedBatModelPatch(batCatalog, line.title, line),
+                            })
+                          }}
+                        />
+                        <span>MLB/MILB Order</span>
+                      </label>
 
-      <div className="attachment-field">
-        <label>
-          Internal attachment
-          <input
-            type="file"
-            accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.txt,.csv,.doc,.docx,.xls,.xlsx"
-            onChange={(event) => setAttachmentFile(event.target.files?.[0] ?? null)}
-          />
-        </label>
-        {attachmentFile ? (
-          <div className="attachment-chip">
-            <span>{attachmentFile.name}</span>
-            <button
-              type="button"
-              className="secondary-button compact-button"
-              onClick={() => setAttachmentFile(null)}
-            >
-              Remove
-            </button>
-          </div>
-        ) : null}
-        {!attachmentFile && draft.attachment ? (
-          <div className="attachment-chip"><span>Copied attachment: {draft.attachment.filename}</span>
-            <button type="button" className="secondary-button compact-button" onClick={() => updateField('attachment', null)}>Remove copied attachment</button>
-          </div>
-        ) : null}
-      </div>
+                      <div className="form-row">
+                        <label>
+                          Bat model
+                          <input
+                            list={line.isProOrder ? undefined : productDatalistId}
+                            value={productInputValue}
+                            placeholder={
+                              line.isProOrder
+                                ? 'Example: T141 pro custom'
+                                : 'Type a model or choose a Shopify product'
+                            }
+                            onChange={(event) => {
+                              const typedProduct = event.target.value
+                              if (line.isProOrder) {
+                                updateLine(line.id, {
+                                  productId: '',
+                                  variantId: '',
+                                  variantTitle: '',
+                                  title: typedProduct,
+                                })
+                                return
+                              }
 
-      <label className="notes-field">
-        Internal order notes
-        <textarea
-          value={draft.notes}
-          placeholder="Private staff notes — never included on customer invoices or quotes"
-          onChange={(event) => updateField('notes', event.target.value)}
-        />
-      </label>
+                              updateLine(line.id, getTypedBatModelPatch(batCatalog, typedProduct, line))
+                            }}
+                          />
+                        </label>
+                        <label>
+                          Wood species
+                          <select
+                            value={line.wood}
+                            onChange={(event) =>
+                              updateLine(line.id, {
+                                wood: event.target.value as SalesOrderLineDraft['wood'],
+                              })
+                            }
+                          >
+                            {!line.wood ? <option value="">Wood not recorded — select species</option> : null}
+                            {speciesOptions.map((species) => (
+                              <option key={species}>{species}</option>
+                            ))}
+                            <option>Other</option>
+                          </select>
+                        </label>
+                      </div>
+                    </>
+                  )}
 
-      {draftOnly ? (
-        <div className="form-instructions">
-          <strong>Public submissions create Shopify draft orders</strong>
-          <p>A team member can review the draft before it becomes a finalized order.</p>
+                  <div className="form-row">
+                    <label>
+                      {line.itemType === 'misc' ? 'Price' : 'Unit price'}
+                      <input
+                        inputMode="decimal"
+                        value={line.unitPrice}
+                        placeholder="Example: 189.00"
+                        onChange={(event) => updateLine(line.id, { unitPrice: event.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Quantity
+                      <input
+                        type="number"
+                        min="1"
+                        value={line.quantity}
+                        onChange={(event) =>
+                          updateLine(line.id, { quantity: Number(event.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+
+                </div>
+                {line.itemType === 'bat' ? (
+                  <div className="sales-line-fields sales-build-fields">
+                    <h4>Bat specifications & finish</h4>
+                    <div className="form-row">
+                      <label>
+                        Length
+                        <input
+                          value={line.length}
+                          placeholder="Example: 34"
+                          onChange={(event) => updateLine(line.id, { length: event.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Weight
+                        <input
+                          value={line.targetWeight}
+                          placeholder="Example: 31.5"
+                          onChange={(event) => updateLine(line.id, { targetWeight: event.target.value })}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Handle color
+                        <select
+                          value={line.handleColor}
+                          onChange={(event) => updateLine(line.id, { handleColor: event.target.value })}
+                        >
+                          <option value="">Select handle color</option>
+                          {handleColorOptions.map((color) => (
+                            <option key={color}>{color}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Barrel color
+                        <select
+                          value={line.barrelColor}
+                          onChange={(event) => updateLine(line.id, { barrelColor: event.target.value })}
+                        >
+                          <option value="">Select barrel color</option>
+                          {barrelColorOptions.map((color) => (
+                            <option key={color}>{color}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Band color
+                        <select
+                          value={line.bandColor}
+                          onChange={(event) => updateLine(line.id, { bandColor: event.target.value })}
+                        >
+                          <option value="">Select band color</option>
+                          {bandColorOptions.map((color) => (
+                            <option key={color}>{color}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Logo color
+                        <select
+                          value={line.logoColor}
+                          onChange={(event) => updateLine(line.id, { logoColor: event.target.value })}
+                        >
+                          <option value="">Select logo color</option>
+                          {logoColorOptions.map((color) => (
+                            <option key={color}>{color}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        Cup
+                        <select
+                          value={line.cupped}
+                          onChange={(event) =>
+                            updateLine(line.id, {
+                              cupped: event.target.value as SalesOrderLineDraft['cupped'],
+                            })
+                          }
+                        >
+                          {!line.cupped ? <option value="">Cup not recorded — select option</option> : null}
+                          {manualCupOptions.map((cup) => (
+                            <option key={cup} value={cup}>
+                              {cup === 'Yes' ? 'Cup' : 'No cup'}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Engraving
+                        <input
+                          value={line.engraving}
+                          placeholder="Player name, signature, or custom text"
+                          onChange={(event) => updateLine(line.id, { engraving: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                    {supportsPuckKnob(productInputValue, line.itemType) ? (
+                      <div className="form-row single-field-row">
+                        <label>
+                          Puck knob
+                          <select
+                            aria-label={`Puck knob for line ${index + 1}`}
+                            value={line.puckKnob === 'Yes' ? 'Yes' : 'No'}
+                            onChange={(event) => updateLine(line.id, {
+                              puckKnob: event.target.value as SalesOrderLineDraft['puckKnob'],
+                            })}
+                          >
+                            <option value="No">Standard knob</option>
+                            <option value="Yes">Puck knob</option>
+                          </select>
+                          {line.puckKnob === 'Yes' ? (
+                            <span className="helper-text">Production model: {productionModelLabel({ model: productInputValue, puckKnob: line.puckKnob })}</span>
+                          ) : null}
+                        </label>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </article>
+            )
+          })}
         </div>
-      ) : (
-        <label className="checkbox-row invoice-toggle">
-          <input
-            type="checkbox"
-            checked={draft.createDraftOrder}
-            onChange={(event) => {
-              const createDraftOrder = event.target.checked
-              setDraft((current) => ({
-                ...current,
-                createDraftOrder,
-                sendInvoice: createDraftOrder ? false : current.sendInvoice,
-              }))
-            }}
-          />
-          <span>Create a Shopify draft for review; customer invoice stays unsent</span>
-        </label>
-      )}
 
-      {!draftOnly && !draft.createDraftOrder ? (
-        <label className="checkbox-row invoice-toggle">
-          <input
-            type="checkbox"
-            checked={draft.sendInvoice}
-            onChange={(event) => updateField('sendInvoice', event.target.checked)}
-          />
-          <span>Email the customer invoice after the order is created</span>
-        </label>
-      ) : null}
+        <div className="order-line-actions">
+          <button type="button" className="secondary-button" onClick={() => addLine('bat')}>
+            Add another bat
+          </button>
+          <button type="button" className="secondary-button" onClick={() => addLine('shirt')}>
+            Add a shirt
+          </button>
+          <button type="button" className="secondary-button" onClick={() => addLine('misc')}>
+            Add miscellaneous product
+          </button>
+        </div>
 
-      <div className="form-instructions">
-        <strong>Sales tax calculated by Shopify</strong>
-        <p>Tax is calculated using the delivery or pickup address and Trinity’s Shopify tax settings, then checked again when you submit. Changes to the order require a new preview.</p>
-        <button type="button" onClick={previewSalesTax} disabled={isCalculatingTax || isSubmitting || hasInvalidSalesOrderDraft(draft)}>
-          {isCalculatingTax ? 'Calculating tax…' : 'Preview tax and total'}
-        </button>
-        {currentTaxPreview?.error ? <p role="alert">{currentTaxPreview.error}</p> : null}
-        {currentTaxPreview?.quote ? (
-          <div role="status" aria-live="polite">
-            <p><strong>Sales tax: {formatSalesOrderMoney(Number(currentTaxPreview.quote.totalTaxSet.shopMoney.amount))}</strong></p>
-            {currentTaxPreview.quote.taxLines.map((line, index) => (
-              <p key={`${line.title}-${index}`}>{line.title}: {formatSalesOrderMoney(Number(line.priceSet.shopMoney.amount))}</p>
-            ))}
-            <p><strong>Total including tax and delivery: {formatSalesOrderMoney(Number(currentTaxPreview.quote.totalPriceSet.shopMoney.amount))}</strong></p>
-            {Number(currentTaxPreview.quote.totalTaxSet.shopMoney.amount) === 0 ? <p>Shopify calculated no sales tax. This does not establish whether Trinity needs an additional tax registration.</p> : null}
+      </section>
+      <div className="order-bottom-grid">
+        <section className="order-form-section" aria-label="Production notes and attachments">
+          <header className="order-section-heading"><span className="order-section-number">04</span><div><h3>Production notes</h3><p>For the team only. Kept off customer invoices.</p></div></header>
+          <label className="notes-field">
+            Internal order notes
+            <textarea
+              value={draft.notes}
+              placeholder="Private staff notes — never included on customer invoices or quotes"
+              onChange={(event) => updateField('notes', event.target.value)}
+            />
+          </label>
+
+          <details className="order-optional-details" open={Boolean(attachmentFile || draft.attachment)}>
+            <summary>Attach a reference file<span>{attachmentFile?.name || draft.attachment?.filename || 'Optional'}</span></summary>
+            <div className="order-optional-body">
+              <div className="attachment-field">
+                <label>
+                  Internal attachment
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.txt,.csv,.doc,.docx,.xls,.xlsx"
+                    onChange={(event) => setAttachmentFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+                {attachmentFile ? (
+                  <div className="attachment-chip">
+                    <span>{attachmentFile.name}</span>
+                    <button
+                      type="button"
+                      className="secondary-button compact-button"
+                      onClick={() => setAttachmentFile(null)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : null}
+                {!attachmentFile && draft.attachment ? (
+                  <div className="attachment-chip"><span>Copied attachment: {draft.attachment.filename}</span>
+                    <button type="button" className="secondary-button compact-button" onClick={() => updateField('attachment', null)}>Remove copied attachment</button>
+                  </div>
+                ) : null}
+              </div>
+
+            </div>
+          </details>
+        </section>
+        <section className="order-form-section order-final-review" aria-label="Review and create">
+          <header className="order-section-heading"><span className="order-section-number">05</span><div><h3>Review & create</h3><p>Check the total and invoice preference.</p></div></header>
+          <div className="order-subtotal"><div><span>Product subtotal</span><small>{draft.lines.length} {draft.lines.length === 1 ? 'order line' : 'order lines'} · Shipping, rush fees and tax calculated separately</small></div><strong>{formatSalesOrderMoney(getSalesOrderTotal(draft))}</strong></div>
+          {draftOnly ? (
+            <div className="form-instructions">
+              <strong>Draft for team review</strong>
+              <p>The customer invoice stays unsent until a team member reviews it.</p>
+            </div>
+          ) : (
+            <label className="checkbox-row invoice-toggle">
+              <input
+                type="checkbox"
+                checked={draft.createDraftOrder}
+                onChange={(event) => {
+                  const createDraftOrder = event.target.checked
+                  setDraft((current) => ({
+                    ...current,
+                    createDraftOrder,
+                    sendInvoice: createDraftOrder ? false : current.sendInvoice,
+                  }))
+                }}
+              />
+              <span>Create a Shopify draft for review; customer invoice stays unsent</span>
+            </label>
+          )}
+
+          {!draftOnly && !draft.createDraftOrder ? (
+            <label className="checkbox-row invoice-toggle">
+              <input
+                type="checkbox"
+                checked={draft.sendInvoice}
+                onChange={(event) => updateField('sendInvoice', event.target.checked)}
+              />
+              <span>Email the customer invoice after the order is created</span>
+            </label>
+          ) : null}
+
+          <div className="order-tax-preview">
+            <p className="helper-text">Preview shipping, rush fees and tax before creating the order. Editing the order clears this preview.</p>
+            <button type="button" className="secondary-button" onClick={previewSalesTax} disabled={isCalculatingTax || isSubmitting || hasInvalidSalesOrderDraft(draft)}>
+              {isCalculatingTax ? 'Calculating tax…' : 'Preview tax and total'}
+            </button>
+            {currentTaxPreview?.error ? <p role="alert">{currentTaxPreview.error}</p> : null}
+            {currentTaxPreview?.quote ? (
+              <div role="status" aria-live="polite">
+                <p><strong>Sales tax: {formatSalesOrderMoney(Number(currentTaxPreview.quote.totalTaxSet.shopMoney.amount))}</strong></p>
+                {currentTaxPreview.quote.taxLines.map((line, index) => (
+                  <p key={`${line.title}-${index}`}>{line.title}: {formatSalesOrderMoney(Number(line.priceSet.shopMoney.amount))}</p>
+                ))}
+                <p><strong>Total including tax and delivery: {formatSalesOrderMoney(Number(currentTaxPreview.quote.totalPriceSet.shopMoney.amount))}</strong></p>
+                {Number(currentTaxPreview.quote.totalTaxSet.shopMoney.amount) === 0 ? <p>Shopify calculated no sales tax. This does not establish whether Trinity needs an additional tax registration.</p> : null}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
-      {submissionMessage ? (
-        <p className="order-submit-message" role="status" aria-live="polite">
-          {submissionMessage}
-        </p>
-      ) : null}
-      {reviewSummary}
+          {submissionMessage ? (
+            <p className="order-submit-message" role="status" aria-live="polite">
+              {submissionMessage}
+            </p>
+          ) : null}
+          {reviewSummary}
 
-      <button type="submit" disabled={isSubmitting}>
-        {submitLabel || (isSubmitting
-          ? draft.createDraftOrder
-            ? 'Creating draft...'
-            : 'Creating order...'
-          : draft.createDraftOrder
-            ? 'Create draft for review'
-            : 'Create Shopify order')}
-      </button>
-    </>
+          <button className="order-submit-button" type="submit" disabled={isSubmitting}>
+            {submitLabel || (isSubmitting
+              ? draft.createDraftOrder
+                ? 'Creating draft...'
+                : 'Creating order...'
+              : draft.createDraftOrder
+                ? 'Create draft for review'
+                : 'Create Shopify order')}
+          </button>
+        </section>
+      </div>
+    </div>
   )
 }
 
@@ -5686,11 +5725,8 @@ function PublicSalesOrderForm() {
         <div className="public-order-logo" aria-label="Trinity Bat Company">
           Trinity Bat Company
         </div>
-        <h1>Sales order submission</h1>
-        <p>
-          Submit phone, team, pro, custom bat, shirt, and miscellaneous product orders through the
-          same Shopify workflow used by the internal command center.
-        </p>
+        <h1>New order</h1>
+        <p>Enter the order details. Your team will review the draft before sending the customer an invoice.</p>
         <span>{isLoadingCatalog ? 'Loading product catalog...' : 'Live Shopify order intake'}</span>
       </section>
 
@@ -5819,16 +5855,12 @@ function PublicSalesOrderForm() {
 
       <section className="panel public-order-panel">
         <form className="bat-form order-intake-form public-order-form" onSubmit={submitSalesOrder}>
+          <h2 className="order-visually-hidden">Order details</h2>
           <datalist id="public-shopify-bat-products">
             {shopifyCatalog.filter((product) => product.orderItemType !== 'shirt').map((product) => (
               <option key={product.id} value={product.name} />
             ))}
           </datalist>
-
-          <div className="section-heading">
-            <p className="eyebrow">Order details</p>
-            <h2>Create a Shopify invoice order</h2>
-          </div>
 
           <SalesOrderFormFields
             draft={salesOrderDraft}
@@ -9743,7 +9775,8 @@ function InternalApp({
           <section className="panel order-intake-panel">
             <div className="section-heading">
               <p className="eyebrow">Sales intake</p>
-              <h2>{reorderContext ? `New order from ${reorderContext.reference}` : 'Create a Shopify invoice order'}</h2>
+              <h2>{reorderContext ? `New order from ${reorderContext.reference}` : 'New order'}</h2>
+              <p className="order-form-intro">Enter the details below, then review before creating an unsent draft.</p>
             </div>
             {reorderContext ? <div className="reorder-review" role="status">
               <strong>Review your reorder — all fields can be edited before submission.</strong>
@@ -9774,15 +9807,6 @@ function InternalApp({
             </section> : null}
 
             <form className="bat-form order-intake-form" onSubmit={createSalesDraftOrder}>
-              <div className="form-instructions">
-                <strong>Review the order before creating it</strong>
-                <p>
-                  The default creates a Shopify draft and keeps the customer invoice unsent.
-                  Choose a direct order only when the order is ready to finalize; its invoice
-                  email is a separate choice. Each bat line enters the production queue.
-                </p>
-              </div>
-
               <datalist id="player-name-options">
                 {players.map((player) => (
                   <option key={player.id} value={player.playerName} />
