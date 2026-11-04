@@ -4486,6 +4486,7 @@ function SalesOrderShippingAddressFields({
           Shipping recipient phone
           <input
             type="tel"
+            autoComplete="section-player tel"
             value={draft.playerPhone}
             placeholder="Example: (321) 652-1800"
             onChange={(event) => updateField('playerPhone', event.target.value)}
@@ -4495,6 +4496,7 @@ function SalesOrderShippingAddressFields({
       <label>
         Street address
         <input
+          autoComplete="shipping address-line1"
           value={draft.shippingAddress1}
           placeholder="Street address"
           onChange={(event) => updateField('shippingAddress1', event.target.value)}
@@ -4504,6 +4506,7 @@ function SalesOrderShippingAddressFields({
         <label>
           Apartment, suite, etc.
           <input
+            autoComplete="shipping address-line2"
             value={draft.shippingAddress2}
             placeholder="Optional"
             onChange={(event) => updateField('shippingAddress2', event.target.value)}
@@ -4512,6 +4515,7 @@ function SalesOrderShippingAddressFields({
         <label>
           City
           <input
+            autoComplete="shipping address-level2"
             value={draft.shippingCity}
             placeholder="City"
             onChange={(event) => updateField('shippingCity', event.target.value)}
@@ -4522,6 +4526,7 @@ function SalesOrderShippingAddressFields({
         <label>
           State / province
           <input
+            autoComplete="shipping address-level1"
             value={draft.shippingProvinceCode}
             placeholder="Example: CO"
             onChange={(event) =>
@@ -4532,6 +4537,7 @@ function SalesOrderShippingAddressFields({
         <label>
           ZIP / postal code
           <input
+            autoComplete="shipping postal-code"
             value={draft.shippingZip}
             placeholder="ZIP code"
             onChange={(event) => updateField('shippingZip', event.target.value)}
@@ -4540,6 +4546,7 @@ function SalesOrderShippingAddressFields({
         <label>
           Country code
           <input
+            autoComplete="shipping country"
             value={draft.shippingCountryCode}
             placeholder="US"
             onChange={(event) =>
@@ -4645,6 +4652,7 @@ function SalesOrderFormFields({
               Player name
               <input
                 list={playerNameDatalistId}
+                autoComplete="section-player name"
                 value={draft.playerName}
                 placeholder="Example: Jordan Smith"
                 onChange={(event) => updateField('playerName', event.target.value)}
@@ -4655,6 +4663,9 @@ function SalesOrderFormFields({
                 Payer email (optional)
                 <input
                   type="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  autoComplete="section-payer email"
                   value={draft.payerEmail}
                   placeholder="payer@example.com"
                   onChange={(event) => updateField('payerEmail', event.target.value)}
@@ -4669,6 +4680,7 @@ function SalesOrderFormFields({
                 Payer phone
                 <input
                   type="tel"
+                  autoComplete="section-player tel"
                   value={draft.playerPhone}
                   placeholder="Example: (321) 652-1800"
                   onChange={(event) => updateField('playerPhone', event.target.value)}
@@ -4717,6 +4729,7 @@ function SalesOrderFormFields({
                   Payer name
                   <input
                     list={billingContactDatalistId}
+                    autoComplete="section-payer name"
                     value={draft.billingName}
                     placeholder={
                       billingContactDatalistId
@@ -4737,6 +4750,9 @@ function SalesOrderFormFields({
                   Payer email (optional)
                   <input
                     type="email"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    autoComplete="section-payer email"
                     value={draft.billingEmail}
                     placeholder="billing@example.com"
                     onChange={(event) => updateField('billingEmail', event.target.value)}
@@ -4749,6 +4765,7 @@ function SalesOrderFormFields({
                   Payer phone
                   <input
                     type="tel"
+                    autoComplete="section-payer tel"
                     value={draft.billingPhone}
                     placeholder="Example: (321) 652-1800"
                     onChange={(event) => updateField('billingPhone', event.target.value)}
@@ -4757,6 +4774,7 @@ function SalesOrderFormFields({
                 <label>
                   Team or agency
                   <input
+                    autoComplete="section-payer organization"
                     value={draft.billingCompany}
                     placeholder="Example: New York Mets"
                     onChange={(event) => updateField('billingCompany', event.target.value)}
@@ -4942,7 +4960,7 @@ function SalesOrderFormFields({
                 <div className="sales-line-fields">
                   {line.itemType === 'shirt' ? (
                     <div className="form-row shirt-order-fields">
-                      <label>
+                      <label className="order-mobile-wide">
                         Shirt
                         <select
                           value={line.productId}
@@ -4969,7 +4987,7 @@ function SalesOrderFormFields({
                           ))}
                         </select>
                       </label>
-                      <label>
+                      <label className="order-mobile-wide">
                         Size
                         <select
                           value={line.variantId}
@@ -5047,7 +5065,7 @@ function SalesOrderFormFields({
                       </label>
 
                       <div className="form-row">
-                        <label>
+                        <label className="order-mobile-wide">
                           Bat model
                           <input
                             list={line.isProOrder ? undefined : productDatalistId}
@@ -5073,7 +5091,7 @@ function SalesOrderFormFields({
                             }}
                           />
                         </label>
-                        <label>
+                        <label className="order-mobile-wide">
                           Wood species
                           <select
                             value={line.wood}
@@ -5108,6 +5126,7 @@ function SalesOrderFormFields({
                       Quantity
                       <input
                         type="number"
+                        inputMode="numeric"
                         min="1"
                         value={line.quantity}
                         onChange={(event) =>
@@ -5141,7 +5160,7 @@ function SalesOrderFormFields({
                     </div>
 
                     <div className="form-row">
-                      <label>
+                      <label className="order-mobile-wide">
                         Handle color
                         <select
                           value={line.handleColor}
@@ -5153,7 +5172,7 @@ function SalesOrderFormFields({
                           ))}
                         </select>
                       </label>
-                      <label>
+                      <label className="order-mobile-wide">
                         Barrel color
                         <select
                           value={line.barrelColor}
@@ -5168,7 +5187,7 @@ function SalesOrderFormFields({
                     </div>
 
                     <div className="form-row">
-                      <label>
+                      <label className="order-mobile-wide">
                         Band color
                         <select
                           value={line.bandColor}
@@ -5180,7 +5199,7 @@ function SalesOrderFormFields({
                           ))}
                         </select>
                       </label>
-                      <label>
+                      <label className="order-mobile-wide">
                         Logo color
                         <select
                           value={line.logoColor}
@@ -5195,7 +5214,7 @@ function SalesOrderFormFields({
                     </div>
 
                     <div className="form-row">
-                      <label>
+                      <label className="order-mobile-wide">
                         Cup
                         <select
                           value={line.cupped}
@@ -5213,7 +5232,7 @@ function SalesOrderFormFields({
                           ))}
                         </select>
                       </label>
-                      <label>
+                      <label className="order-mobile-wide">
                         Engraving
                         <input
                           value={line.engraving}
@@ -6145,6 +6164,7 @@ function InternalApp({
   const hasAdminAccess = !accessSession || Boolean(accessSession.isAdmin)
   const canAccessToolSection = (section: ActiveSection) =>
     !accessSession || canTeamMemberAccessToolSection(accessMember, section)
+  const [mobileAccountOpen, setMobileAccountOpen] = useState(false)
   const stateEndpoint = hasTeamToolSession ? '/api/team-tool/state' : '/api/state'
   const shouldPersistLocalToolState = isLocalPreviewHost()
   const [activeSection, setActiveSection] = useState<ActiveSection>(() => {
@@ -8821,6 +8841,31 @@ function InternalApp({
             : activeSection === 'inventory'
               ? 'Receive, find, and track every billet.'
               : 'Live records and daily work in one place.'}</p>
+          <label className="mobile-section-picker">
+            <span className="order-visually-hidden">Go to workspace section</span>
+            <select
+              aria-label="Go to workspace section"
+              value={activeSection === 'orders' ? `orders-${orderEntryView}` : activeSection}
+              onChange={(event) => {
+                const value = event.target.value
+                if (value === 'orders-new' || value === 'orders-history') {
+                  navigateToSection('orders', value === 'orders-history' ? 'history' : 'new')
+                } else {
+                  navigateToSection(value as ActiveSection)
+                }
+              }}
+            >
+              {canAccessToolSection('orders') ? <option value="orders-new">New order</option> : null}
+              {canAccessToolSection('orders') ? <option value="orders-history">My orders</option> : null}
+              {canAccessToolSection('production') ? <option value="production">Production queue</option> : null}
+              <option value="inventory">Inventory</option>
+              {canAccessToolSection('crm') ? <option value="crm">Customers</option> : null}
+              <option value="players">Player profiles</option>
+              <option value="models">Bat models</option>
+              <option value="costs">Billet cost guide</option>
+              {canAccessToolSection('sales') ? <option value="sales">Sales dashboard</option> : null}
+            </select>
+          </label>
           <nav className="section-tabs" aria-label="Primary tool sections">
             <div className="nav-brand"><span>TRINITY</span><small>BAT CO. / OPERATIONS</small></div>
             <div className="nav-group"><span className="nav-group-label">WORK</span>
@@ -8840,75 +8885,87 @@ function InternalApp({
             </div> : null}
           </nav>
         </div>
-        <div className="hero-card" aria-label="Connection status">
-          <span className="status-dot"></span>
-          <strong>
-            {backendStatus === 'connected'
-              ? 'Shopify-backed internal tool'
-              : backendStatus === 'unauthorized'
-                ? isShopifyEmbeddedApp()
-                  ? 'Team PIN required'
-                  : 'Secure internal access required'
-                : 'Live sync unavailable'}
-          </strong>
-          <p>{syncMessage}</p>
-          {accessSession ? (
-            <div className="sales-portal-session">
-              <span>
-                Signed in as <strong>{accessOwner?.label ?? accessSession.email}</strong>
-              </span>
-              {onSignOut ? (
-                <button type="button" className="secondary-button" onClick={() => void onSignOut()}>
-                  Sign out
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-          {hasAdminAccess && backendStatus === 'connected' ? (
-            <details className="sales-portal-code-issuer">
-              <summary>Team PINs</summary>
-              <label>
-                Team member
-                <select
-                  value={accessCodeIssuerEmail}
-                  onChange={(event) => {
-                    setAccessCodeIssuerEmail(event.target.value)
-                    setIssuedTeamAccessCode('')
-                    setTeamAccessMessage('')
-                  }}
-                >
-                  {trinityTeamMembers
-                    .filter((member) => member.email)
-                    .map((member) => (
-                      <option key={member.email} value={member.email}>
-                        {member.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={isIssuingTeamAccessCode}
-                onClick={issueTeamAccessCode}
-              >
-                {isIssuingTeamAccessCode ? 'Creating...' : 'Create PIN'}
-              </button>
-              {issuedTeamAccessCode ? (
-                <div className="helper-text sales-portal-issued-code">
-                  <strong>{issuedTeamAccessCode}</strong>
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    onClick={() => void navigator.clipboard?.writeText(issuedTeamAccessCode)}
-                  >
-                    Copy
+        <div className="hero-card" aria-label="Connection status" data-mobile-open={mobileAccountOpen}>
+          <button
+            type="button"
+            className="mobile-account-toggle"
+            aria-expanded={mobileAccountOpen}
+            aria-controls="workspace-account-content"
+            onClick={() => setMobileAccountOpen((current) => !current)}
+          >
+            <span>Account & connection</span>
+            <span>{backendStatus === 'connected' ? (mobileAccountOpen ? '−' : '+') : 'Check connection'}</span>
+          </button>
+          <div id="workspace-account-content" className="workspace-account-content">
+            <span className="status-dot"></span>
+            <strong>
+              {backendStatus === 'connected'
+                ? 'Shopify-backed internal tool'
+                : backendStatus === 'unauthorized'
+                  ? isShopifyEmbeddedApp()
+                    ? 'Team PIN required'
+                    : 'Secure internal access required'
+                  : 'Live sync unavailable'}
+            </strong>
+            <p>{syncMessage}</p>
+            {accessSession ? (
+              <div className="sales-portal-session">
+                <span>
+                  Signed in as <strong>{accessOwner?.label ?? accessSession.email}</strong>
+                </span>
+                {onSignOut ? (
+                  <button type="button" className="secondary-button" onClick={() => void onSignOut()}>
+                    Sign out
                   </button>
-                </div>
-              ) : null}
-              {teamAccessMessage ? <p className="helper-text">{teamAccessMessage}</p> : null}
-            </details>
-          ) : null}
+                ) : null}
+              </div>
+            ) : null}
+            {hasAdminAccess && backendStatus === 'connected' ? (
+              <details className="sales-portal-code-issuer">
+                <summary>Team PINs</summary>
+                <label>
+                  Team member
+                  <select
+                    value={accessCodeIssuerEmail}
+                    onChange={(event) => {
+                      setAccessCodeIssuerEmail(event.target.value)
+                      setIssuedTeamAccessCode('')
+                      setTeamAccessMessage('')
+                    }}
+                  >
+                    {trinityTeamMembers
+                      .filter((member) => member.email)
+                      .map((member) => (
+                        <option key={member.email} value={member.email}>
+                          {member.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isIssuingTeamAccessCode}
+                  onClick={issueTeamAccessCode}
+                >
+                  {isIssuingTeamAccessCode ? 'Creating...' : 'Create PIN'}
+                </button>
+                {issuedTeamAccessCode ? (
+                  <div className="helper-text sales-portal-issued-code">
+                    <strong>{issuedTeamAccessCode}</strong>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void navigator.clipboard?.writeText(issuedTeamAccessCode)}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                ) : null}
+                {teamAccessMessage ? <p className="helper-text">{teamAccessMessage}</p> : null}
+              </details>
+            ) : null}
+          </div>
         </div>
       </section>
 
