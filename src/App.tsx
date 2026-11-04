@@ -1462,7 +1462,7 @@ const emptySalesOrderDraft = (): SalesOrderDraft => ({
   attachment: null,
   notes: '',
   createDraftOrder: true,
-  sendInvoice: false,
+  sendInvoice: true,
   lines: [emptySalesLine()],
 })
 
@@ -5345,24 +5345,26 @@ function SalesOrderFormFields({
                   setDraft((current) => ({
                     ...current,
                     createDraftOrder,
-                    sendInvoice: createDraftOrder ? false : current.sendInvoice,
                   }))
                 }}
               />
-              <span>Create a Shopify draft for review; customer invoice stays unsent</span>
+              <span>Keep the order as a Shopify draft until the customer pays</span>
             </label>
           )}
 
-          {!draftOnly && !draft.createDraftOrder ? (
+          {!draftOnly ? (
             <label className="checkbox-row invoice-toggle">
               <input
                 type="checkbox"
                 checked={draft.sendInvoice}
                 onChange={(event) => updateField('sendInvoice', event.target.checked)}
               />
-              <span>Email the customer invoice after the order is created</span>
+              <span>Email the customer a payable Shopify invoice when I submit this reviewed order</span>
             </label>
           ) : null}
+          {!draftOnly ? <p className="helper-text">{draft.sendInvoice
+            ? 'The invoice includes a secure payment link. Review the order, then confirm creation and email.'
+            : 'Customer email is off. This submission will be saved without emailing an invoice.'}</p> : null}
 
           <div className="order-tax-preview">
             <p className="helper-text">Preview shipping, rush fees and tax before creating the order. Editing the order clears this preview.</p>
@@ -7713,11 +7715,18 @@ function InternalApp({
       return
     }
 
+    if (salesOrderDraft.sendInvoice && !payerEmail.trim()) {
+      setOrderActionMessage('Add a payer email to send the invoice, or turn off customer email to save an unsent order.')
+      return
+    }
+
     try {
       setIsCreatingDraftOrder(true)
       setOrderActionMessage(
         salesOrderDraft.createDraftOrder
-          ? salesOrderAttachmentFile
+          ? salesOrderDraft.sendInvoice
+            ? 'Creating Shopify draft and emailing the payable invoice...'
+            : salesOrderAttachmentFile
             ? 'Uploading attachment and creating an unsent Shopify draft...'
             : 'Creating an unsent Shopify draft...'
           : salesOrderAttachmentFile
@@ -9834,7 +9843,7 @@ function InternalApp({
             <div className="section-heading">
               <p className="eyebrow">Sales intake</p>
               <h2>{reorderContext ? `New order from ${reorderContext.reference}` : 'New order'}</h2>
-              <p className="order-form-intro">Enter the details below, then review before creating an unsent draft.</p>
+              <p className="order-form-intro">Enter the details below, review the order, then create it and email the customer a secure payment link. You can also save it without emailing.</p>
             </div>
             {reorderContext ? <div className="reorder-review" role="status">
               <strong>Review your reorder — all fields can be edited before submission.</strong>
@@ -9911,10 +9920,10 @@ function InternalApp({
                   <p>Delivery: {salesOrderDraft.shippingAddress1}, {salesOrderDraft.shippingCity}, {salesOrderDraft.shippingProvinceCode} {salesOrderDraft.shippingZip}</p>
                   <ul>{salesOrderDraft.lines.map((line) => <li key={line.id}>{line.quantity} × {line.title} · {formatSalesOrderMoney(getSalesLineTotal(line))}</li>)}</ul>
                   <p>Product subtotal: {formatSalesOrderMoney(getSalesOrderTotal(salesOrderDraft))}. Shopify calculates shipping and tax when you create the order.</p>
-                  <p>{salesOrderDraft.createDraftOrder ? 'Customer invoice: not sent on draft creation.' : salesOrderDraft.sendInvoice ? 'Customer invoice: email after order creation.' : 'Customer invoice: do not email.'}</p>
+                  <p>{salesOrderDraft.sendInvoice ? `Customer invoice: email a secure payment link to ${getPublicDraftPayerEmail(salesOrderDraft) || '(payer email required)'}.` : 'Customer invoice: do not email.'}</p>
                 </div> : null}
                 submitLabel={isCreatingDraftOrder ? undefined : isOrderReviewed
-                  ? salesOrderDraft.createDraftOrder ? 'Create unsent draft in Shopify' : salesOrderDraft.sendInvoice ? 'Create order and email invoice' : 'Create order without email'
+                  ? salesOrderDraft.sendInvoice ? 'Create order and email invoice' : salesOrderDraft.createDraftOrder ? 'Create unsent draft in Shopify' : 'Create order without email'
                   : 'Review order'}
               />
             </form>
@@ -13355,6 +13364,12 @@ function SalesPortalApp() {
   const [shopifyCatalog, setShopifyCatalog] = useState<ShopifyCatalogProduct[]>([])
   const [orderDraft, setOrderDraft] = useState<SalesOrderDraft>(() => emptySalesOrderDraft())
   const [orderAttachmentFile, setOrderAttachmentFile] = useState<File | null>(null)
+  const [reviewedPortalOrderFingerprint, setReviewedPortalOrderFingerprint] = useState('')
+  const portalOrderFingerprint = JSON.stringify({
+    draft: orderDraft,
+    attachment: orderAttachmentFile ? [orderAttachmentFile.name, orderAttachmentFile.size, orderAttachmentFile.lastModified] : null,
+  })
+  const isPortalOrderReviewed = reviewedPortalOrderFingerprint === portalOrderFingerprint
   const [portalMessage, setPortalMessage] = useState('')
   const [isLoadingPortalData, setIsLoadingPortalData] = useState(!isDemoSession)
   const [isSubmittingPortalOrder, setIsSubmittingPortalOrder] = useState(false)
@@ -14042,6 +14057,15 @@ function SalesPortalApp() {
       )
       return
     }
+    if (!isPortalOrderReviewed) {
+      setReviewedPortalOrderFingerprint(portalOrderFingerprint)
+      setPortalMessage('Review the order summary below, then confirm creation and your invoice preference.')
+      return
+    }
+    if (draft.sendInvoice && !getPublicDraftPayerEmail(draft).trim()) {
+      setPortalMessage('Add a payer email to send the invoice, or turn off customer email to save an unsent order.')
+      return
+    }
     const selectedManualContact = selectedContactId
       ? searchedContactSummaries.find((summary) => summary.contact.id === selectedContactId)?.contact ?? null
       : null
@@ -14089,6 +14113,7 @@ function SalesPortalApp() {
         salesRepEmail: portalOwner.email,
       })
       setOrderAttachmentFile(null)
+      setReviewedPortalOrderFingerprint('')
       setActiveView('orders')
     } catch (error) {
       setPortalMessage(error instanceof Error ? error.message : 'Could not create the order.')
@@ -14674,6 +14699,15 @@ function SalesPortalApp() {
               isSubmitting={isSubmittingPortalOrder}
               submissionMessage={portalMessage}
               hideSalesRepFields
+              reviewSummary={isPortalOrderReviewed ? <div className="order-final-summary" role="status">
+                <strong>Final review before Shopify creation</strong>
+                <p>Player: {orderDraft.playerName} · Payer: {getPublicDraftPayerName(orderDraft)}</p>
+                <p>Delivery: {orderDraft.shippingAddress1}, {orderDraft.shippingCity}, {orderDraft.shippingProvinceCode} {orderDraft.shippingZip}</p>
+                <ul>{orderDraft.lines.map(line => <li key={line.id}>{line.quantity} × {line.title} · {formatSalesOrderMoney(getSalesLineTotal(line))}</li>)}</ul>
+                <p>Product subtotal: {formatSalesOrderMoney(getSalesOrderTotal(orderDraft))}. Shopify calculates shipping and tax when you create the order.</p>
+                <p>{orderDraft.sendInvoice ? `Customer invoice: email a secure payment link to ${getPublicDraftPayerEmail(orderDraft) || '(payer email required)'}.` : 'Customer invoice: do not email.'}</p>
+              </div> : null}
+              submitLabel={isSubmittingPortalOrder ? undefined : !isPortalOrderReviewed ? 'Review order' : orderDraft.sendInvoice ? 'Create order and email invoice' : 'Create order without email'}
             />
           </form>
         </section>

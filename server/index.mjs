@@ -2257,11 +2257,16 @@ app.post('/api/sales-orders', async (request, response) => {
       )
       payload = protectSalesRepPlayerEmail(payload, savedCrmContacts)
     }
+    if (payload.sendInvoice === true && !resolvePayer(payload).email) {
+      response.status(400).json({ ok: false, message: 'Add a payer email to send the invoice, or turn off customer email to save an unsent order.' })
+      return
+    }
     if (shouldCreateDraftOrder) {
       const draftInput = buildDraftOrderInput(payload, intakeId, orderSubmittedAt)
       const draftOrder = await createDraftOrder(draftInput)
-      // Draft creation is review-only. Sending requires the separate invoice action.
-      const payerInvoiceNotification = { sentAt: '', recipient: '', error: '' }
+      // The reviewed submission explicitly chooses whether Shopify emails its payable invoice.
+      // Public intake is still forced to an unsent draft by prepareSalesOrderPayloadForRequest.
+      const payerInvoiceNotification = await trySendDraftOrderPayerInvoice(draftOrder, payload)
       const mappedJobs = mapDraftOrderToJobs(
         draftOrder,
         payload,
@@ -3956,6 +3961,23 @@ async function markDraftInvoiceSent({ draftOrderId, intakeId = '', sendInvoice =
   await syncOrderJobMetafields(updatedJobs)
 
   return updatedJobs
+}
+
+async function trySendDraftOrderPayerInvoice(draftOrder, payload) {
+  const recipient = resolvePayer(payload).email
+  if (payload.sendInvoice !== true) return { sentAt: '', recipient, error: '' }
+  try {
+    const sentDraft = await sendDraftOrderInvoice(
+      draftOrder.id,
+      buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder),
+    )
+    return { sentAt: sentDraft.invoiceSentAt, recipient, error: '' }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown invoice send error.'
+    console.error(`Draft payer invoice error: ${message}`)
+    // Keep and return the existing draft so an email failure never invites a duplicate order.
+    return { sentAt: '', recipient, error: message }
+  }
 }
 
 async function trySendInternalOrderCopyNotification({
@@ -6418,6 +6440,7 @@ async function sendDraftOrderInvoice(draftOrderId, emailInput, trackCustomerSend
           draftOrder {
             id
             name
+            invoiceSentAt
           }
           userErrors {
             field
@@ -6433,7 +6456,12 @@ async function sendDraftOrderInvoice(draftOrderId, emailInput, trackCustomerSend
   if (errors.length > 0) {
     throw new Error(`Invoice send error: ${errors.map((item) => item.message).join(', ')}`)
   }
+  const sentDraft = result?.data?.draftOrderInvoiceSend?.draftOrder
+  if (!sentDraft?.id || !sentDraft.invoiceSentAt) {
+    throw new Error('Shopify did not confirm invoice sending. Check this existing draft in Shopify before sending again.')
+  }
   try { if (trackCustomerSend) await orderDocumentService.recordSent(draftOrderId) } catch (error) { console.error('Invoice sent; tracking write will need reconciliation:', error.message) }
+  return sentDraft
 }
 
 async function sendOrderInvoice(orderId, emailInput, trackCustomerSend = true) {
@@ -8873,7 +8901,7 @@ function buildDraftOrderInvoiceEmailInputFromPayload(payload, draftOrder) {
 
   return {
     to: payer.email,
-    subject: `${getTrinityOrderReference(draftOrder) || draftOrder?.name || 'Shopify order'} Draft Order Submitted`,
+    subject: `${getTrinityOrderReference(draftOrder) || draftOrder?.name || 'Shopify order'} invoice from Trinity Sports Group`,
     customMessage,
   }
 }
