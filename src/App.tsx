@@ -1001,7 +1001,7 @@ const salesPortalViews: Array<{ value: SalesPortalView; label: string; adminOnly
   { value: 'reports', label: 'Reports' },
 ]
 const handleColorOptions = [
-  'Natural',
+  'Unfinished',
   'Red',
   'Walnut Stain',
   'Blood Red',
@@ -1010,7 +1010,7 @@ const handleColorOptions = [
   'White',
   'Gray',
   'Black',
-  'Clear Gloss',
+  'Natural gloss',
   'Matte Black',
   'Forest Green',
   'Navy Blue',
@@ -1032,7 +1032,7 @@ const handleColorOptions = [
   'Smoke Flame',
 ]
 const barrelColorOptions = [
-  'Natural',
+  'Unfinished',
   'Red',
   'Walnut Stain',
   'Black',
@@ -1043,7 +1043,7 @@ const barrelColorOptions = [
   'White Wash',
   'White',
   'Matte Black',
-  'Clear Gloss',
+  'Natural gloss',
   'Navy Blue',
   'Royal Blue',
   'Electric Blue',
@@ -1062,7 +1062,7 @@ const barrelColorOptions = [
   'Flamed',
   'Smoke Flame',
 ]
-const bandColorOptions = ['Yellow', 'White', 'Red', 'Natural', 'Gray', 'Gold', 'Black']
+const bandColorOptions = ['Yellow', 'White', 'Red', 'Unfinished', 'Gray', 'Gold', 'Black']
 const logoColorOptions = [
   'Black',
   'Electric Blue',
