@@ -16,7 +16,7 @@ const payload = {
     itemType, id: `old-${index}`, productId: `product-${index}`, variantId: `variant-${index}`,
     variantTitle: `variant title ${index}`, title: `Test ${itemType}`, quantity: index + 1,
     unitPrice: index === 0 ? '0.00' : '25.50', isProOrder: index === 0,
-    length: '34', targetWeight: '31', handleColor: 'Black', barrelColor: 'Natural',
+    length: '34', targetWeight: '31', handleColor: 'Clear Gloss', barrelColor: 'Natural',
     bandColor: 'Gold', logoColor: 'Silver', engraving: 'Test', cupped: 'Yes', wood: 'Birch', notes: 'Line detail',
   })),
   attachment: { downloadUrl: 'https://cdn.shopify.com/example.pdf', uploadToken: 'EXPIRED' },
@@ -40,6 +40,10 @@ test('reorder is an independent editable copy, including zero-dollar prices and 
   const group = groupSubmittedOrders([original])[0]
   const result = buildReorderDraft(group, null, owner)
   assert.equal(result.draft.lines.length, 3)
+  assert.equal(result.draft.lines[0].handleColor, 'Natural gloss')
+  assert.equal(result.draft.lines[0].barrelColor, 'Unfinished')
+  assert.equal(original.submissionSnapshot.draft.lines[0].handleColor, 'Clear Gloss')
+  assert.equal(original.submissionSnapshot.draft.lines[0].barrelColor, 'Natural')
   assert.equal(result.draft.lines[0].unitPrice, '0.00')
   assert.equal(result.draft.notes, payload.notes)
   assert.equal(result.draft.shippingAddress2, 'Suite 2')

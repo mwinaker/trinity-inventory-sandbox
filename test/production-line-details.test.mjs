@@ -10,7 +10,7 @@ test('1547 personalizer selections and preview survive both production print lay
  const jobs=mergeCurrentPrintJobs([{id:'order-1547-line-1',lineItemId:'line-1',quantity:1,productTitle:'Youth Pro Model HK47 Custom',specs:details.specs,additionalInternalAttachments:details.attachments}],[])
  for(const layout of ['detail','landscape']) {
   const html=buildProductionDocument(jobs,layout)
-  for(const value of ['Maple','30&quot;','-8','Clear Gloss','Denim Blue Stain','White','PRO MODEL','SELECT WOOD 33','Jaxon Buccheri #5','Youth Pro Model HK47','Custom','2–3 weeks','<img src="https://cdn.shopify.com/']) assert.ok(html.includes(value),value)
+  for(const value of ['Maple','30&quot;','-8','Natural gloss','Denim Blue Stain','White','PRO MODEL','SELECT WOOD 33','Jaxon Buccheri #5','Youth Pro Model HK47','Custom','2–3 weeks','<img src="https://cdn.shopify.com/']) assert.ok(html.includes(value),value)
   assert.ok(!html.includes('KXJMOR'))
  }
 })

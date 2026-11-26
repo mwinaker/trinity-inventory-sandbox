@@ -12,7 +12,7 @@ npm run build
 npm run serve
 ```
 
-Then open `http://127.0.0.1:4177`.
+Then open `http://127.0.0.1:4177`. The production Docker image includes Python, WeasyPrint 68 and Liberation fonts for Shopify print previews. Local PDF rendering requires the same dependencies. The print regression test also uses the Poppler command-line tools.
 
 Export captured Shopify customer behavior sessions:
 

@@ -1,3 +1,4 @@
+import { storefrontFinishLabel } from '../shared/storefront-finish.ts'
 import { normalizePlayerLevel } from '../shared/player-level.ts'
 // Private submission snapshots are stored only in the internal order-job payload.
 // Never include them in Shopify order notes, attributes, or invoice messages.
@@ -132,6 +133,11 @@ export function buildReorderDraft(group, source, owner) {
   }
   // Reorders have new line identities and no payment, fulfillment, or invoice state.
   draft.levelOfPlay = normalizePlayerLevel(draft.levelOfPlay)
+  for (const line of draft.lines) {
+    for (const key of ['handleColor', 'barrelColor', 'bandColor']) {
+      if (line[key]) line[key] = storefrontFinishLabel(line[key])
+    }
+  }
   draft.salesRep = owner.name
   draft.salesRepEmail = owner.email
   draft.attachment = null

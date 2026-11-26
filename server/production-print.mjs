@@ -1,4 +1,5 @@
 import crypto from 'node:crypto'
+import { renderProductionPdf } from './production-pdf.mjs'
 import { buildProductionDocument, productionOrderJobs } from '../shared/production-documents.ts'
 
 export function installProductionPrintRoutes(app, { authorize, getJobs, secret, now = Date.now }) {
@@ -35,6 +36,7 @@ export function installProductionPrintRoutes(app, { authorize, getJobs, secret, 
   app.options('/api/production-print', cors, (_request, response) => response.sendStatus(204))
   app.get('/api/production-print', cors, async (request, response) => {
     privateHeaders(response)
+    let data
     try {
       const ticket = request.query.ticket
       if (!secret || typeof ticket !== 'string' || ticket.length > 2000) throw new Error('Invalid ticket')
@@ -43,14 +45,20 @@ export function installProductionPrintRoutes(app, { authorize, getJobs, secret, 
       const [payload, signature] = parts
       const expected = sign(payload)
       if (signature.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new Error('Invalid ticket')
-      const data = JSON.parse(Buffer.from(payload, 'base64url').toString())
+      data = JSON.parse(Buffer.from(payload, 'base64url').toString())
       if (!/^gid:\/\/shopify\/(Order|DraftOrder)\/\d+$/.test(data.id) || !['detail', 'landscape'].includes(data.layout) || !Number.isFinite(data.expires) || data.expires <= now()) throw new Error('Expired ticket')
+    } catch {
+      return response.status(403).type('text').send('This internal print link is invalid or expired. Reopen Production documents from Shopify to get a new link.')
+    }
+    try {
       const jobs = await findJobs(data.id)
       if (!jobs.length) return response.status(404).send('No production records are linked to this order.')
-      // Native Shopify previews require static HTML without scripts or inline handlers.
-      const html = buildProductionDocument(jobs, data.layout).replace(/<div class="toolbar">[\s\S]*?<\/div>/, '')
-      response.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; img-src https://cdn.shopify.com; base-uri 'none'; form-action 'none'")
-      response.type('html').send(html)
-    } catch { response.status(403).type('text').send('This internal print link is invalid or expired. Reopen Production documents from Shopify to get a new link.') }
+      const pdf = await renderProductionPdf(buildProductionDocument(jobs, data.layout))
+      const resourceNumber = data.id.split('/').at(-1)
+      response.set('Content-Disposition', `inline; filename="production-${resourceNumber}-${data.layout}.pdf"`)
+      response.type('application/pdf').send(pdf)
+    } catch {
+      response.status(503).type('text').send('Could not generate the production PDF. Reopen the print action to try again.')
+    }
   })
 }
